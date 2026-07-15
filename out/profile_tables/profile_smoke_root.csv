@@ -1,0 +1,4 @@
+adapter,detail,env,error,ok,profiles,version_kivi_gemv,version_models,version_numpy,version_pandas,version_pyarrow,version_python,version_quant,version_torch,version_transformers,version_utils_hh.modify_llama
+full,full/exact profile 先通过 base 环境驱动，后续接 transformers 或 vLLM 实测。,tailguardkv-base,,True,"full_gpu,full_cpu,recompute",,,2.2.6,2.3.3,24.0.0,3.10.20,,2.4.1+cu121,4.43.1,
+kivi,KIVI 源码与 CUDA 扩展可导入；Qwen 真实适配需单独 smoke。,edgekv-kivi,,True,"kivi_4bit,kivi_2bit",unknown,unknown,,,,3.10.20,unknown,2.4.1+cu121,4.43.1,
+h2o,H2O 通过 PYTHONPATH=third_party/H2O/h2o_hf 使用 monkeypatch 入口。,edgekv-h2o,,True,h2o_heavy_hitter,,,,,,3.10.20,,2.4.1+cu121,4.43.1,unknown
