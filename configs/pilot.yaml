@@ -1,0 +1,22 @@
+model:
+  name: Qwen2.5-7B-Instruct
+  path: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+
+profiles:
+  adapters:
+    - full
+    - kivi
+    - h2o
+  names:
+    - full_gpu
+    - kivi_4bit
+    - kivi_2bit
+    - h2o_heavy_hitter
+    - full_cpu
+    - recompute
+
+pilot:
+  epsilons: [0.05, 0.10]
+  deltas: [0.05, 0.10]
+  memory_budgets_mib: [6144, 8192]
+  repeats: 3
