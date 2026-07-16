@@ -1,6 +1,7 @@
 model:
-  name: Qwen2.5-7B-Instruct
-  path: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  profile_smoke_model: /DATACENTER3/zhenxiang.wang/resource/TinyLlama-1.1B-Chat-v1.0
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
 
 profiles:
   adapters:
@@ -15,8 +16,32 @@ profiles:
     - full_cpu
     - recompute
 
+policies:
+  names:
+    - full_lru
+    - static_best
+    - static_safe
+    - utility_dynamic
+    - uncalibrated_dynamic
+    - tailguard
+    - quality_oracle
+
 pilot:
   epsilons: [0.05, 0.10]
   deltas: [0.05, 0.10]
   memory_budgets_mib: [6144, 8192]
-  repeats: 3
+
+data:
+  requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
+  calibration_fraction: 0.5
+
+profile_smoke:
+  max_new_tokens: 16
+  timeout_s: 180
+  repeat: 1
+  local_files_only: true
+
+outputs:
+  smoke_profiles: out/profile_tables/smoke_profiles.csv
+  smoke_profile_checks: out/profile_tables/profile_smoke.csv
+  smoke_policy: out/policy_tables/smoke_policy.csv

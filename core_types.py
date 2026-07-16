@@ -51,6 +51,31 @@ class ProfileMeasurement:
             row[f"extra_{key}"] = value
         return row
 
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "ProfileMeasurement":
+        extra: dict[str, Any] = {}
+        payload = dict(row)
+        for key in list(payload):
+            if key.startswith("extra_"):
+                extra[key.removeprefix("extra_")] = payload.pop(key)
+
+        return cls(
+            request_id=str(payload.get("request_id", "")),
+            profile=str(payload.get("profile", "")),
+            adapter=str(payload.get("adapter", "")),
+            ok=_parse_bool(payload.get("ok")),
+            measured=_parse_bool(payload.get("measured")),
+            output_text=str(payload.get("output_text") or ""),
+            error=_parse_optional_str(payload.get("error")),
+            latency_ms=_parse_optional_float(payload.get("latency_ms")),
+            ttft_ms=_parse_optional_float(payload.get("ttft_ms")),
+            peak_memory_mib=_parse_optional_float(payload.get("peak_memory_mib")),
+            resident_memory_mib=_parse_optional_float(payload.get("resident_memory_mib")),
+            quality_score=_parse_optional_float(payload.get("quality_score")),
+            quality_loss=_parse_optional_float(payload.get("quality_loss")),
+            extra=extra,
+        )
+
 
 @dataclass(frozen=True)
 class SmokeResult:
@@ -88,3 +113,49 @@ class DeviceState:
     gpu_free_mib: float | None = None
     gpu_total_mib: float | None = None
     concurrency: int = 1
+
+
+@dataclass(frozen=True)
+class PolicyRunRecord:
+    policy: str
+    request_id: str
+    action_profile: str
+    ok: bool
+    measured: bool
+    placeholder: bool = False
+    reason: str = ""
+    error: str | None = None
+    latency_ms: float | None = None
+    ttft_ms: float | None = None
+    peak_memory_mib: float | None = None
+    resident_memory_mib: float | None = None
+    quality_loss: float | None = None
+    exact: bool = False
+    oracle: bool = False
+
+    def to_row(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _parse_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return float(text)
+
+
+def _parse_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None

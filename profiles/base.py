@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
@@ -14,6 +15,9 @@ class ProfileAdapter(ABC):
 
     name: str
     env: str
+
+    def __init__(self, runtime_config: dict[str, object] | None = None) -> None:
+        self.runtime_config = runtime_config or {}
 
     @abstractmethod
     def profiles(self) -> tuple[ProfileSpec, ...]:
@@ -113,9 +117,195 @@ def dry_profile_measurement(
         ttft_ms=latency_ms,
         peak_memory_mib=peak_memory_mib,
         resident_memory_mib=peak_memory_mib,
-        quality_loss=0.0 if spec.exact else None,
+        quality_loss=None,
         extra={
             "family": spec.family,
             "note": "dry_run仅验证统一表结构，尚未执行真实模型和profile kernel",
         },
     )
+
+
+def transformers_profile_measurement(
+    adapter: str,
+    env_name: str,
+    request: Request,
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    timeout_s: int | None = None,
+    pythonpath: Sequence[str] = (),
+    extra: dict[str, object] | None = None,
+) -> ProfileMeasurement:
+    model_name = str(runtime_config.get("profile_smoke_model") or runtime_config.get("pilot_model") or "")
+    if not model_name:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error="未配置 model.profile_smoke_model 或 model.pilot_model，无法执行真实 transformers profile。",
+            extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
+        )
+
+    payload = {
+        "model_name": model_name,
+        "prompt": request.prompt,
+        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
+        "cache_dir": runtime_config.get("model_cache_dir"),
+        "local_files_only": bool(runtime_config.get("local_files_only", True)),
+        "device_mode": spec.metadata.get("device_mode", "auto"),
+    }
+    code = _transformers_profile_code(payload)
+    env = os.environ.copy()
+    if pythonpath:
+        paths = [os.path.abspath(path) for path in pythonpath]
+        if env.get("PYTHONPATH"):
+            paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(paths)
+
+    command = ["conda", "run", "-n", env_name, "python", "-c", code]
+    try:
+        proc = subprocess.run(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s or int(runtime_config.get("timeout_s", 180)),
+            check=False,
+        )
+    except Exception as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"真实 transformers profile 启动失败: {type(exc).__name__}: {exc}",
+            extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
+        )
+
+    if proc.returncode != 0:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=(proc.stderr or proc.stdout).strip()[-1200:],
+            extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
+        )
+    try:
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"无法解析 transformers profile 输出: {exc}; output={proc.stdout[-1200:]}",
+            extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
+        )
+    ok = bool(result.get("ok"))
+    result_extra = {
+        "backend": "transformers",
+        "model": model_name,
+        **(extra or {}),
+    }
+    if not ok:
+        result_extra["unsupported"] = "true"
+    return ProfileMeasurement(
+        request_id=request.request_id,
+        profile=spec.name,
+        adapter=adapter,
+        ok=ok,
+        measured=ok,
+        output_text=str(result.get("output_text") or ""),
+        error=None if result.get("ok") else str(result.get("error") or ""),
+        latency_ms=_optional_float(result.get("latency_ms")),
+        ttft_ms=_optional_float(result.get("ttft_ms")),
+        peak_memory_mib=_optional_float(result.get("peak_memory_mib")),
+        resident_memory_mib=_optional_float(result.get("resident_memory_mib")),
+        extra=result_extra,
+    )
+
+
+def _transformers_profile_code(payload: dict[str, object]) -> str:
+    return textwrap.dedent(
+        f"""
+        import json
+        import resource
+        import time
+
+        payload = {payload!r}
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            model_name = payload["model_name"]
+            cache_dir = payload.get("cache_dir") or None
+            local_files_only = bool(payload.get("local_files_only"))
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                trust_remote_code=True,
+            )
+            device_mode = payload.get("device_mode", "auto")
+            has_cuda = torch.cuda.is_available()
+            kwargs = {{
+                "cache_dir": cache_dir,
+                "local_files_only": local_files_only,
+                "trust_remote_code": True,
+            }}
+            if device_mode == "cpu" or not has_cuda:
+                kwargs["device_map"] = "cpu"
+            else:
+                kwargs["device_map"] = "auto"
+                kwargs["torch_dtype"] = torch.float16
+            model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+            inputs = tokenizer(payload["prompt"], return_tensors="pt")
+            if device_mode != "cpu" and has_cuda:
+                inputs = {{key: value.to(model.device) for key, value in inputs.items()}}
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.synchronize()
+            start = time.perf_counter()
+            with torch.inference_mode():
+                output_ids = model.generate(
+                    **inputs,
+                    max_new_tokens=int(payload["max_new_tokens"]),
+                    do_sample=False,
+                    use_cache=True,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            if device_mode != "cpu" and has_cuda:
+                torch.cuda.synchronize()
+                peak_memory_mib = torch.cuda.max_memory_allocated() / 1024 / 1024
+            else:
+                peak_memory_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            latency_ms = (time.perf_counter() - start) * 1000
+            prompt_tokens = int(inputs["input_ids"].shape[-1])
+            generated_ids = output_ids[0][prompt_tokens:]
+            output_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            print(json.dumps({{
+                "ok": True,
+                "output_text": output_text,
+                "latency_ms": latency_ms,
+                "ttft_ms": latency_ms,
+                "peak_memory_mib": peak_memory_mib,
+                "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+            }}, ensure_ascii=False))
+        except Exception as exc:
+            print(json.dumps({{
+                "ok": False,
+                "error": type(exc).__name__ + ": " + str(exc)[:1000],
+            }}, ensure_ascii=False))
+        """
+    )
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)

@@ -11,9 +11,18 @@ class MeasuredReplayBackend(Backend):
 
     name = "measured_replay"
 
-    def __init__(self, measurements: Iterable[ProfileMeasurement]) -> None:
+    def __init__(self, measurements: Iterable[ProfileMeasurement], allow_dry_run: bool = False) -> None:
+        rows = list(measurements)
+        dry_rows = [measurement for measurement in rows if not measurement.measured]
+        if dry_rows and not allow_dry_run:
+            sample = dry_rows[0]
+            raise ValueError(
+                "MeasuredReplayBackend 默认只接受 measured=True 的实测 profile 表；"
+                f"发现 dry-run 行: request={sample.request_id} profile={sample.profile}。"
+                "如仅做 smoke，请显式传入 allow_dry_run=True。"
+            )
         self.measurements = {
-            (measurement.request_id, measurement.profile): measurement for measurement in measurements
+            (measurement.request_id, measurement.profile): measurement for measurement in rows
         }
 
     def run(self, requests: list[Request], profiles: list[str]) -> list[ProfileMeasurement]:

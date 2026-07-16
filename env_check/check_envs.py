@@ -2,7 +2,7 @@
 """Check TailGuardKV conda environment connectivity.
 
 Run from the host shell:
-    conda run -n tailguardkv-base python scripts/check_envs.py
+    conda run -n tailguardkv-base python env_check/check_envs.py
 """
 
 from __future__ import annotations
@@ -37,6 +37,12 @@ DEFAULT_CHECKS = (
             "lightgbm",
             "matplotlib",
             "pyarrow",
+            "datasets",
+            "evaluate",
+            "rouge_score",
+            "seaborn",
+            "jsonlines",
+            "huggingface_hub",
         ),
     ),
     EnvCheck("eng_vllm", "edgekv-vllm0110", ("torch", "vllm", "transformers", "ray")),

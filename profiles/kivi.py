@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe
+from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe, transformers_profile_measurement
 from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 
 
@@ -33,13 +33,18 @@ class KIVIAdapter(ProfileAdapter):
     def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
         spec = self.get_profile(profile_name)
         if not dry_run:
-            return ProfileMeasurement(
-                request_id=request.request_id,
-                profile=spec.name,
-                adapter=self.name,
-                ok=False,
-                measured=False,
-                error="真实 KIVI profile 尚未接入；下一步应绑定 KIVI model wrapper。",
+            return transformers_profile_measurement(
+                self.name,
+                self.env,
+                request,
+                spec,
+                self.runtime_config,
+                pythonpath=("third_party/KIVI",),
+                extra={
+                    "family": spec.family,
+                    "bits": spec.metadata.get("bits", ""),
+                    "profile_note": "KIVI-compatible transformers smoke; not claimed as final KIVI kernel result",
+                },
             )
         bits = int(spec.metadata["bits"])
         scale = max(request.prompt_chars, 1)
