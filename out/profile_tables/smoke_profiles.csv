@@ -1,19 +1,19 @@
-adapter,error,extra_family,extra_note,latency_ms,measured,ok,output_text,peak_memory_mib,profile,quality_loss,quality_score,request_id,resident_memory_mib,ttft_ms
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
-Answer:",0.138671875,full_gpu,0.0,,smoke_qa_001,0.138671875,5.68
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,full_gpu,0.0,,smoke_sum_001,0.1484375,6.08
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
-Answer:",0.138671875,full_cpu,0.0,,smoke_qa_001,0.138671875,5.68
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,full_cpu,0.0,,smoke_sum_001,0.1484375,6.08
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
-Answer:",0.138671875,recompute,0.0,,smoke_qa_001,0.138671875,5.68
-full,,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,recompute,0.0,,smoke_sum_001,0.1484375,6.08
-kivi,,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.39,False,True,"Question: What is KV cache used for in autoregressive decoding?
+adapter,error,extra_builtin_request_fallback,extra_family,extra_note,extra_request_source,extra_split,latency_ms,measured,ok,output_text,peak_memory_mib,profile,quality_loss,quality_score,request_id,resident_memory_mib,ttft_ms
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
+Answer:",0.138671875,full_gpu,,,smoke_qa_001,0.138671875,5.68
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,full_gpu,,,smoke_sum_001,0.1484375,6.08
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
+Answer:",0.138671875,full_cpu,,,smoke_qa_001,0.138671875,5.68
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,full_cpu,,,smoke_sum_001,0.1484375,6.08
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,5.68,False,True,"Question: What is KV cache used for in autoregressive decoding?
+Answer:",0.138671875,recompute,,,smoke_qa_001,0.138671875,5.68
+full,,true,full,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,6.08,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.1484375,recompute,,,smoke_sum_001,0.1484375,6.08
+kivi,,true,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,6.39,False,True,"Question: What is KV cache used for in autoregressive decoding?
 Answer:",0.03466796875,kivi_4bit,,,smoke_qa_001,0.03466796875,6.39
-kivi,,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.84,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.037109375,kivi_4bit,,,smoke_sum_001,0.037109375,6.84
-kivi,,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,6.745,False,True,"Question: What is KV cache used for in autoregressive decoding?
+kivi,,true,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,6.84,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.037109375,kivi_4bit,,,smoke_sum_001,0.037109375,6.84
+kivi,,true,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,6.745,False,True,"Question: What is KV cache used for in autoregressive decoding?
 Answer:",0.017333984375,kivi_2bit,,,smoke_qa_001,0.017333984375,6.745
-kivi,,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,7.22,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.0185546875,kivi_2bit,,,smoke_sum_001,0.0185546875,7.22
-h2o,,h2o,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,5.325,False,True,"Question: What is KV cache used for in autoregressive decoding?
+kivi,,true,kivi,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,7.22,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.0185546875,kivi_2bit,,,smoke_sum_001,0.0185546875,7.22
+h2o,,true,h2o,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,calibration,5.325,False,True,"Question: What is KV cache used for in autoregressive decoding?
 Answer:",0.0693359375,h2o_heavy_hitter,,,smoke_qa_001,0.0693359375,5.325
-h2o,,h2o,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,5.7,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.07421875,h2o_heavy_hitter,,,smoke_sum_001,0.07421875,5.7
+h2o,,true,h2o,dry_run仅验证统一表结构，尚未执行真实模型和profile kernel,builtin_smoke,eval,5.7,False,True,Summarize: KV cache compression can reduce memory but may hurt tail quality.,0.07421875,h2o_heavy_hitter,,,smoke_sum_001,0.07421875,5.7
