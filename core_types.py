@@ -48,7 +48,10 @@ class ProfileMeasurement:
         row = asdict(self)
         extra = row.pop("extra")
         for key, value in extra.items():
-            row[f"extra_{key}"] = value
+            if key in {"task", "length_bucket", "split"}:
+                row[key] = value
+            else:
+                row[f"extra_{key}"] = value
         return row
 
     @classmethod
@@ -58,6 +61,8 @@ class ProfileMeasurement:
         for key in list(payload):
             if key.startswith("extra_"):
                 extra[key.removeprefix("extra_")] = payload.pop(key)
+            elif key in {"task", "length_bucket", "split"}:
+                extra[key] = payload.pop(key)
 
         return cls(
             request_id=str(payload.get("request_id", "")),
@@ -100,6 +105,13 @@ class SmokeResult:
 class Action:
     profile: str
     reason: str = ""
+    pred_loss: float | None = None
+    risk_upper: float | None = None
+    safe: bool | None = None
+    epsilon: float | None = None
+    delta: float | None = None
+    fallback_reason: str = ""
+    controller_overhead_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +134,8 @@ class PolicyRunRecord:
     action_profile: str
     ok: bool
     measured: bool
+    task: str = "unknown"
+    length_bucket: str = "unknown"
     placeholder: bool = False
     reason: str = ""
     error: str | None = None
@@ -132,6 +146,13 @@ class PolicyRunRecord:
     quality_loss: float | None = None
     exact: bool = False
     oracle: bool = False
+    pred_loss: float | None = None
+    risk_upper: float | None = None
+    safe: bool | None = None
+    epsilon: float | None = None
+    delta: float | None = None
+    fallback_reason: str = ""
+    controller_overhead_ms: float | None = None
 
     def to_row(self) -> dict[str, Any]:
         return asdict(self)

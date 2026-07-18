@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe, transformers_profile_measurement
-from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from dataclasses import replace
+
+from profiles.base import ProfileAdapter, dry_profile_measurement, qwen2_kv_profile_measurement, run_conda_probe
+from core_types import ProfileSpec, Request, SmokeResult
 
 
 class KIVIAdapter(ProfileAdapter):
@@ -33,19 +35,20 @@ class KIVIAdapter(ProfileAdapter):
     def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
         spec = self.get_profile(profile_name)
         if not dry_run:
-            return transformers_profile_measurement(
+            row = qwen2_kv_profile_measurement(
                 self.name,
                 self.env,
                 request,
                 spec,
                 self.runtime_config,
-                pythonpath=("third_party/KIVI",),
                 extra={
                     "family": spec.family,
                     "bits": spec.metadata.get("bits", ""),
-                    "profile_note": "KIVI-compatible transformers smoke; not claimed as final KIVI kernel result",
                 },
             )
+            if not row.ok:
+                return replace(row, error=f"KIVI proof/runtime failed ({profile_name}): {row.error or ''}")
+            return row
         bits = int(spec.metadata["bits"])
         scale = max(request.prompt_chars, 1)
         memory_factor = 0.5 if bits == 4 else 0.25

@@ -1,0 +1,48 @@
+model:
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  profile_smoke_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
+
+profiles:
+  adapters:
+    - full
+    - kivi
+    - h2o
+  names:
+    - full_gpu
+    - kivi_4bit
+    - h2o_heavy_hitter
+
+policies:
+  names:
+    - full_lru
+    - static_best
+    - static_safe
+    - utility_dynamic
+    - uncalibrated_dynamic
+    - tailguard
+    - quality_oracle
+
+pilot:
+  epsilons: [0.05]
+  deltas: [0.05]
+  memory_budgets_mib: [6144]
+
+data:
+  requests: data/fixtures/e0_reproduce_requests.jsonl
+  calibration_fraction: 0.5
+
+profile_smoke:
+  max_new_tokens: 4
+  timeout_s: 600
+  repeat: 1
+  local_files_only: true
+  kivi_group_size: 32
+  kivi_residual_length: 32
+  h2o_heavy_ratio: 0.1
+  h2o_recent_ratio: 0.1
+
+outputs:
+  smoke_profiles: out/profile_tables/e0_measured_profiles.csv
+  smoke_profile_checks: out/profile_tables/e0_profile_smoke.csv
+  smoke_policy: out/policy_tables/e0_policy.csv
