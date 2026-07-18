@@ -18,9 +18,22 @@ python3 run_experiment.py reproduce-profiles --config configs/pilot.yaml --no-dr
 profile 表；`--allow-dry-run-replay` 仅用于 smoke。
 
 `reproduce-profiles` 默认尝试真实 transformers profile；`build-profile-table --dry-run`
-只验证表结构，质量指标会标为 unknown。KIVI/H2O 在 7 月闭环里使用 Llama/Mistral
-兼容小模型做 smoke，最终论文实验仍需替换为对应 kernel 的实测表；已有外部实测 CSV
-可通过 `build-profile-table --import-measurements path/to/measured.csv` 导入。
+只验证表结构，质量指标会标为 unknown。已有外部实测 CSV 可通过
+`build-profile-table --import-measurements path/to/measured.csv` 导入。
+
+## E0 三策略复现
+
+E0 只验收 `full_gpu`、`kivi_4bit`、`h2o_heavy_hitter` 三类 profile，三者使用同一个
+Qwen2.5 模型、同一组中等长度请求和同一条 quality_loss 计算链路：
+
+```bash
+conda run -n tailguardkv-base python run_experiment.py check-profiles --config configs/e0_reproduce.yaml --output out/profile_tables/e0_profile_smoke.csv
+conda run -n tailguardkv-base python run_experiment.py build-profile-table --config configs/e0_reproduce.yaml --no-dry-run --output out/profile_tables/e0_measured_profiles.csv
+conda run -n tailguardkv-base python run_experiment.py run-policies --config configs/e0_reproduce.yaml --measurements out/profile_tables/e0_measured_profiles.csv --output out/policy_tables/e0_policy.csv
+```
+
+`run-policies` 默认要求 profile 表全部为 `ok=True, measured=True`，且每个请求都包含
+配置中的三个 profile。`--allow-dry-run-replay` 仅保留给 smoke/debug。
 
 ## Pilot 资产准备
 
@@ -30,8 +43,8 @@ LongBench QA/长上下文任务和 XSum 摘要任务组成：LongBench `qasper` 
 XSum validation 取到 300 条，均按原始顺序取有效样本：
 
 ```bash
-conda run -n tailguardkv-base python scripts/prepare_pilot_assets.py --download-models --download-data --hf-endpoint https://hf-mirror.com
-conda run -n tailguardkv-base python env_check/check_envs.py --json
+conda run -n tailguardkv-base python env_asset_prepare/prepare_pilot_assets.py --download-models --download-data --hf-endpoint https://hf-mirror.com
+conda run -n tailguardkv-base python env_asset_prepare/check_envs.py --json
 conda run -n tailguardkv-base python run_experiment.py check-profiles --config configs/pilot.yaml --timeout 180
 conda run -n tailguardkv-base python run_experiment.py build-profile-table --config configs/pilot.yaml --dry-run --output out/profile_tables/pilot_dry_profiles.csv
 conda run -n tailguardkv-base python run_experiment.py run-policies --config configs/pilot.yaml --measurements out/profile_tables/pilot_dry_profiles.csv --allow-dry-run-replay

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from math import inf
 
+from calibration.conformal import ConformalGuard
+from calibration.predictor import MetadataOnlyRiskPredictor
 from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
 
 
@@ -16,12 +19,10 @@ class ProfileStats:
     mean_loss: float | None
     violation_rate: float | None
     p95_ttft_ms: float | None
-    mean_peak_memory_mib: float | None
+    p95_peak_memory_mib: float | None
 
 
 class Policy(ABC):
-    """所有 baseline 和 TailGuardKV 策略必须实现同一个决策接口。"""
-
     name: str
     placeholder: bool = False
     oracle: bool = False
@@ -32,20 +33,13 @@ class Policy(ABC):
 
 
 class StaticProfilePolicy(Policy):
-    """固定 profile baseline。"""
-
     def __init__(self, profile: str, name: str | None = None, placeholder: bool = False) -> None:
         self.profile = profile
         self.name = name or f"static_{profile}"
         self.placeholder = placeholder
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        return Action(profile=self.profile, reason="静态 profile baseline")
-
-
-class FullLRUPolicy(StaticProfilePolicy):
-    def __init__(self) -> None:
-        super().__init__("full_gpu", name="full_lru")
+        return Action(profile=self.profile, reason="static profile baseline")
 
 
 class StatsPolicy(Policy):
@@ -58,6 +52,7 @@ class StatsPolicy(Policy):
         delta: float,
         exact_profiles: set[str],
         placeholder: bool = True,
+        memory_budget_mib: float = float("inf"),
     ) -> None:
         self.name = name
         self.profiles = profiles
@@ -65,7 +60,15 @@ class StatsPolicy(Policy):
         self.delta = delta
         self.exact_profiles = exact_profiles
         self.placeholder = placeholder
+        self.memory_budget_mib = memory_budget_mib
         self.stats = _profile_stats(calibration_measurements, profiles, epsilon, exact_profiles)
+        self.predictor = MetadataOnlyRiskPredictor(list(calibration_measurements))
+        self.guard = ConformalGuard(
+            epsilon=epsilon,
+            delta=delta,
+            exact_profiles=exact_profiles,
+            calibration_rows=list(calibration_measurements),
+        )
 
     def _fallback_profile(self) -> str:
         for profile in ("full_gpu", "full_cpu", "recompute"):
@@ -89,9 +92,9 @@ class StatsPolicy(Policy):
 
     def _memory_or_inf(self, profile: str) -> float:
         stat = self.stats.get(profile)
-        if stat is None or stat.mean_peak_memory_mib is None:
+        if stat is None or stat.p95_peak_memory_mib is None:
             return inf
-        return stat.mean_peak_memory_mib
+        return stat.p95_peak_memory_mib
 
     def _best_profile(self, use_tail_constraint: bool) -> str:
         best_profile = self._fallback_profile()
@@ -112,150 +115,12 @@ class StatsPolicy(Policy):
                 best_score = score
         return best_profile
 
-
-class StaticBestPolicy(StatsPolicy):
-    def __init__(
-        self,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        super().__init__("static_best", calibration_measurements, profiles, epsilon, delta, exact_profiles)
-        self.profile = self._best_profile(use_tail_constraint=False)
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        return Action(profile=self.profile, reason="校准集聚合质量约束下的固定 profile")
-
-
-class StaticSafePolicy(StatsPolicy):
-    def __init__(
-        self,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        super().__init__("static_safe", calibration_measurements, profiles, epsilon, delta, exact_profiles)
-        self.profile = self._best_profile(use_tail_constraint=True)
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        return Action(profile=self.profile, reason="校准集 tail SLO 约束下的固定 profile")
-
-
-class UtilityDynamicPolicy(StatsPolicy):
-    def __init__(
-        self,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        super().__init__("utility_dynamic", calibration_measurements, profiles, epsilon, delta, exact_profiles)
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        best_profile = self._fallback_profile()
-        best_score = inf
-        for profile in self.profiles:
-            loss = self._loss_or_inf(profile)
-            score = self._ttft_or_inf(profile) + 0.05 * self._memory_or_inf(profile) + 1000.0 * loss
-            if score < best_score:
-                best_profile = profile
-                best_score = score
-        return Action(profile=best_profile, reason="占位 predictor：仅使用校准集聚合统计")
-
-
-class UncalibratedDynamicPolicy(StatsPolicy):
-    def __init__(
-        self,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        super().__init__("uncalibrated_dynamic", calibration_measurements, profiles, epsilon, delta, exact_profiles)
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        for profile in sorted(self.profiles, key=self._ttft_or_inf):
-            if self._loss_or_inf(profile) <= self.epsilon:
-                return Action(profile=profile, reason="占位点预测：校准统计满足阈值")
-        return Action(profile=self._fallback_profile(), reason="校准统计无安全近似动作，回退 exact")
-
-
-class TailGuardPolicy(StatsPolicy):
-    def __init__(
-        self,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        super().__init__("tailguard", calibration_measurements, profiles, epsilon, delta, exact_profiles)
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        safe_profiles = [
-            profile
-            for profile in self.profiles
-            if profile in self.exact_profiles or self._loss_or_inf(profile) <= self.epsilon
-        ]
-        if not safe_profiles:
-            return Action(profile=self._fallback_profile(), reason="占位 guard 安全集为空，回退 exact")
-        return Action(
-            profile=min(safe_profiles, key=self._ttft_or_inf),
-            reason="占位 guard：仅使用校准集聚合统计，未查评估真值",
-        )
-
-
-class QualityOraclePolicy(Policy):
-    def __init__(
-        self,
-        measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-    ) -> None:
-        self.name = "quality_oracle"
-        self.profiles = profiles
-        self.epsilon = epsilon
-        self.delta = delta
-        self.exact_profiles = exact_profiles
-        self.placeholder = True
-        self.oracle = True
-        self.measurements = {
-            (measurement.request_id, measurement.profile): measurement for measurement in measurements
-        }
-
-    def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        feasible = []
-        for profile in self.profiles:
-            measurement = self.measurements.get((request.request_id, profile))
-            if measurement is None or measurement.quality_loss is None:
-                continue
-            if measurement.quality_loss <= self.epsilon:
-                feasible.append(profile)
-        if not feasible:
-            feasible = [self._fallback_profile()]
-        return Action(profile=min(feasible, key=self._ttft_or_inf), reason="oracle 上界：允许查评估真值")
-
-    def _fallback_profile(self) -> str:
-        for profile in ("full_gpu", "full_cpu", "recompute"):
-            if profile in self.profiles:
-                return profile
-        return self.profiles[0]
-
-    def _ttft_or_inf(self, profile: str) -> float:
-        values = [
-            measurement.ttft_ms
-            for (request_id, row_profile), measurement in self.measurements.items()
-            if row_profile == profile and measurement.ttft_ms is not None
-        ]
-        return _percentile(values, 0.95)
+    def _predict_and_guard(self, request: Request, profile: str) -> tuple[float, float, bool, str]:
+        pred_loss = self.predictor.predict_loss(request, profile)
+        risk_upper = self.guard.risk_upper(request, profile, pred_loss)
+        safe = risk_upper <= self.epsilon or profile in self.exact_profiles
+        reason = "exact fallback" if profile in self.exact_profiles else ("calibrated safe" if safe else "calibrated unsafe")
+        return pred_loss, risk_upper, safe, reason
 
 
 def _profile_stats(
@@ -283,7 +148,7 @@ def _profile_stats(
             mean_loss=(sum(losses) / len(losses) if losses else None),
             violation_rate=(sum(1 for loss in losses if loss > epsilon) / len(losses) if losses else None),
             p95_ttft_ms=(_percentile(ttfts, 0.95) if ttfts else None),
-            mean_peak_memory_mib=(sum(memories) / len(memories) if memories else None),
+            p95_peak_memory_mib=(_percentile(memories, 0.95) if memories else None),
         )
     return stats
 

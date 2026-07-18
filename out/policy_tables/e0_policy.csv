@@ -1,0 +1,8 @@
+action_profile,controller_overhead_ms,delta,epsilon,error,exact,fallback_reason,latency_ms,length_bucket,measured,ok,oracle,peak_memory_mib,placeholder,policy,pred_loss,quality_loss,reason,request_id,resident_memory_mib,risk_upper,safe,task,ttft_ms
+full_gpu,,,,,True,,2324.7663751244545,medium,True,True,False,4482.38037109375,False,full_lru,,0.0,static profile baseline,e0_eval_medium_001,8687.7265625,,,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,exact fallback,2324.7663751244545,medium,True,True,False,4482.38037109375,True,static_best,0.0,0.0,static_best,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,exact fallback,2324.7663751244545,medium,True,True,False,4482.38037109375,True,static_safe,0.0,0.0,static_safe,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,exact fallback,2324.7663751244545,medium,True,True,False,4482.38037109375,True,utility_dynamic,0.0,0.0,utility_dynamic,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,点预测阈值通过,2324.7663751244545,medium,True,True,False,4482.38037109375,True,uncalibrated_dynamic,0.0,0.0,uncalibrated_dynamic,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,no feasible lossy candidate within memory budget; exact fallback,2324.7663751244545,medium,True,True,False,4482.38037109375,True,tailguard,0.0,0.0,tailguard,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545
+full_gpu,,0.05,0.05,,True,oracle,2324.7663751244545,medium,True,True,True,4482.38037109375,False,quality_oracle,0.0,0.0,oracle 上界：允许查评估真值,e0_eval_medium_001,8687.7265625,0.0,True,summary,2324.7663751244545

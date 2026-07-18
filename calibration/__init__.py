@@ -1,4 +1,7 @@
 from calibration.conformal import ConformalGuard
-from calibration.predictor import ConstantRiskPredictor
+from calibration.predictor import MetadataOnlyRiskPredictor
 
-__all__ = ["ConformalGuard", "ConstantRiskPredictor"]
+ConstantRiskPredictor = MetadataOnlyRiskPredictor
+
+__all__ = ["ConformalGuard", "MetadataOnlyRiskPredictor", "ConstantRiskPredictor"]
+

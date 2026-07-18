@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe, transformers_profile_measurement
-from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from dataclasses import replace
+
+from profiles.base import ProfileAdapter, dry_profile_measurement, qwen2_kv_profile_measurement, run_conda_probe
+from core_types import ProfileSpec, Request, SmokeResult
 
 
 class H2OAdapter(ProfileAdapter):
@@ -40,18 +42,19 @@ class H2OAdapter(ProfileAdapter):
     def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
         spec = self.get_profile(profile_name)
         if not dry_run:
-            return transformers_profile_measurement(
+            row = qwen2_kv_profile_measurement(
                 self.name,
                 self.env,
                 request,
                 spec,
                 self.runtime_config,
-                pythonpath=self.pythonpath,
                 extra={
                     "family": spec.family,
                     "strategy": spec.metadata.get("strategy", ""),
-                    "profile_note": "H2O-compatible transformers smoke; not claimed as final H2O kernel result",
                 },
             )
+            if not row.ok:
+                return replace(row, error=f"H2O proof/runtime failed ({profile_name}): {row.error or ''}")
+            return row
         scale = max(request.prompt_chars, 1)
         return dry_profile_measurement(self.name, request, spec, scale * 0.075, scale * 1.0 / 1024.0)

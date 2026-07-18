@@ -6,6 +6,7 @@ import subprocess
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pathlib import Path
 
 from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 
@@ -231,6 +232,126 @@ def transformers_profile_measurement(
     )
 
 
+def qwen2_kv_profile_measurement(
+    adapter: str,
+    env_name: str,
+    request: Request,
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    timeout_s: int | None = None,
+    extra: dict[str, object] | None = None,
+) -> ProfileMeasurement:
+    model_name = str(runtime_config.get("profile_smoke_model") or runtime_config.get("pilot_model") or "")
+    if not model_name:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error="未配置 model.profile_smoke_model 或 model.pilot_model，无法执行 Qwen2 KV runtime。",
+            extra={"backend": "qwen2_kv_runtime", "env": env_name, "unsupported": "true", **(extra or {})},
+        )
+
+    payload = {
+        "profile": spec.name,
+        "model_name": model_name,
+        "prompt": request.prompt,
+        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
+        "cache_dir": runtime_config.get("model_cache_dir"),
+        "local_files_only": bool(runtime_config.get("local_files_only", True)),
+        "bits": spec.metadata.get("bits"),
+        "kivi_group_size": int(runtime_config.get("kivi_group_size", 32)),
+        "kivi_residual_length": int(runtime_config.get("kivi_residual_length", 32)),
+        "h2o_heavy_ratio": float(runtime_config.get("h2o_heavy_ratio", 0.1)),
+        "h2o_recent_ratio": float(runtime_config.get("h2o_recent_ratio", 0.1)),
+    }
+    env = os.environ.copy()
+    repo_root = str(Path(__file__).resolve().parents[1])
+    python_paths = [repo_root]
+    current_pythonpath = env.get("PYTHONPATH")
+    if current_pythonpath:
+        python_paths.append(current_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
+    env["QWEN2_KV_PAYLOAD"] = json.dumps(payload, ensure_ascii=False)
+
+    command = ["conda", "run", "-n", env_name, "python", "-m", "profiles.qwen2_kv_runtime"]
+    try:
+        proc = subprocess.run(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s or int(runtime_config.get("timeout_s", 180)),
+            check=False,
+        )
+    except Exception as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"Qwen2 KV runtime 启动失败: {type(exc).__name__}: {exc}",
+            extra={"backend": "qwen2_kv_runtime", "env": env_name, "unsupported": "true", **(extra or {})},
+        )
+
+    result: dict[str, object]
+    try:
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"无法解析 Qwen2 KV runtime 输出: {exc}; stderr={(proc.stderr or '')[-800:]}; stdout={proc.stdout[-800:]}",
+            extra={"backend": "qwen2_kv_runtime", "env": env_name, "unsupported": "true", **(extra or {})},
+        )
+
+    ok = bool(result.get("ok")) and proc.returncode == 0
+    measured = ok and bool(result.get("measured"))
+    result_extra = {
+        "backend": str(result.get("backend") or "qwen2_kv_runtime"),
+        "env": env_name,
+        "model": model_name,
+        **(extra or {}),
+    }
+    for key, value in result.items():
+        if key in {
+            "ok",
+            "measured",
+            "output_text",
+            "error",
+            "latency_ms",
+            "ttft_ms",
+            "peak_memory_mib",
+            "resident_memory_mib",
+        }:
+            continue
+        result_extra[key] = value
+    if not measured:
+        result_extra["unsupported"] = "true"
+        if proc.returncode != 0:
+            result_extra["returncode"] = proc.returncode
+    return ProfileMeasurement(
+        request_id=request.request_id,
+        profile=spec.name,
+        adapter=adapter,
+        ok=ok,
+        measured=measured,
+        output_text=str(result.get("output_text") or ""),
+        error=None if ok else str(result.get("error") or (proc.stderr or proc.stdout).strip()[-1200:]),
+        latency_ms=_optional_float(result.get("latency_ms")),
+        ttft_ms=_optional_float(result.get("ttft_ms")),
+        peak_memory_mib=_optional_float(result.get("peak_memory_mib")),
+        resident_memory_mib=_optional_float(result.get("resident_memory_mib")),
+        extra=result_extra,
+    )
+
+
 def _transformers_profile_code(payload: dict[str, object]) -> str:
     return textwrap.dedent(
         f"""
@@ -288,6 +409,8 @@ def _transformers_profile_code(payload: dict[str, object]) -> str:
             prompt_tokens = int(inputs["input_ids"].shape[-1])
             generated_ids = output_ids[0][prompt_tokens:]
             output_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            if not output_text:
+                output_text = " ".join(str(int(token)) for token in generated_ids)
             print(json.dumps({{
                 "ok": True,
                 "output_text": output_text,
