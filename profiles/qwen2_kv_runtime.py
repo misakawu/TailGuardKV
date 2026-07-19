@@ -300,7 +300,7 @@ def _past_length(past_key_values: tuple[Any, ...] | None) -> int:
     return 0
 
 
-class Qwen2KIVIAttention:
+class _Qwen2KIVIAttentionImplFactory:
     def __new__(cls, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> Any:
         nn = modules["nn"]
 
@@ -418,7 +418,7 @@ class Qwen2KIVIAttention:
         return _Attention()
 
 
-class Qwen2H2OAttention:
+class _Qwen2H2OAttentionImplFactory:
     def __new__(cls, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> Any:
         nn = modules["nn"]
 
@@ -512,6 +512,48 @@ class Qwen2H2OAttention:
                 return torch.stack(pruned_k, dim=0).contiguous(), torch.stack(pruned_v, dim=0).contiguous()
 
         return _Attention()
+
+
+try:
+    from torch import nn as _torch_nn
+except Exception:
+    class _FallbackModule:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            return self.forward(*args, **kwargs)
+
+    class _FallbackNN:
+        Module = _FallbackModule
+
+    _torch_nn = _FallbackNN()
+
+
+class Qwen2KIVIAttention(_torch_nn.Module):
+    def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
+        super().__init__()
+        self.impl = _Qwen2KIVIAttentionImplFactory(source, config, layer_idx, tracker, bits, payload, modules)
+        self.source = source
+        self.config = config
+        self.layer_idx = layer_idx
+        self.tracker = tracker
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        return self.impl(*args, **kwargs)
+
+
+class Qwen2H2OAttention(_torch_nn.Module):
+    def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
+        super().__init__()
+        self.impl = _Qwen2H2OAttentionImplFactory(source, config, layer_idx, tracker, bits, payload, modules)
+        self.source = source
+        self.config = config
+        self.layer_idx = layer_idx
+        self.tracker = tracker
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        return self.impl(*args, **kwargs)
 
 
 def _apply_rope(attn: Any, query_states: Any, key_states: Any, value_states: Any, position_ids: Any, position_embeddings: Any, modules: dict[str, Any]) -> tuple[Any, Any]:

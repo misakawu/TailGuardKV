@@ -33,48 +33,70 @@ class ConformalGuard:
     epsilon: float
     delta: float
     exact_profiles: set[str] | None = None
+    profiles: list[str] | None = None
     calibration_rows: list[ProfileMeasurement] = field(default_factory=list)
     min_group_samples: int = 2
 
     def __post_init__(self) -> None:
         self.exact_profiles = self.exact_profiles or {"full_gpu", "full_cpu", "recompute"}
-        self.lossy_profiles = {
+        configured_lossy_profiles = {
+            profile
+            for profile in (self.profiles or [])
+            if profile not in self.exact_profiles
+        }
+        observed_lossy_profiles = {
             row.profile
             for row in self.calibration_rows
             if row.profile not in self.exact_profiles and row.quality_loss is not None
         }
+        self.lossy_profiles = configured_lossy_profiles | observed_lossy_profiles
         k = max(1, len(self.lossy_profiles))
         self.delta_a = self.delta / k
-        self._group_residuals = self._build_group_residuals(self.calibration_rows)
+        self._group_residuals = {} if not self.calibration_rows else self._build_group_residuals(self.calibration_rows)
 
-    def _predicted_loss_for_row(self, row: ProfileMeasurement, rows: list[ProfileMeasurement]) -> float:
+    def _predicted_loss_for_row(
+        self,
+        row: ProfileMeasurement,
+        group_sums: dict[tuple[str, str, str], float],
+        group_counts: dict[tuple[str, str, str], int],
+        profile_sums: dict[str, float],
+        profile_counts: dict[str, int],
+    ) -> float:
         task = str(row.extra.get("task") or "unknown")
         bucket = str(row.extra.get("length_bucket") or "unknown")
-        matched = [
-            other.quality_loss or 0.0
-            for other in rows
-            if other is not row
-            and other.profile == row.profile
-            and str(other.extra.get("task") or "unknown") == task
-            and str(other.extra.get("length_bucket") or "unknown") == bucket
-            and other.quality_loss is not None
-        ]
-        if not matched:
-            matched = [
-                other.quality_loss or 0.0
-                for other in rows
-                if other is not row and other.profile == row.profile and other.quality_loss is not None
-            ]
-        return sum(matched) / len(matched) if matched else 1.0
+        group_key = (task, bucket, row.profile)
+        group_count = group_counts.get(group_key, 0) - 1
+        if group_count > 0:
+            return (group_sums[group_key] - (row.quality_loss or 0.0)) / group_count
+        profile_count = profile_counts.get(row.profile, 0) - 1
+        if profile_count > 0:
+            return (profile_sums[row.profile] - (row.quality_loss or 0.0)) / profile_count
+        return 1.0
 
     def _build_group_residuals(self, rows: list[ProfileMeasurement]) -> dict[tuple[str, str, str], list[float]]:
         grouped: dict[tuple[str, str, str], list[float]] = defaultdict(list)
+        group_sums: dict[tuple[str, str, str], float] = defaultdict(float)
+        group_counts: dict[tuple[str, str, str], int] = defaultdict(int)
+        profile_sums: dict[str, float] = defaultdict(float)
+        profile_counts: dict[str, int] = defaultdict(int)
         for row in rows:
             if row.profile in self.exact_profiles or row.quality_loss is None:
                 continue
             task = str(row.extra.get("task") or "unknown")
             bucket = str(row.extra.get("length_bucket") or "unknown")
-            predicted_loss = self._predicted_loss_for_row(row, rows)
+            group_key = (task, bucket, row.profile)
+            loss = row.quality_loss or 0.0
+            group_sums[group_key] += loss
+            group_counts[group_key] += 1
+            profile_sums[row.profile] += loss
+            profile_counts[row.profile] += 1
+
+        for row in rows:
+            if row.profile in self.exact_profiles or row.quality_loss is None:
+                continue
+            task = str(row.extra.get("task") or "unknown")
+            bucket = str(row.extra.get("length_bucket") or "unknown")
+            predicted_loss = self._predicted_loss_for_row(row, group_sums, group_counts, profile_sums, profile_counts)
             residual = row.quality_loss - predicted_loss
             grouped[(task, bucket, row.profile)].append(residual)
             grouped[(task, "*", row.profile)].append(residual)
@@ -99,4 +121,3 @@ class ConformalGuard:
 
     def is_safe(self, request: Request, profile: str, predicted_loss: float) -> bool:
         return self.risk_upper(request, profile, predicted_loss) <= self.epsilon
-

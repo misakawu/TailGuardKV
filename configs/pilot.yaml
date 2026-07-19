@@ -31,6 +31,13 @@ pilot:
   deltas: [0.05, 0.10]
   memory_budgets_mib: [6144, 8192]
 
+tailguard:
+  stc:
+    cost_error_p95_ms: 0.0
+    switch_cost_ms: 0.0
+    min_residency_requests: 1
+    hysteresis_enabled: true
+
 data:
   requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
   calibration_fraction: 0.5

@@ -175,6 +175,16 @@ def transformers_profile_measurement(
             timeout=timeout_s or int(runtime_config.get("timeout_s", 180)),
             check=False,
         )
+    except subprocess.TimeoutExpired as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"timeout after {exc.timeout}s",
+            extra={"backend": "transformers", "unsupported": "true", "error_type": "timeout", **(extra or {})},
+        )
     except Exception as exc:
         return ProfileMeasurement(
             request_id=request.request_id,
@@ -285,6 +295,22 @@ def qwen2_kv_profile_measurement(
             text=True,
             timeout=timeout_s or int(runtime_config.get("timeout_s", 180)),
             check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=f"timeout after {exc.timeout}s",
+            extra={
+                "backend": "qwen2_kv_runtime",
+                "env": env_name,
+                "unsupported": "true",
+                "error_type": "timeout",
+                **(extra or {}),
+            },
         )
     except Exception as exc:
         return ProfileMeasurement(

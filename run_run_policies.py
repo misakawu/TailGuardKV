@@ -24,10 +24,13 @@ from policies.base import Policy
 from run_cli_common import add_policy_arguments, first_number, print_error, run_command
 
 
-def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str], list[str], float, float, float]:
+def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str], list[str | dict], float, float, float]:
     output = args.output or config.get("outputs", {}).get("smoke_policy", "out/policy_tables/smoke_policy.csv")
     profiles = args.profiles or config_profiles(config)
-    policy_names = args.policies or config_policies(config)
+    if getattr(args, "policy_config", None):
+        policy_names = config_policies(load_config(Path(args.policy_config)))
+    else:
+        policy_names = args.policies or config_policies(config)
     pilot = config.get("pilot", {})
     epsilon = first_number(args.epsilon, pilot.get("epsilons"), default=0.2, name="epsilon")
     delta = first_number(args.delta, pilot.get("deltas"), default=0.05, name="delta")
@@ -61,7 +64,7 @@ def _load_replay_inputs(
 
 
 def _build_policy_set(
-    policy_names: list[str],
+    policy_names: list[str | dict],
     calibration_measurements: list[ProfileMeasurement],
     measurements: list[ProfileMeasurement],
     profiles: list[str],
@@ -69,6 +72,7 @@ def _build_policy_set(
     delta: float,
     exact: set[str],
     memory_budget_mib: float,
+    tailguard_config: dict | None = None,
 ) -> list[Policy]:
     return build_policies(
         policy_names,
@@ -79,6 +83,7 @@ def _build_policy_set(
         delta,
         exact,
         memory_budget_mib=memory_budget_mib,
+        tailguard_config=tailguard_config,
     )
 
 
@@ -104,6 +109,13 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         delta=action.delta if action is not None else None,
         fallback_reason=action.fallback_reason if action is not None else "",
         controller_overhead_ms=action.controller_overhead_ms if action is not None else None,
+        controller_qrp_ms=action.controller_qrp_ms if action is not None else None,
+        controller_cg_ms=action.controller_cg_ms if action is not None else None,
+        controller_stc_ms=action.controller_stc_ms if action is not None else None,
+        oracle_cost_ms=action.oracle_cost_ms if action is not None else None,
+        optimality_gap=action.optimality_gap if action is not None else None,
+        audit_rate=action.audit_rate if action is not None else None,
+        drift_state=action.drift_state if action is not None else "",
     )
 
 
@@ -149,6 +161,13 @@ def _run_policy_matrix(
                         delta=action.delta,
                         fallback_reason=action.fallback_reason,
                         controller_overhead_ms=action.controller_overhead_ms,
+                        controller_qrp_ms=action.controller_qrp_ms,
+                        controller_cg_ms=action.controller_cg_ms,
+                        controller_stc_ms=action.controller_stc_ms,
+                        oracle_cost_ms=action.oracle_cost_ms,
+                        optimality_gap=action.optimality_gap,
+                        audit_rate=action.audit_rate,
+                        drift_state=action.drift_state,
                     )
                 )
             except Exception as exc:
@@ -161,7 +180,11 @@ def run_policies(args: argparse.Namespace) -> int:
         config = load_config(Path(args.config))
         output, profiles, policy_names, epsilon, delta, memory_budget_mib = _run_settings(args, config)
         measurements, calibration_measurements, requests = _load_replay_inputs(args, profiles)
-        backend = MeasuredReplayBackend(measurements, allow_dry_run=args.allow_dry_run_replay)
+        backend = MeasuredReplayBackend(
+            measurements,
+            allow_dry_run=args.allow_dry_run_replay,
+            use_pandas=getattr(args, "use_pandas_replay", False),
+        )
         exact = exact_profiles(profiles)
         policies = _build_policy_set(
             policy_names,
@@ -172,8 +195,9 @@ def run_policies(args: argparse.Namespace) -> int:
             delta,
             exact,
             memory_budget_mib,
+            config.get("tailguard", {}),
         )
-    except (FileNotFoundError, ValueError, KeyError, IndexError) as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print_error(exc)
         return 2
     records = _run_policy_matrix(policies, requests, backend, exact)

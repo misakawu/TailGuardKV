@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 
-def normalized_exact_match_loss(candidate: str, reference: str) -> float:
-    return 0.0 if candidate.strip() == reference.strip() else 1.0
+def normalized_exact_match_loss(candidate: str | None, reference: str | None) -> float:
+    return 0.0 if _normalize_text(candidate) == _normalize_text(reference) else 1.0
 
 
-def token_f1_loss(candidate: str, reference: str) -> float:
-    candidate_tokens = _tokenize(candidate)
-    reference_tokens = _tokenize(reference)
+def token_f1_loss(candidate: str | None, reference: str | None) -> float:
+    return _token_f1_loss(_tokenize(candidate), _tokenize(reference))
+
+
+def _token_f1_loss(candidate_tokens: Sequence[str], reference_tokens: Sequence[str]) -> float:
     if not candidate_tokens and not reference_tokens:
         return 0.0
     if not candidate_tokens or not reference_tokens:
@@ -23,9 +25,11 @@ def token_f1_loss(candidate: str, reference: str) -> float:
     return 1.0 - f1
 
 
-def rouge_l_loss(candidate: str, reference: str) -> float:
-    candidate_tokens = _tokenize(candidate)
-    reference_tokens = _tokenize(reference)
+def rouge_l_loss(candidate: str | None, reference: str | None) -> float:
+    return _rouge_l_loss(_tokenize(candidate), _tokenize(reference))
+
+
+def _rouge_l_loss(candidate_tokens: Sequence[str], reference_tokens: Sequence[str]) -> float:
     if not candidate_tokens and not reference_tokens:
         return 0.0
     if not candidate_tokens or not reference_tokens:
@@ -44,21 +48,34 @@ def select_primary_loss(task: str) -> str:
         return "f1"
     if task == "summary":
         return "rouge_l"
-    return "exact_match"
+    return "em"
 
 
-def compute_quality_loss(task: str, candidate: str, reference: str) -> tuple[float, dict[str, float]]:
+def compute_quality_loss(task: str, candidate: str | None, reference: str | None) -> tuple[float, dict[str, float]]:
+    if not _has_text(candidate) or not _has_text(reference):
+        metrics = {"em": 1.0, "f1": 1.0, "rouge_l": 1.0}
+        return metrics[select_primary_loss(task)], metrics
+    candidate_tokens = _tokenize(candidate)
+    reference_tokens = _tokenize(reference)
     metrics = {
         "em": normalized_exact_match_loss(candidate, reference),
-        "f1": token_f1_loss(candidate, reference),
-        "rouge_l": rouge_l_loss(candidate, reference),
+        "f1": _token_f1_loss(candidate_tokens, reference_tokens),
+        "rouge_l": _rouge_l_loss(candidate_tokens, reference_tokens),
     }
     primary = select_primary_loss(task)
     return metrics[primary], metrics
 
 
-def _tokenize(text: str) -> list[str]:
-    return [token for token in text.lower().split() if token]
+def _has_text(text: str | None) -> bool:
+    return bool(_normalize_text(text))
+
+
+def _normalize_text(text: str | None) -> str:
+    return (text or "").strip()
+
+
+def _tokenize(text: str | None) -> list[str]:
+    return [token for token in _normalize_text(text).lower().split() if token]
 
 
 def _overlap_count(candidate_tokens: Iterable[str], reference_tokens: Iterable[str]) -> int:
@@ -87,4 +104,3 @@ def _lcs_length(left: list[str], right: list[str]) -> int:
                 current.append(max(previous[index], current[-1]))
         previous = current
     return previous[-1]
-
