@@ -11,10 +11,14 @@ class Request:
     prompt: str
     reference: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    _prompt_chars: int = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_prompt_chars", len(self.prompt))
 
     @property
     def prompt_chars(self) -> int:
-        return len(self.prompt)
+        return self._prompt_chars
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,13 @@ class Action:
     delta: float | None = None
     fallback_reason: str = ""
     controller_overhead_ms: float | None = None
+    controller_qrp_ms: float | None = None
+    controller_cg_ms: float | None = None
+    controller_stc_ms: float | None = None
+    oracle_cost_ms: float | None = None
+    optimality_gap: float | None = None
+    audit_rate: float | None = None
+    drift_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -153,6 +164,13 @@ class PolicyRunRecord:
     delta: float | None = None
     fallback_reason: str = ""
     controller_overhead_ms: float | None = None
+    controller_qrp_ms: float | None = None
+    controller_cg_ms: float | None = None
+    controller_stc_ms: float | None = None
+    oracle_cost_ms: float | None = None
+    optimality_gap: float | None = None
+    audit_rate: float | None = None
+    drift_state: str = ""
 
     def to_row(self) -> dict[str, Any]:
         return asdict(self)

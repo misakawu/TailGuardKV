@@ -61,13 +61,15 @@ class StatsPolicy(Policy):
         self.exact_profiles = exact_profiles
         self.placeholder = placeholder
         self.memory_budget_mib = memory_budget_mib
-        self.stats = _profile_stats(calibration_measurements, profiles, epsilon, exact_profiles)
-        self.predictor = MetadataOnlyRiskPredictor(list(calibration_measurements))
+        calibration_rows = list(calibration_measurements)
+        self.stats = _profile_stats(calibration_rows, profiles, epsilon, exact_profiles)
+        self.predictor = MetadataOnlyRiskPredictor(calibration_rows)
         self.guard = ConformalGuard(
             epsilon=epsilon,
             delta=delta,
             exact_profiles=exact_profiles,
-            calibration_rows=list(calibration_measurements),
+            profiles=profiles,
+            calibration_rows=calibration_rows,
         )
 
     def _fallback_profile(self) -> str:
@@ -129,13 +131,14 @@ def _profile_stats(
     epsilon: float,
     exact_profiles: set[str],
 ) -> dict[str, ProfileStats]:
-    grouped: dict[str, list[ProfileMeasurement]] = {profile: [] for profile in profiles}
+    grouped: defaultdict[str, list[ProfileMeasurement]] = defaultdict(list)
     for measurement in measurements:
-        if measurement.profile in grouped:
+        if measurement.profile in profiles:
             grouped[measurement.profile].append(measurement)
 
     stats: dict[str, ProfileStats] = {}
-    for profile, rows in grouped.items():
+    for profile in profiles:
+        rows = grouped[profile]
         losses = [row.quality_loss for row in rows if row.quality_loss is not None]
         if profile in exact_profiles and not losses:
             losses = [0.0 for row in rows if row.ok and row.measured and row.output_text]

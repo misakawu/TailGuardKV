@@ -80,7 +80,6 @@ def build_profile_table(args: argparse.Namespace) -> int:
             require_measured=not args.dry_run,
         )
     except ValueError as exc:
-        write_csv(Path(output), [measurement.to_row() for measurement in measurements])
         print(json.dumps({
             "ok": False,
             "output": output,

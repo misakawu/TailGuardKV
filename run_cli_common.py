@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 
-KNOWN_SETUP_ERRORS = (FileNotFoundError, ValueError, KeyError, IndexError)
+KNOWN_SETUP_ERRORS = (FileNotFoundError, ValueError)
 
 
 def print_error(error: BaseException, **extra: Any) -> None:
@@ -45,9 +45,11 @@ def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output")
     parser.add_argument("--profiles", nargs="+")
     parser.add_argument("--policies", nargs="+")
+    parser.add_argument("--policy-config")
     parser.add_argument("--epsilon")
     parser.add_argument("--delta")
     parser.add_argument("--memory-budget-mib")
+    parser.add_argument("--use-pandas-replay", action="store_true")
     parser.add_argument("--allow-dry-run-replay", action="store_true")
 
 
@@ -70,8 +72,12 @@ def first_number(
     if value is not None:
         return finite_float(value, name)
     if values:
+        if isinstance(values, str):
+            return finite_float(values, name)
         try:
-            return finite_float(list(values)[0], name)
+            return finite_float(next(iter(values)), name)
+        except StopIteration:
+            return default
         except TypeError:
             return finite_float(values, name)
     return default
