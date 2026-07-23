@@ -7,6 +7,7 @@ import json
 import tempfile
 import time
 import subprocess
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 from pathlib import Path
 import unittest
@@ -25,7 +26,7 @@ from policies.registry import build_policies
 from policies.offline_ilp_oracle import solve_offline_oracle
 from policies.tailguard import TailGuardPolicy
 from profiles.base import qwen2_kv_profile_measurement
-from profiles.qwen2_kv_runtime import Qwen2H2OAttention, Qwen2KIVIAttention
+from profiles.qwen2_kv_runtime import H2OAttentionImpl, KIVIAttentionImpl, Qwen2H2OAttention, Qwen2KIVIAttention
 from run_build_profile_table import build_profile_table
 from run_cli_common import run_command
 from run_experiment import run_policies
@@ -692,6 +693,29 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(Qwen2H2OAttention.__name__, "Qwen2H2OAttention")
         self.assertTrue(hasattr(Qwen2KIVIAttention, "forward"))
         self.assertTrue(hasattr(Qwen2H2OAttention, "forward"))
+
+        try:
+            from torch import nn
+        except Exception:
+            class _Projection:
+                pass
+
+            nn = SimpleNamespace(Identity=_Projection)
+        source = SimpleNamespace(q_proj=nn.Identity(), k_proj=nn.Identity(), v_proj=nn.Identity(), o_proj=nn.Identity(), head_dim=4)
+        config = SimpleNamespace(hidden_size=8, num_attention_heads=2, num_key_value_heads=1)
+        modules = {
+            "nn": nn,
+            "torch": None,
+            "F": None,
+            "repeat_kv": None,
+            "cuda_bmm_fA_qB_outer": None,
+            "triton_quantize_and_pack_along_last_dim": None,
+            "apply_rotary_pos_emb": None,
+        }
+        kivi = Qwen2KIVIAttention(source, config, 0, {}, 4, {}, modules)
+        h2o = Qwen2H2OAttention(source, config, 0, {}, 0, {"h2o_heavy_size": 1, "h2o_recent_size": 1}, modules)
+        self.assertIsInstance(kivi.impl, KIVIAttentionImpl)
+        self.assertIsInstance(h2o.impl, H2OAttentionImpl)
 
     def test_qwen2_h2o_short_request_without_prune_is_unmeasured_failure(self) -> None:
         proc = Mock(

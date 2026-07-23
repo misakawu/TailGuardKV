@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from config_loader import (
-    _load_yaml_fallback,
-    _parse_scalar,
     config_adapters,
     config_policies,
     config_profiles,
@@ -30,8 +28,6 @@ from validation import (
 
 __all__ = [
     "REQUIRED_PROFILE_FIELDS",
-    "_load_yaml_fallback",
-    "_parse_scalar",
     "annotate_measurement",
     "config_adapters",
     "config_policies",

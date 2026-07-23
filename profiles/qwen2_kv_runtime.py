@@ -300,218 +300,6 @@ def _past_length(past_key_values: tuple[Any, ...] | None) -> int:
     return 0
 
 
-class _Qwen2KIVIAttentionImplFactory:
-    def __new__(cls, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> Any:
-        nn = modules["nn"]
-
-        class _Attention(nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.source = source
-                self.config = config
-                self.layer_idx = layer_idx
-                self.tracker = tracker
-                self.q_proj = source.q_proj
-                self.k_proj = source.k_proj
-                self.v_proj = source.v_proj
-                self.o_proj = source.o_proj
-                self.rotary_emb = getattr(source, "rotary_emb", None)
-                self.hidden_size = config.hidden_size
-                self.num_heads = config.num_attention_heads
-                self.head_dim = getattr(source, "head_dim", self.hidden_size // self.num_heads)
-                self.num_key_value_heads = config.num_key_value_heads
-                self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-                self.attention_dropout = getattr(source, "attention_dropout", 0.0)
-                self.is_causal = True
-                self.k_bits = bits
-                self.v_bits = bits
-                self.group_size = int(payload.get("kivi_group_size") or 32)
-                self.residual_length = int(payload.get("kivi_residual_length") or 32)
-
-            def forward(self, hidden_states: Any, attention_mask: Any = None, position_ids: Any = None, past_key_value: Any = None, output_attentions: bool = False, use_cache: bool = False, cache_position: Any = None, position_embeddings: Any = None, **kwargs: Any) -> tuple[Any, Any, Any]:
-                torch = modules["torch"]
-                F = modules["F"]
-                repeat_kv = modules["repeat_kv"]
-                cuda_bmm = modules["cuda_bmm_fA_qB_outer"]
-                quant_pack = modules["triton_quantize_and_pack_along_last_dim"]
-                bsz, q_len, _ = hidden_states.size()
-                query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-                key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-                value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-                past_key_value = _cache_to_legacy(past_key_value, self.layer_idx)
-                kv_seq_len = key_states.shape[-2] + (past_key_value[-1] if past_key_value is not None else 0)
-                query_states, key_states = _apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, modules)
-
-                if past_key_value is not None:
-                    key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, _ = past_key_value
-                    if key_q is not None:
-                        with torch.cuda.device(query_states.device):
-                            attn_q = cuda_bmm(self.group_size, query_states, key_q, key_scale, key_mn, self.k_bits)
-                        self.tracker["kivi_kernel_calls"] += 1
-                    else:
-                        attn_q = None
-                    key_full = torch.cat([key_full, key_states], dim=2) if key_full is not None else key_states
-                    attn_full = torch.matmul(query_states, repeat_kv(key_full, self.num_key_value_groups).transpose(2, 3))
-                    attn_weights = torch.cat([attn_q, attn_full], dim=-1) if attn_q is not None else attn_full
-                    attn_weights = attn_weights / math.sqrt(self.head_dim)
-                    if key_full.shape[-2] == self.residual_length:
-                        key_new, scale_new, mn_new = quant_pack(key_full.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
-                        self.tracker["kivi_quantize_calls"] += 1
-                        self.tracker["kivi_quantized_layers"] += 1
-                        self.tracker["kivi_quantized_tokens"] += int(key_full.shape[-2])
-                        key_full = None
-                        key_q = torch.cat([key_q, key_new], dim=3) if key_q is not None else key_new
-                        key_scale = torch.cat([key_scale, scale_new], dim=3) if key_scale is not None else scale_new
-                        key_mn = torch.cat([key_mn, mn_new], dim=3) if key_mn is not None else mn_new
-
-                    attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
-                    value_full = torch.cat([value_full, value_states], dim=2) if value_full is not None else value_states
-                    value_full_len = value_full.shape[-2]
-                    if value_q is None:
-                        attn_output = torch.matmul(attn_weights, repeat_kv(value_full, self.num_key_value_groups))
-                    else:
-                        with torch.cuda.device(query_states.device):
-                            attn_output = cuda_bmm(self.group_size, attn_weights[:, :, :, :-value_full_len], value_q, value_scale, value_mn, self.v_bits)
-                        self.tracker["kivi_kernel_calls"] += 1
-                        attn_output = attn_output + torch.matmul(attn_weights[:, :, :, -value_full_len:], repeat_kv(value_full, self.num_key_value_groups))
-                    if value_full_len > self.residual_length:
-                        value_new, scale_new, mn_new = quant_pack(value_full[:, :, :1, :].contiguous(), self.group_size, self.v_bits)
-                        self.tracker["kivi_quantize_calls"] += 1
-                        value_full = value_full[:, :, 1:, :].contiguous()
-                        value_q = torch.cat([value_q, value_new], dim=2) if value_q is not None else value_new
-                        value_scale = torch.cat([value_scale, scale_new], dim=2) if value_scale is not None else scale_new
-                        value_mn = torch.cat([value_mn, mn_new], dim=2) if value_mn is not None else mn_new
-                else:
-                    attn_weights = torch.matmul(query_states, repeat_kv(key_states, self.num_key_value_groups).transpose(2, 3)) / math.sqrt(self.head_dim)
-                    if key_states.shape[-2] < self.residual_length:
-                        key_q = None
-                        key_full = key_states
-                    else:
-                        quant_len = key_states.shape[-2] - (key_states.shape[-2] % self.residual_length)
-                        key_q_src = key_states[:, :, :quant_len, :].contiguous()
-                        key_full = key_states[:, :, quant_len:, :].contiguous() if quant_len < key_states.shape[-2] else None
-                        key_q, key_scale, key_mn = quant_pack(key_q_src.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
-                        self.tracker["kivi_quantize_calls"] += 1
-                        self.tracker["kivi_quantized_layers"] += 1
-                        self.tracker["kivi_quantized_tokens"] += int(quant_len)
-                    if key_states.shape[-2] < self.residual_length:
-                        key_scale = None
-                        key_mn = None
-                    if value_states.shape[-2] <= self.residual_length:
-                        value_q = None
-                        value_full = value_states
-                        value_scale = None
-                        value_mn = None
-                    else:
-                        value_q_src = value_states[:, :, :-self.residual_length, :].contiguous()
-                        value_full = value_states[:, :, -self.residual_length:, :].contiguous()
-                        value_q, value_scale, value_mn = quant_pack(value_q_src, self.group_size, self.v_bits)
-                        self.tracker["kivi_quantize_calls"] += 1
-                    attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
-                    attn_output = torch.matmul(attn_weights, repeat_kv(value_states, self.num_key_value_groups))
-
-                past = (key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, kv_seq_len) if use_cache else None
-                attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
-                attn_output = self.o_proj(attn_output)
-                return attn_output, (attn_weights if output_attentions else None), past
-
-        return _Attention()
-
-
-class _Qwen2H2OAttentionImplFactory:
-    def __new__(cls, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> Any:
-        nn = modules["nn"]
-
-        class _Attention(nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.source = source
-                self.config = config
-                self.layer_idx = layer_idx
-                self.tracker = tracker
-                self.q_proj = source.q_proj
-                self.k_proj = source.k_proj
-                self.v_proj = source.v_proj
-                self.o_proj = source.o_proj
-                self.rotary_emb = getattr(source, "rotary_emb", None)
-                self.hidden_size = config.hidden_size
-                self.num_heads = config.num_attention_heads
-                self.head_dim = getattr(source, "head_dim", self.hidden_size // self.num_heads)
-                self.num_key_value_heads = config.num_key_value_heads
-                self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-                self.hh_size = int(payload["h2o_heavy_size"])
-                self.recent_size = int(payload["h2o_recent_size"])
-                self.cache_budget = self.hh_size + self.recent_size
-                self.hh_score = None
-
-            def forward(self, hidden_states: Any, attention_mask: Any = None, position_ids: Any = None, past_key_value: Any = None, output_attentions: bool = False, use_cache: bool = False, cache_position: Any = None, position_embeddings: Any = None, **kwargs: Any) -> tuple[Any, Any, Any]:
-                torch = modules["torch"]
-                repeat_kv = modules["repeat_kv"]
-                bsz, q_len, _ = hidden_states.size()
-                query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-                key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-                value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-                past_key_value = _cache_to_legacy(past_key_value, self.layer_idx)
-                query_states, key_states = _apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, modules)
-                if past_key_value is not None:
-                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
-                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
-                kv_seq_len = key_states.shape[-2]
-                key_for_attn = repeat_kv(key_states, self.num_key_value_groups)
-                value_for_attn = repeat_kv(value_states, self.num_key_value_groups)
-                attn_weights = torch.matmul(query_states, key_for_attn.transpose(2, 3)) / math.sqrt(self.head_dim)
-                attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
-                attn_output = torch.matmul(attn_weights, value_for_attn)
-                past = (key_states, value_states) if use_cache else None
-                if past is not None:
-                    past = self._prune(past, attn_weights.detach())
-                attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
-                return self.o_proj(attn_output), (attn_weights if output_attentions else None), past
-
-            def _prune(self, past: tuple[Any, Any], attn_weights: Any) -> tuple[Any, Any]:
-                torch = modules["torch"]
-                num_new_tokens = int(attn_weights.shape[2])
-                scores = attn_weights.sum(dim=2)
-                if self.num_key_value_groups > 1:
-                    scores = scores.view(scores.shape[0], self.num_key_value_heads, self.num_key_value_groups, scores.shape[-1]).sum(dim=2)
-                if self.hh_score is None:
-                    self.hh_score = scores.sum(dim=0)
-                else:
-                    updated = scores.sum(dim=0)
-                    old_len = min(self.hh_score.shape[-1], updated.shape[-1] - num_new_tokens)
-                    if old_len > 0:
-                        updated[:, :old_len] += self.hh_score[:, :old_len]
-                    self.hh_score = updated
-                seq_len = past[0].shape[2]
-                if seq_len <= self.cache_budget:
-                    self.tracker["h2o_kept_tokens"] = max(self.tracker["h2o_kept_tokens"], int(seq_len))
-                    return past
-                select_len = max(1, seq_len - self.recent_size)
-                hh_size = min(self.hh_size, select_len)
-                _, keep_topk = torch.topk(self.hh_score[:, :select_len], hh_size, dim=-1)
-                keep_topk = keep_topk.sort().values
-                recent = torch.arange(seq_len - self.recent_size, seq_len, device=keep_topk.device).repeat(self.num_key_value_heads, 1)
-                keep_idx = torch.cat([keep_topk, recent], dim=-1)
-                pruned_k = []
-                pruned_v = []
-                for batch_idx in range(past[0].shape[0]):
-                    head_k = []
-                    head_v = []
-                    for head_idx in range(self.num_key_value_heads):
-                        idx = keep_idx[head_idx]
-                        head_k.append(past[0][batch_idx, head_idx].index_select(0, idx))
-                        head_v.append(past[1][batch_idx, head_idx].index_select(0, idx))
-                    pruned_k.append(torch.stack(head_k, dim=0))
-                    pruned_v.append(torch.stack(head_v, dim=0))
-                mask = torch.zeros_like(self.hh_score, dtype=torch.bool)
-                mask.scatter_(1, keep_idx, True)
-                self.hh_score = self.hh_score[mask].view(self.num_key_value_heads, -1)
-                self.tracker["h2o_prune_events"] += 1
-                self.tracker["h2o_mask_events"] += 1
-                self.tracker["h2o_kept_tokens"] = int(keep_idx.shape[-1])
-                return torch.stack(pruned_k, dim=0).contiguous(), torch.stack(pruned_v, dim=0).contiguous()
-
-        return _Attention()
 
 
 try:
@@ -530,10 +318,218 @@ except Exception:
     _torch_nn = _FallbackNN()
 
 
+class KIVIAttentionImpl(_torch_nn.Module):
+    def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
+        super().__init__()
+        self.modules = modules
+        self.source = source
+        self.config = config
+        self.layer_idx = layer_idx
+        self.tracker = tracker
+        self.q_proj = source.q_proj
+        self.k_proj = source.k_proj
+        self.v_proj = source.v_proj
+        self.o_proj = source.o_proj
+        self.rotary_emb = getattr(source, "rotary_emb", None)
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = getattr(source, "head_dim", self.hidden_size // self.num_heads)
+        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.attention_dropout = getattr(source, "attention_dropout", 0.0)
+        self.is_causal = True
+        self.k_bits = bits
+        self.v_bits = bits
+        self.group_size = int(payload.get("kivi_group_size") or 32)
+        self.residual_length = int(payload.get("kivi_residual_length") or 32)
+
+    def forward(self, hidden_states: Any, attention_mask: Any = None, position_ids: Any = None, past_key_value: Any = None, output_attentions: bool = False, use_cache: bool = False, cache_position: Any = None, position_embeddings: Any = None, **kwargs: Any) -> tuple[Any, Any, Any]:
+        torch = self.modules["torch"]
+        nn = self.modules["nn"]
+        F = self.modules["F"]
+        repeat_kv = self.modules["repeat_kv"]
+        cuda_bmm = self.modules["cuda_bmm_fA_qB_outer"]
+        quant_pack = self.modules["triton_quantize_and_pack_along_last_dim"]
+        bsz, q_len, _ = hidden_states.size()
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        past_key_value = _cache_to_legacy(past_key_value, self.layer_idx)
+        kv_seq_len = key_states.shape[-2] + (past_key_value[-1] if past_key_value is not None else 0)
+        query_states, key_states = _apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, self.modules)
+
+        if past_key_value is not None:
+            key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, _ = past_key_value
+            if key_q is not None:
+                with torch.cuda.device(query_states.device):
+                    attn_q = cuda_bmm(self.group_size, query_states, key_q, key_scale, key_mn, self.k_bits)
+                self.tracker["kivi_kernel_calls"] += 1
+            else:
+                attn_q = None
+            key_full = torch.cat([key_full, key_states], dim=2) if key_full is not None else key_states
+            attn_full = torch.matmul(query_states, repeat_kv(key_full, self.num_key_value_groups).transpose(2, 3))
+            attn_weights = torch.cat([attn_q, attn_full], dim=-1) if attn_q is not None else attn_full
+            attn_weights = attn_weights / math.sqrt(self.head_dim)
+            if key_full.shape[-2] == self.residual_length:
+                key_new, scale_new, mn_new = quant_pack(key_full.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
+                self.tracker["kivi_quantize_calls"] += 1
+                self.tracker["kivi_quantized_layers"] += 1
+                self.tracker["kivi_quantized_tokens"] += int(key_full.shape[-2])
+                key_full = None
+                key_q = torch.cat([key_q, key_new], dim=3) if key_q is not None else key_new
+                key_scale = torch.cat([key_scale, scale_new], dim=3) if key_scale is not None else scale_new
+                key_mn = torch.cat([key_mn, mn_new], dim=3) if key_mn is not None else mn_new
+
+            attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
+            value_full = torch.cat([value_full, value_states], dim=2) if value_full is not None else value_states
+            value_full_len = value_full.shape[-2]
+            if value_q is None:
+                attn_output = torch.matmul(attn_weights, repeat_kv(value_full, self.num_key_value_groups))
+            else:
+                with torch.cuda.device(query_states.device):
+                    attn_output = cuda_bmm(self.group_size, attn_weights[:, :, :, :-value_full_len], value_q, value_scale, value_mn, self.v_bits)
+                self.tracker["kivi_kernel_calls"] += 1
+                attn_output = attn_output + torch.matmul(attn_weights[:, :, :, -value_full_len:], repeat_kv(value_full, self.num_key_value_groups))
+            if value_full_len > self.residual_length:
+                value_new, scale_new, mn_new = quant_pack(value_full[:, :, :1, :].contiguous(), self.group_size, self.v_bits)
+                self.tracker["kivi_quantize_calls"] += 1
+                value_full = value_full[:, :, 1:, :].contiguous()
+                value_q = torch.cat([value_q, value_new], dim=2) if value_q is not None else value_new
+                value_scale = torch.cat([value_scale, scale_new], dim=2) if value_scale is not None else scale_new
+                value_mn = torch.cat([value_mn, mn_new], dim=2) if value_mn is not None else mn_new
+        else:
+            attn_weights = torch.matmul(query_states, repeat_kv(key_states, self.num_key_value_groups).transpose(2, 3)) / math.sqrt(self.head_dim)
+            if key_states.shape[-2] < self.residual_length:
+                key_q = None
+                key_full = key_states
+            else:
+                quant_len = key_states.shape[-2] - (key_states.shape[-2] % self.residual_length)
+                key_q_src = key_states[:, :, :quant_len, :].contiguous()
+                key_full = key_states[:, :, quant_len:, :].contiguous() if quant_len < key_states.shape[-2] else None
+                key_q, key_scale, key_mn = quant_pack(key_q_src.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
+                self.tracker["kivi_quantize_calls"] += 1
+                self.tracker["kivi_quantized_layers"] += 1
+                self.tracker["kivi_quantized_tokens"] += int(quant_len)
+            if key_states.shape[-2] < self.residual_length:
+                key_scale = None
+                key_mn = None
+            if value_states.shape[-2] <= self.residual_length:
+                value_q = None
+                value_full = value_states
+                value_scale = None
+                value_mn = None
+            else:
+                value_q_src = value_states[:, :, :-self.residual_length, :].contiguous()
+                value_full = value_states[:, :, -self.residual_length:, :].contiguous()
+                value_q, value_scale, value_mn = quant_pack(value_q_src, self.group_size, self.v_bits)
+                self.tracker["kivi_quantize_calls"] += 1
+            attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
+            attn_output = torch.matmul(attn_weights, repeat_kv(value_states, self.num_key_value_groups))
+
+        past = (key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, kv_seq_len) if use_cache else None
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
+        attn_output = self.o_proj(attn_output)
+        return attn_output, (attn_weights if output_attentions else None), past
+
+
+
+class H2OAttentionImpl(_torch_nn.Module):
+    def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
+        super().__init__()
+        self.modules = modules
+        self.source = source
+        self.config = config
+        self.layer_idx = layer_idx
+        self.tracker = tracker
+        self.q_proj = source.q_proj
+        self.k_proj = source.k_proj
+        self.v_proj = source.v_proj
+        self.o_proj = source.o_proj
+        self.rotary_emb = getattr(source, "rotary_emb", None)
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = getattr(source, "head_dim", self.hidden_size // self.num_heads)
+        self.num_key_value_heads = config.num_key_value_heads
+        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
+        self.hh_size = int(payload["h2o_heavy_size"])
+        self.recent_size = int(payload["h2o_recent_size"])
+        self.cache_budget = self.hh_size + self.recent_size
+        self.hh_score = None
+
+    def forward(self, hidden_states: Any, attention_mask: Any = None, position_ids: Any = None, past_key_value: Any = None, output_attentions: bool = False, use_cache: bool = False, cache_position: Any = None, position_embeddings: Any = None, **kwargs: Any) -> tuple[Any, Any, Any]:
+        torch = self.modules["torch"]
+        nn = self.modules["nn"]
+        repeat_kv = self.modules["repeat_kv"]
+        bsz, q_len, _ = hidden_states.size()
+        query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        past_key_value = _cache_to_legacy(past_key_value, self.layer_idx)
+        query_states, key_states = _apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, self.modules)
+        if past_key_value is not None:
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+        kv_seq_len = key_states.shape[-2]
+        key_for_attn = repeat_kv(key_states, self.num_key_value_groups)
+        value_for_attn = repeat_kv(value_states, self.num_key_value_groups)
+        attn_weights = torch.matmul(query_states, key_for_attn.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
+        attn_output = torch.matmul(attn_weights, value_for_attn)
+        past = (key_states, value_states) if use_cache else None
+        if past is not None:
+            past = self._prune(past, attn_weights.detach())
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
+        return self.o_proj(attn_output), (attn_weights if output_attentions else None), past
+
+    def _prune(self, past: tuple[Any, Any], attn_weights: Any) -> tuple[Any, Any]:
+        torch = self.modules["torch"]
+        num_new_tokens = int(attn_weights.shape[2])
+        scores = attn_weights.sum(dim=2)
+        if self.num_key_value_groups > 1:
+            scores = scores.view(scores.shape[0], self.num_key_value_heads, self.num_key_value_groups, scores.shape[-1]).sum(dim=2)
+        if self.hh_score is None:
+            self.hh_score = scores.sum(dim=0)
+        else:
+            updated = scores.sum(dim=0)
+            old_len = min(self.hh_score.shape[-1], updated.shape[-1] - num_new_tokens)
+            if old_len > 0:
+                updated[:, :old_len] += self.hh_score[:, :old_len]
+            self.hh_score = updated
+        seq_len = past[0].shape[2]
+        if seq_len <= self.cache_budget:
+            self.tracker["h2o_kept_tokens"] = max(self.tracker["h2o_kept_tokens"], int(seq_len))
+            return past
+        select_len = max(1, seq_len - self.recent_size)
+        hh_size = min(self.hh_size, select_len)
+        _, keep_topk = torch.topk(self.hh_score[:, :select_len], hh_size, dim=-1)
+        keep_topk = keep_topk.sort().values
+        recent = torch.arange(seq_len - self.recent_size, seq_len, device=keep_topk.device).repeat(self.num_key_value_heads, 1)
+        keep_idx = torch.cat([keep_topk, recent], dim=-1)
+        pruned_k = []
+        pruned_v = []
+        for batch_idx in range(past[0].shape[0]):
+            head_k = []
+            head_v = []
+            for head_idx in range(self.num_key_value_heads):
+                idx = keep_idx[head_idx]
+                head_k.append(past[0][batch_idx, head_idx].index_select(0, idx))
+                head_v.append(past[1][batch_idx, head_idx].index_select(0, idx))
+            pruned_k.append(torch.stack(head_k, dim=0))
+            pruned_v.append(torch.stack(head_v, dim=0))
+        mask = torch.zeros_like(self.hh_score, dtype=torch.bool)
+        mask.scatter_(1, keep_idx, True)
+        self.hh_score = self.hh_score[mask].view(self.num_key_value_heads, -1)
+        self.tracker["h2o_prune_events"] += 1
+        self.tracker["h2o_mask_events"] += 1
+        self.tracker["h2o_kept_tokens"] = int(keep_idx.shape[-1])
+        return torch.stack(pruned_k, dim=0).contiguous(), torch.stack(pruned_v, dim=0).contiguous()
+
+
+
 class Qwen2KIVIAttention(_torch_nn.Module):
     def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
         super().__init__()
-        self.impl = _Qwen2KIVIAttentionImplFactory(source, config, layer_idx, tracker, bits, payload, modules)
+        self.impl = KIVIAttentionImpl(source, config, layer_idx, tracker, bits, payload, modules)
         self.source = source
         self.config = config
         self.layer_idx = layer_idx
@@ -546,7 +542,7 @@ class Qwen2KIVIAttention(_torch_nn.Module):
 class Qwen2H2OAttention(_torch_nn.Module):
     def __init__(self, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
         super().__init__()
-        self.impl = _Qwen2H2OAttentionImplFactory(source, config, layer_idx, tracker, bits, payload, modules)
+        self.impl = H2OAttentionImpl(source, config, layer_idx, tracker, bits, payload, modules)
         self.source = source
         self.config = config
         self.layer_idx = layer_idx

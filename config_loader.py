@@ -3,79 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 def load_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"配置文件不存在: {path}")
-    try:
-        import yaml
-    except ModuleNotFoundError:
-        return _load_yaml_fallback(path)
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"配置文件顶层必须是 mapping: {path}")
     return payload
-
-
-def _load_yaml_fallback(path: Path) -> dict[str, Any]:
-    """本地环境缺 PyYAML 时的最小 fallback；生产/实验环境应安装 PyYAML。"""
-
-    config: dict[str, Any] = {}
-    section: str | None = None
-    list_key: str | None = None
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip(" "))
-        line = raw_line.strip()
-        if indent == 0 and line.endswith(":"):
-            section = line[:-1]
-            config[section] = {}
-            list_key = None
-            continue
-        if section is None:
-            raise ValueError(f"无法解析配置行: {raw_line}")
-        if indent == 2 and ":" in line:
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if value:
-                config[section][key] = _parse_scalar(value)
-                list_key = None
-            else:
-                config[section][key] = []
-                list_key = key
-            continue
-        if indent == 4 and ":" in line and list_key is not None:
-            if config[section][list_key] == []:
-                config[section][list_key] = {}
-            if not isinstance(config[section][list_key], dict):
-                raise ValueError(f"无法解析配置行: {raw_line}")
-            key, value = line.split(":", 1)
-            config[section][list_key][key.strip()] = _parse_scalar(value.strip())
-            continue
-        if indent == 4 and line.startswith("- ") and list_key is not None:
-            config[section][list_key].append(_parse_scalar(line[2:].strip()))
-            continue
-        raise ValueError(f"无法解析配置行: {raw_line}")
-    return config
-
-
-def _parse_scalar(value: str) -> Any:
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        if not inner:
-            return []
-        return [_parse_scalar(item.strip()) for item in inner.split(",")]
-    lowered = value.lower()
-    if lowered in {"true", "false"}:
-        return lowered == "true"
-    try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value.strip("\"'")
 
 
 def config_adapters(config: dict[str, Any]) -> list[str]:
