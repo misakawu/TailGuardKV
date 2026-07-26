@@ -39,6 +39,7 @@ def config_runtime(config: dict[str, Any]) -> dict[str, Any]:
     model = config.get("model", {})
     pilot = config.get("pilot", {})
     profile = config.get("profile_smoke", {})
+    data = config.get("data", {})
     return {
         "pilot_model": model.get("pilot_model") or model.get("path") or model.get("name"),
         "profile_smoke_model": model.get("profile_smoke_model") or model.get("path") or model.get("name"),
@@ -46,7 +47,11 @@ def config_runtime(config: dict[str, Any]) -> dict[str, Any]:
         "max_new_tokens": int(profile.get("max_new_tokens", pilot.get("max_new_tokens", 16))),
         "timeout_s": int(profile.get("timeout_s", profile.get("timeout", 180))),
         "repeat": int(profile.get("repeat", pilot.get("repeats", 1))),
+        "max_requests": int(data.get("max_requests", profile.get("max_requests", 0)) or 0),
         "local_files_only": bool(profile.get("local_files_only", True)),
+        "vllm_enforce_eager": bool(profile.get("vllm_enforce_eager", True)),
+        "vllm_gpu_memory_utilization": float(profile.get("vllm_gpu_memory_utilization", 0.75)),
+        "vllm_max_model_len": int(profile.get("vllm_max_model_len", 1024)),
         "kivi_group_size": int(profile.get("kivi_group_size", 32)),
         "kivi_residual_length": int(profile.get("kivi_residual_length", 32)),
         "h2o_heavy_ratio": float(profile.get("h2o_heavy_ratio", 0.1)),
@@ -54,9 +59,17 @@ def config_runtime(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def exact_profiles(profiles: list[str]) -> set[str]:
-    exact_names = {"full_gpu", "full_cpu", "recompute", "exact_offload"}
-    return {profile for profile in profiles if profile in exact_names or profile.startswith("full_")}
+def exact_profiles(profiles: list[str], config: dict[str, Any] | None = None) -> set[str]:
+    if config is not None:
+        profiles_config = config.get("profiles", {})
+        specs = profiles_config.get("specs", {}) if isinstance(profiles_config, dict) else {}
+        if isinstance(specs, dict) and specs:
+            return {
+                profile
+                for profile in profiles
+                if isinstance(specs.get(profile), dict) and bool(specs[profile].get("exact"))
+            }
+    return {profile for profile in profiles if profile == "engine_full_lru"}
 
 
 def _required_mapping(config: dict[str, Any], key: str) -> dict[str, Any]:

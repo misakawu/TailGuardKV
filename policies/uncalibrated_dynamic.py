@@ -19,7 +19,7 @@ class UncalibratedDynamicPolicy(StatsPolicy):
         super().__init__("uncalibrated_dynamic", calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib=memory_budget_mib)
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        for profile in sorted(self.profiles, key=self._ttft_or_inf):
+        for profile in sorted(self._candidate_profiles(), key=self._ttft_or_inf):
             pred_loss = self.predictor.predict_loss(request, profile)
             if pred_loss <= self.epsilon:
                 risk_upper = self.guard.risk_upper(request, profile, pred_loss)

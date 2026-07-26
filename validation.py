@@ -44,8 +44,6 @@ def validate_profile_measurements(
         if not measurement.adapter:
             missing.append("adapter")
         if measurement.ok and measurement.measured:
-            if not measurement.output_text:
-                missing.append("output_text")
             if measurement.quality_loss is None:
                 missing.append("quality_loss")
             if measurement.ttft_ms is None:

@@ -33,7 +33,7 @@ class MetadataOnlyRiskPredictor:
         ]
 
     def predict_loss(self, request: Request, profile: str) -> float:
-        if profile.startswith("full") or profile == "recompute" or profile in {"full_gpu", "full_cpu"}:
+        if profile == "engine_full_lru":
             return 0.0
         bucket = str(request.metadata.get("length_bucket") or _length_bucket(request.prompt_chars))
         task = str(request.task or request.metadata.get("task") or "unknown")
@@ -48,4 +48,3 @@ class MetadataOnlyRiskPredictor:
         if matched:
             return sum(row.quality_loss or 0.0 for row in matched) / len(matched)
         return self.default_loss
-

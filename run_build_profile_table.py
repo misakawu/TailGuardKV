@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,9 +29,112 @@ from profiles.registry import build_profile_adapters
 from run_cli_common import add_profile_table_arguments, print_error, run_command
 
 
+PROFILE_CHUNK_SIZE = 10
+PROFILE_TABLE_FIELDNAMES = [
+    "adapter",
+    "error",
+    "latency_ms",
+    "measured",
+    "ok",
+    "output_text",
+    "peak_memory_mib",
+    "profile",
+    "quality_loss",
+    "quality_score",
+    "request_id",
+    "resident_memory_mib",
+    "ttft_ms",
+    "length_bucket",
+    "split",
+    "task",
+    "extra_backend",
+    "extra_bits",
+    "extra_builtin_request_fallback",
+    "extra_env",
+    "extra_error_type",
+    "extra_family",
+    "extra_h2o_recent_size",
+    "extra_h2o_selected_size",
+    "extra_kivi_bits",
+    "extra_kivi_group_size",
+    "extra_kivi_residual_length",
+    "extra_metric_em",
+    "extra_metric_f1",
+    "extra_metric_rouge_l",
+    "extra_model",
+    "extra_original_request_id",
+    "extra_profile_note",
+    "extra_reference",
+    "extra_repeat_index",
+    "extra_request_source",
+    "extra_returncode",
+    "extra_note",
+    "extra_strategy",
+    "extra_unsupported",
+    "extra_vllm_cache_hits",
+    "extra_vllm_cache_misses",
+    "extra_vllm_cached_blocks",
+    "extra_vllm_evictions",
+    "extra_vllm_policy_time_ms",
+    "extra_vllm_eviction_decision_time_ms",
+]
+
+
+def _request_chunks(requests: list, chunk_size: int = PROFILE_CHUNK_SIZE):
+    for start in range(0, len(requests), chunk_size):
+        yield start // chunk_size + 1, requests[start : start + chunk_size]
+
+
+def _append_profile_rows(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=PROFILE_TABLE_FIELDNAMES, extrasaction="ignore")
+        if needs_header:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def _print_chunk_progress(
+    *,
+    adapter: str,
+    profile: str,
+    chunk_index: int,
+    completed_requests: int,
+    total_requests: int,
+    rows: int,
+    output: str,
+) -> None:
+    print(
+        json.dumps(
+            {
+                "event": "profile_chunk_complete",
+                "adapter": adapter,
+                "profile": profile,
+                "chunk_index": chunk_index,
+                "completed_requests": completed_requests,
+                "total_requests": total_requests,
+                "percent": round(completed_requests * 100.0 / total_requests, 2) if total_requests else 100.0,
+                "rows": rows,
+                "output": output,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+    )
+
+
 def build_profile_table(args: argparse.Namespace) -> int:
-    config = load_config(Path(args.config))
-    output = args.output or config.get("outputs", {}).get("smoke_profiles", "out/profile_tables/smoke_profiles.csv")
+    try:
+        config = load_config(Path(args.config))
+        output = args.output or config.get("outputs", {}).get("smoke_profiles", "out/profile_tables/smoke_profiles.csv")
+    except (FileNotFoundError, ValueError) as exc:
+        print_error(exc, output=getattr(args, "output", None) or "")
+        return 2
+    except Exception as exc:
+        print_error(exc, output=getattr(args, "output", None) or "")
+        return 1
     if args.import_measurements:
         try:
             measurements = read_measurements(Path(args.import_measurements))
@@ -51,27 +156,68 @@ def build_profile_table(args: argparse.Namespace) -> int:
             "summary": summary,
         }), indent=2))
         return 0 if all(measurement.ok and measurement.measured for measurement in measurements) else 1
-    profiles = config_profiles(config)
-    runtime = config_runtime(config)
-    adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
-    requests, fallback_requests = load_requests(config)
-    requests = expand_repeated_requests(requests, int(runtime.get("repeat", 1)))
-    requests = [
-        replace(
-            request,
-            metadata={**request.metadata, "task": request.task, "length_bucket": length_bucket(request.prompt_chars)},
-        )
-        for request in requests
-    ]
-    measurements = []
-    for adapter in adapters:
-        for spec in adapter.profiles():
-            for request in requests:
+    try:
+        profiles = config_profiles(config)
+        runtime = config_runtime(config)
+        adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
+        requests, fallback_requests = load_requests(config)
+        max_requests = int(runtime.get("max_requests", 0) or 0)
+        if max_requests > 0:
+            requests = requests[:max_requests]
+        requests = expand_repeated_requests(requests, int(runtime.get("repeat", 1)))
+        requests = [
+            replace(
+                request,
+                metadata={**request.metadata, "task": request.task, "length_bucket": length_bucket(request.prompt_chars)},
+            )
+            for request in requests
+        ]
+        output_path = Path(output)
+        if output_path.exists():
+            output_path.unlink()
+        measurements = []
+        exact = exact_profiles(profiles, config)
+        for adapter in adapters:
+            for spec in adapter.profiles():
                 if spec.name not in profiles:
                     continue
-                measurements.append(annotate_measurement(adapter.profile(request, spec.name, dry_run=args.dry_run), request, fallback_requests))
+                for chunk_index, request_chunk in _request_chunks(requests):
+                    chunk_measurements = [
+                        annotate_measurement(measurement, request, fallback_requests)
+                        for measurement, request in zip(
+                            adapter.profile_many(request_chunk, spec.name, dry_run=args.dry_run),
+                            request_chunk,
+                            strict=True,
+                        )
+                    ]
+                    updated = with_quality(measurements + chunk_measurements, exact)
+                    chunk_measurements = updated[-len(chunk_measurements) :]
+                    validate_profile_measurements(
+                        chunk_measurements,
+                        output,
+                        required_profiles=[spec.name],
+                        require_measured=not args.dry_run,
+                    )
+                    measurements = updated
+                    _append_profile_rows(output_path, [measurement.to_row() for measurement in chunk_measurements])
+                    completed_requests = min(chunk_index * PROFILE_CHUNK_SIZE, len(requests))
+                    _print_chunk_progress(
+                        adapter=adapter.name,
+                        profile=spec.name,
+                        chunk_index=chunk_index,
+                        completed_requests=completed_requests,
+                        total_requests=len(requests),
+                        rows=len(measurements),
+                        output=output,
+                    )
+    except (FileNotFoundError, ValueError) as exc:
+        print_error(exc, output=output)
+        return 2
+    except Exception as exc:
+        print_error(exc, output=output)
+        return 1
 
-    measurements = with_quality(measurements, exact_profiles(profiles))
+    measurements = with_quality(measurements, exact_profiles(profiles, config))
     try:
         validate_profile_measurements(
             measurements,
