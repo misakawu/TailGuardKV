@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from math import inf
+from math import inf, isfinite
 
 from calibration.conformal import ConformalGuard
 from calibration.predictor import MetadataOnlyRiskPredictor
@@ -24,6 +24,8 @@ class ProfileStats:
 
 class Policy(ABC):
     name: str
+    # placeholder=True 表示当前策略是 smoke/replay 阶段的可替换控制器近似，
+    # oracle=True 表示策略读取了评估集真值或离线最优信息，只作为上界对照。
     placeholder: bool = False
     oracle: bool = False
 
@@ -60,7 +62,9 @@ class StatsPolicy(Policy):
         self.delta = delta
         self.exact_profiles = exact_profiles
         self.placeholder = placeholder
-        self.memory_budget_mib = memory_budget_mib
+        if not profiles:
+            raise ValueError(f"{name} 至少需要一个 profile")
+        self.memory_budget_mib = memory_budget_mib if memory_budget_mib > 0 else inf
         calibration_rows = list(calibration_measurements)
         self.stats = _profile_stats(calibration_rows, profiles, epsilon, exact_profiles)
         self.predictor = MetadataOnlyRiskPredictor(calibration_rows)
@@ -73,10 +77,30 @@ class StatsPolicy(Policy):
         )
 
     def _fallback_profile(self) -> str:
-        for profile in ("full_gpu", "full_cpu", "recompute"):
+        for profile in ("engine_full_lru",):
             if profile in self.profiles:
                 return profile
+        for profile in self.profiles:
+            if profile in self.exact_profiles:
+                return profile
         return self.profiles[0]
+
+    def _within_memory_budget(self, profile: str) -> bool:
+        if not isfinite(self.memory_budget_mib):
+            return True
+        memory = self._memory_or_inf(profile)
+        return memory <= self.memory_budget_mib
+
+    def _candidate_profiles(self, *, include_exact: bool = True) -> list[str]:
+        candidates = [
+            profile
+            for profile in self.profiles
+            if (include_exact or profile not in self.exact_profiles) and self._within_memory_budget(profile)
+        ]
+        if candidates:
+            return candidates
+        fallback = self._fallback_profile()
+        return [fallback]
 
     def _loss_or_inf(self, profile: str) -> float:
         stat = self.stats.get(profile)
@@ -99,9 +123,9 @@ class StatsPolicy(Policy):
         return stat.p95_peak_memory_mib
 
     def _best_profile(self, use_tail_constraint: bool) -> str:
-        best_profile = self._fallback_profile()
+        best_profile = ""
         best_score = inf
-        for profile in self.profiles:
+        for profile in self._candidate_profiles(include_exact=False):
             stat = self.stats.get(profile)
             if stat is None or stat.known_loss_count == 0:
                 continue
@@ -115,7 +139,7 @@ class StatsPolicy(Policy):
             if score < best_score:
                 best_profile = profile
                 best_score = score
-        return best_profile
+        return best_profile or self._fallback_profile()
 
     def _predict_and_guard(self, request: Request, profile: str) -> tuple[float, float, bool, str]:
         pred_loss = self.predictor.predict_loss(request, profile)

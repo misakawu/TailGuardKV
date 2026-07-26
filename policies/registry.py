@@ -3,11 +3,9 @@ from __future__ import annotations
 from core_types import ProfileMeasurement
 from policies.base import Policy, StaticProfilePolicy
 from policies.full_lru import FullLRUPolicy
-from policies.offline_ilp_oracle import OfflineILPOraclePolicy
 from policies.quality_oracle import QualityOraclePolicy
 from policies.static_best import StaticBestPolicy
 from policies.static_safe import StaticSafePolicy
-from policies.tailguard import TailGuardPolicy
 from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
 
@@ -21,7 +19,6 @@ def build_policies(
     delta: float,
     exact_profiles: set[str],
     memory_budget_mib: float = float("inf"),
-    tailguard_config: dict | None = None,
 ) -> list[Policy]:
     policies: list[Policy] = []
     for item in names:
@@ -40,25 +37,22 @@ def build_policies(
         elif name == "static_safe":
             policies.append(StaticSafePolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
         elif name == "utility_dynamic":
-            policies.append(UtilityDynamicPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
-        elif name == "uncalibrated_dynamic":
-            policies.append(UncalibratedDynamicPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
-        elif name == "tailguard":
             policies.append(
-                TailGuardPolicy(
+                UtilityDynamicPolicy(
                     calibration_measurements,
                     profiles,
                     epsilon,
                     delta,
                     exact_profiles,
                     memory_budget_mib,
-                    stc_config=(tailguard_config or {}).get("stc"),
+                    memory_weight=float(options.get("memory_weight", 0.05)),
+                    loss_weight=float(options.get("loss_weight", 1000.0)),
                 )
             )
+        elif name == "uncalibrated_dynamic":
+            policies.append(UncalibratedDynamicPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
         elif name == "quality_oracle":
             policies.append(QualityOraclePolicy(oracle_measurements, profiles, epsilon, delta, exact_profiles))
-        elif name == "offline_ilp_oracle":
-            policies.append(OfflineILPOraclePolicy(oracle_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
         else:
             raise ValueError(f"未知 policy: {name}")
     return policies

@@ -5,16 +5,24 @@ model:
 
 profiles:
   adapters:
-    - full
-    - kivi
-    - h2o
+    - vllm_lru
   names:
-    - full_gpu
-    - kivi_4bit
-    - kivi_2bit
-    - h2o_heavy_hitter
-    - full_cpu
-    - recompute
+    - engine_full_lru
+    - compress_light
+    - compress_heavy
+    - offload_default
+    - recompute_default
+  specs:
+    engine_full_lru:
+      exact: true
+    compress_light:
+      exact: false
+    compress_heavy:
+      exact: false
+    offload_default:
+      exact: false
+    recompute_default:
+      exact: false
 
 policies:
   names:
@@ -23,7 +31,6 @@ policies:
     - static_safe
     - utility_dynamic
     - uncalibrated_dynamic
-    - tailguard
     - quality_oracle
 
 pilot:
@@ -31,22 +38,19 @@ pilot:
   deltas: [0.05, 0.10]
   memory_budgets_mib: [6144, 8192]
 
-tailguard:
-  stc:
-    cost_error_p95_ms: 0.0
-    switch_cost_ms: 0.0
-    min_residency_requests: 1
-    hysteresis_enabled: true
-
 data:
   requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
   calibration_fraction: 0.5
+  max_requests: 200
 
 profile_smoke:
   max_new_tokens: 16
   timeout_s: 180
   repeat: 1
   local_files_only: true
+  vllm_enforce_eager: true
+  vllm_gpu_memory_utilization: 0.75
+  vllm_max_model_len: 1024
 
 outputs:
   smoke_profiles: out/profile_tables/smoke_profiles.csv

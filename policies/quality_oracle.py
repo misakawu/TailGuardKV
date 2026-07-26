@@ -36,7 +36,7 @@ class QualityOraclePolicy(Policy):
                 feasible.append(profile)
         if not feasible:
             feasible = [self._fallback_profile()]
-        chosen = min(feasible, key=self._ttft_or_inf)
+        chosen = min(feasible, key=lambda profile: self._request_ttft_or_inf(request.request_id, profile))
         measurement = self.measurements.get((request.request_id, chosen))
         return Action(
             profile=chosen,
@@ -50,7 +50,7 @@ class QualityOraclePolicy(Policy):
         )
 
     def _fallback_profile(self) -> str:
-        for profile in ("full_gpu", "full_cpu", "recompute"):
+        for profile in ("engine_full_lru",):
             if profile in self.profiles:
                 return profile
         return self.profiles[0]
@@ -62,3 +62,9 @@ class QualityOraclePolicy(Policy):
             if row_profile == profile and measurement.ttft_ms is not None
         ]
         return _percentile(values, 0.95)
+
+    def _request_ttft_or_inf(self, request_id: str, profile: str) -> float:
+        measurement = self.measurements.get((request_id, profile))
+        if measurement is None or measurement.ttft_ms is None:
+            return float("inf")
+        return measurement.ttft_ms

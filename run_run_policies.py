@@ -72,7 +72,6 @@ def _build_policy_set(
     delta: float,
     exact: set[str],
     memory_budget_mib: float,
-    tailguard_config: dict | None = None,
 ) -> list[Policy]:
     return build_policies(
         policy_names,
@@ -83,7 +82,6 @@ def _build_policy_set(
         delta,
         exact,
         memory_budget_mib=memory_budget_mib,
-        tailguard_config=tailguard_config,
     )
 
 
@@ -185,7 +183,7 @@ def run_policies(args: argparse.Namespace) -> int:
             allow_dry_run=args.allow_dry_run_replay,
             use_pandas=getattr(args, "use_pandas_replay", False),
         )
-        exact = exact_profiles(profiles)
+        exact = exact_profiles(profiles, config)
         policies = _build_policy_set(
             policy_names,
             calibration_measurements,
@@ -195,29 +193,35 @@ def run_policies(args: argparse.Namespace) -> int:
             delta,
             exact,
             memory_budget_mib,
-            config.get("tailguard", {}),
         )
     except (FileNotFoundError, ValueError) as exc:
         print_error(exc)
         return 2
+    except Exception as exc:
+        print_error(exc)
+        return 1
     records = _run_policy_matrix(policies, requests, backend, exact)
 
-    write_csv(Path(output), [record.to_row() for record in records])
-    summary = MetricCollector().summarize_policy_runs(records, epsilon=epsilon, delta=delta, exact_profiles=exact)
-    print(
-        json.dumps(
-            json_ready({
-                "output": output,
-                "rows": len(records),
-                "epsilon": epsilon,
-                "delta": delta,
-                "memory_budget_mib": memory_budget_mib,
-                "summary": summary,
-            }),
-            ensure_ascii=False,
-            indent=2,
+    try:
+        write_csv(Path(output), [record.to_row() for record in records])
+        summary = MetricCollector().summarize_policy_runs(records, epsilon=epsilon, delta=delta, exact_profiles=exact)
+        print(
+            json.dumps(
+                json_ready({
+                    "output": output,
+                    "rows": len(records),
+                    "epsilon": epsilon,
+                    "delta": delta,
+                    "memory_budget_mib": memory_budget_mib,
+                    "summary": summary,
+                }),
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-    )
+    except Exception as exc:
+        print_error(exc, output=output, rows=len(records))
+        return 1
     return 0 if all(record.ok for record in records) else 1
 
 

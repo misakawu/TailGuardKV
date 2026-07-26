@@ -4,32 +4,33 @@ import argparse
 import csv
 import io
 import json
+import math
 import tempfile
 import time
-import subprocess
 from types import SimpleNamespace
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from calibration.conformal import ConformalGuard
 from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
 from core_types import Action
 from core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
-from experiment_common import config_adapters, config_policies, config_profiles, load_config, validate_profile_measurements, with_quality, write_csv
+from experiment_common import config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, load_config, validate_profile_measurements, with_quality, write_csv
 from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, token_f1_loss
 from metrics import MetricCollector
 from policies.base import Policy
 from policies.registry import build_policies
-from policies.offline_ilp_oracle import solve_offline_oracle
-from policies.tailguard import TailGuardPolicy
-from profiles.base import qwen2_kv_profile_measurement
-from profiles.qwen2_kv_runtime import H2OAttentionImpl, KIVIAttentionImpl, Qwen2H2OAttention, Qwen2KIVIAttention
+from profiles.registry import build_profile_adapters
+from profiles.vllm_lru import VLLMLRUAdapter
+from vllm_lru_policy import create_vllm_policy
+import run_build_profile_table as profile_table_module
 from run_build_profile_table import build_profile_table
 from run_cli_common import run_command
-from run_experiment import run_policies
+from run_experiment import build_parser as build_experiment_parser, pilot_smoke_measured
+from run_run_policies import run_policies
 
 
 def _measurement(
@@ -116,117 +117,6 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(guard.risk_upper(request, "full_gpu", 0.9), 0.0)
         self.assertFalse(guard.is_safe(request, "kivi_4bit", 0.0))
 
-    def test_tailguard_falls_back_to_exact_when_no_safe_lossy_candidate(self) -> None:
-        rows = [
-            _measurement("eval1", "full_gpu", 0.0, ttft_ms=20.0, peak_memory_mib=120.0),
-            _measurement("eval1", "kivi_4bit", 0.4, ttft_ms=5.0, peak_memory_mib=60.0),
-        ]
-        policy = TailGuardPolicy(rows, ["full_gpu", "kivi_4bit"], 0.2, 0.05, {"full_gpu"})
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "full_gpu")
-        self.assertTrue(action.safe)
-
-    def test_tailguard_budget_pressure_chooses_lowest_stc_rho(self) -> None:
-        rows = [
-            _measurement("c1", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c2", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c1", "kivi_4bit", 0.1, ttft_ms=12.0, peak_memory_mib=60.0),
-            _measurement("c2", "kivi_4bit", 0.1, ttft_ms=12.0, peak_memory_mib=60.0),
-            _measurement("c1", "h2o_heavy_hitter", 0.1, ttft_ms=11.0, peak_memory_mib=100.0),
-            _measurement("c2", "h2o_heavy_hitter", 0.1, ttft_ms=11.0, peak_memory_mib=100.0),
-        ]
-        policy = TailGuardPolicy(
-            rows,
-            ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
-            0.2,
-            0.05,
-            {"full_gpu"},
-            memory_budget_mib=100.0,
-        )
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "kivi_4bit")
-        self.assertTrue(action.safe)
-        self.assertIn("stc greedy", action.fallback_reason)
-
-    def test_tailguard_does_not_choose_unsafe_lossy_fallback(self) -> None:
-        rows = [
-            _measurement("c1", "full_gpu", 0.0, ttft_ms=20.0, peak_memory_mib=120.0),
-            _measurement("c1", "kivi_4bit", 0.8, ttft_ms=5.0, peak_memory_mib=60.0),
-        ]
-        policy = TailGuardPolicy(rows, ["kivi_4bit", "full_gpu"], 0.2, 0.05, {"full_gpu"})
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "full_gpu")
-        self.assertIn("exact fallback", action.fallback_reason)
-        self.assertTrue(action.safe)
-
-    def test_tailguard_does_not_choose_unsafe_profile_under_budget_pressure(self) -> None:
-        rows = [
-            _measurement("c1", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c2", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c1", "kivi_4bit", 0.8, ttft_ms=1.0, peak_memory_mib=60.0),
-            _measurement("c2", "kivi_4bit", 0.8, ttft_ms=1.0, peak_memory_mib=60.0),
-            _measurement("c1", "h2o_heavy_hitter", 0.1, ttft_ms=12.0, peak_memory_mib=80.0),
-            _measurement("c2", "h2o_heavy_hitter", 0.1, ttft_ms=12.0, peak_memory_mib=80.0),
-        ]
-        policy = TailGuardPolicy(
-            rows,
-            ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
-            0.2,
-            0.05,
-            {"full_gpu"},
-            memory_budget_mib=100.0,
-        )
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "h2o_heavy_hitter")
-        self.assertTrue(action.safe)
-
-    def test_tailguard_hysteresis_keeps_current_when_benefit_is_too_small(self) -> None:
-        rows = [
-            _measurement("c1", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c2", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c1", "kivi_4bit", 0.1, ttft_ms=14.0, peak_memory_mib=60.0),
-            _measurement("c2", "kivi_4bit", 0.1, ttft_ms=14.0, peak_memory_mib=60.0),
-            _measurement("c1", "h2o_heavy_hitter", 0.1, ttft_ms=13.0, peak_memory_mib=60.0),
-            _measurement("c2", "h2o_heavy_hitter", 0.1, ttft_ms=13.0, peak_memory_mib=60.0),
-        ]
-        policy = TailGuardPolicy(
-            rows,
-            ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
-            0.2,
-            0.05,
-            {"full_gpu"},
-            memory_budget_mib=100.0,
-            stc_config={"switch_cost_ms": 5.0, "hysteresis_enabled": True},
-        )
-        policy._current_profile = "kivi_4bit"
-        policy._current_residency = 1
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "kivi_4bit")
-        self.assertIn("hysteresis", action.fallback_reason)
-
-    def test_tailguard_hysteresis_disabled_allows_small_benefit_switch(self) -> None:
-        rows = [
-            _measurement("c1", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c2", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=120.0),
-            _measurement("c1", "kivi_4bit", 0.1, ttft_ms=14.0, peak_memory_mib=60.0),
-            _measurement("c2", "kivi_4bit", 0.1, ttft_ms=14.0, peak_memory_mib=60.0),
-            _measurement("c1", "h2o_heavy_hitter", 0.1, ttft_ms=13.0, peak_memory_mib=60.0),
-            _measurement("c2", "h2o_heavy_hitter", 0.1, ttft_ms=13.0, peak_memory_mib=60.0),
-        ]
-        policy = TailGuardPolicy(
-            rows,
-            ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
-            0.2,
-            0.05,
-            {"full_gpu"},
-            memory_budget_mib=100.0,
-            stc_config={"switch_cost_ms": 5.0, "hysteresis_enabled": False},
-        )
-        policy._current_profile = "kivi_4bit"
-        policy._current_residency = 1
-        action = policy.decide(Request("eval1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "h2o_heavy_hitter")
-
     def test_conformal_guard_builds_large_calibration_table_without_quadratic_regression(self) -> None:
         rows = [
             _measurement(f"r{i}", "kivi_4bit" if i % 2 == 0 else "h2o_heavy_hitter", (i % 10) / 100.0)
@@ -247,7 +137,7 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_registry_builds_split_policy_modules(self) -> None:
         rows = [_measurement("c1", "full_gpu", 0.0)]
         policies = build_policies(
-            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic", "tailguard", "quality_oracle"],
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic", "quality_oracle"],
             rows,
             rows,
             ["full_gpu"],
@@ -257,8 +147,201 @@ class TailGuardCoreTest(unittest.TestCase):
         )
         self.assertEqual(
             [policy.name for policy in policies],
-            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic", "tailguard", "quality_oracle"],
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic", "quality_oracle"],
         )
+
+    def test_registry_keeps_august_baseline_order_stable(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=20.0),
+            _measurement("c1", "kivi_4bit", 0.1, ttft_ms=5.0),
+        ]
+        policies = build_policies(
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit"],
+            0.2,
+            0.05,
+            {"full_gpu"},
+        )
+        self.assertEqual(
+            [policy.name for policy in policies],
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"],
+        )
+
+    def test_static_baselines_fallback_to_exact_when_no_lossy_profile_is_selectable(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=20.0),
+            _measurement("c1", "kivi_4bit", 0.8, ttft_ms=5.0),
+        ]
+        policies = build_policies(
+            ["static_best", "static_safe"],
+            rows,
+            rows,
+            ["kivi_4bit", "full_gpu"],
+            0.2,
+            0.05,
+            {"full_gpu"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        self.assertEqual([policy.decide(request, None, None).profile for policy in policies], ["full_gpu", "full_gpu"])
+
+    def test_full_lru_fixed_to_engine_full_lru(self) -> None:
+        [policy] = build_policies(
+            ["full_lru"],
+            [_measurement("c1", "engine_full_lru", 0.0)],
+            [_measurement("e1", "engine_full_lru", 0.0)],
+            ["engine_full_lru"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        action = policy.decide(Request("e1", "qa", "prompt"), None, None)
+        self.assertEqual(action.profile, "engine_full_lru")
+        self.assertEqual(action.reason, "full precision vLLM LRU")
+
+    def test_static_best_selects_lowest_ttft_under_mean_quality_constraint(self) -> None:
+        rows = [
+            _measurement("c1", "engine_full_lru", 0.0, ttft_ms=30.0),
+            _measurement("c1", "compress_light", 0.1, ttft_ms=8.0),
+            _measurement("c2", "compress_light", 0.1, ttft_ms=9.0),
+            _measurement("c1", "compress_heavy", 0.3, ttft_ms=3.0),
+            _measurement("c2", "compress_heavy", 0.3, ttft_ms=4.0),
+        ]
+        [policy] = build_policies(
+            ["static_best"],
+            rows,
+            rows,
+            ["engine_full_lru", "compress_light", "compress_heavy"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+        self.assertEqual(action.profile, "compress_light")
+
+    def test_static_safe_rejects_high_violation_rate(self) -> None:
+        rows = [
+            _measurement("c1", "engine_full_lru", 0.0, ttft_ms=30.0),
+            _measurement("c1", "compress_light", 0.1, ttft_ms=8.0),
+            _measurement("c2", "compress_light", 0.3, ttft_ms=9.0),
+            _measurement("c1", "offload_default", 0.1, ttft_ms=12.0),
+            _measurement("c2", "offload_default", 0.1, ttft_ms=13.0),
+        ]
+        [policy] = build_policies(
+            ["static_safe"],
+            rows,
+            rows,
+            ["engine_full_lru", "compress_light", "offload_default"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+        self.assertEqual(action.profile, "offload_default")
+
+    def test_utility_dynamic_uses_configured_utility_weights(self) -> None:
+        rows = [
+            _measurement("c1", "engine_full_lru", 0.0, ttft_ms=30.0, peak_memory_mib=10.0),
+            _measurement("c1", "compress_light", 0.1, ttft_ms=5.0, peak_memory_mib=100.0),
+            _measurement("c1", "offload_default", 0.12, ttft_ms=8.0, peak_memory_mib=10.0),
+        ]
+        [policy] = build_policies(
+            [{"type": "utility_dynamic", "memory_weight": 1.0, "loss_weight": 1.0}],
+            rows,
+            rows,
+            ["engine_full_lru", "compress_light", "offload_default"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        self.assertEqual(policy.decide(request, None, None).profile, "offload_default")
+
+    def test_uncalibrated_dynamic_uses_point_prediction_threshold_only(self) -> None:
+        rows = [
+            _measurement("c1", "engine_full_lru", 0.0, ttft_ms=30.0),
+            _measurement("c1", "compress_light", 0.1, ttft_ms=5.0),
+            _measurement("c1", "compress_heavy", 0.3, ttft_ms=3.0),
+        ]
+        [policy] = build_policies(
+            ["uncalibrated_dynamic"],
+            rows,
+            rows,
+            ["engine_full_lru", "compress_heavy", "compress_light"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        action = policy.decide(request, None, None)
+        self.assertEqual(action.profile, "compress_light")
+        self.assertEqual(action.fallback_reason, "点预测阈值通过")
+
+    def test_quality_oracle_uses_evaluation_truth_and_request_ttft(self) -> None:
+        rows = [
+            _measurement("e1", "engine_full_lru", 0.0, ttft_ms=30.0),
+            _measurement("e1", "compress_light", 0.1, ttft_ms=9.0),
+            _measurement("e1", "compress_heavy", 0.3, ttft_ms=2.0),
+        ]
+        [policy] = build_policies(
+            ["quality_oracle"],
+            [],
+            rows,
+            ["engine_full_lru", "compress_light", "compress_heavy"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        action = policy.decide(Request("e1", "qa", "prompt"), None, None)
+        self.assertEqual(action.profile, "compress_light")
+        self.assertTrue(policy.oracle)
+
+    def test_quality_oracle_falls_back_to_engine_full_lru_when_no_action_is_feasible(self) -> None:
+        rows = [
+            _measurement("e1", "engine_full_lru", None, ttft_ms=30.0),
+            _measurement("e1", "compress_light", 0.4, ttft_ms=9.0),
+        ]
+        [policy] = build_policies(
+            ["quality_oracle"],
+            [],
+            rows,
+            ["engine_full_lru", "compress_light"],
+            0.2,
+            0.05,
+            {"engine_full_lru"},
+        )
+        action = policy.decide(Request("e1", "qa", "prompt"), None, None)
+        self.assertEqual(action.profile, "engine_full_lru")
+
+    def test_vllm_lru_rank_tuple_orders_by_recency_then_block_id(self) -> None:
+        policy = create_vllm_policy("full_lru")
+        pool = SimpleNamespace()
+        policy.on_admit(pool, 2)
+        policy.on_admit(pool, 1)
+        self.assertLess(policy.rank_tuple(pool, 2), policy.rank_tuple(pool, 1))
+        self.assertLess(policy.rank_tuple(pool, 3), policy.rank_tuple(pool, 4))
+
+    def test_vllm_profile_registry_and_specs(self) -> None:
+        [adapter] = build_profile_adapters(["vllm_lru"], {"profile_smoke_model": "/tmp/model"})
+        self.assertIsInstance(adapter, VLLMLRUAdapter)
+        specs = {spec.name: spec for spec in adapter.profiles()}
+        self.assertTrue(specs["engine_full_lru"].exact)
+        self.assertFalse(specs["compress_light"].exact)
+
+    def test_pilot_config_uses_vllm_lru_action_profiles_without_tailguard(self) -> None:
+        config = load_config(Path("configs/pilot.yaml"))
+        profiles = config_profiles(config)
+        self.assertEqual(config_adapters(config), ["vllm_lru"])
+        self.assertEqual(
+            profiles,
+            ["engine_full_lru", "compress_light", "compress_heavy", "offload_default", "recompute_default"],
+        )
+        self.assertEqual(
+            config_policies(config),
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic", "quality_oracle"],
+        )
+        self.assertEqual(exact_profiles(profiles, config), {"engine_full_lru"})
 
     def test_registry_accepts_structured_static_policy_config(self) -> None:
         rows = [_measurement("c1", "full_gpu", 0.0)]
@@ -344,6 +427,34 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(summary["p"]["audit_rate"], 0.05)
         self.assertEqual(summary["p"]["drift_state"], "stable")
 
+    def test_metrics_smoke_summary_fields_are_complete_and_nan_on_empty_values(self) -> None:
+        records = [
+            PolicyRunRecord(
+                "p",
+                "r1",
+                "full_gpu",
+                True,
+                True,
+                quality_loss=None,
+                safe=None,
+                controller_overhead_ms=None,
+            )
+        ]
+        summary = MetricCollector().summarize_policy_runs(records, epsilon=0.2, delta=0.05, exact_profiles={"full_gpu"})["p"]
+        for field in (
+            "p95_ttft_ms",
+            "p95_peak_memory_mib",
+            "violation_rate",
+            "safe_ratio",
+            "fallback_ratio",
+            "controller_overhead_ms",
+        ):
+            self.assertIn(field, summary)
+        self.assertTrue(math.isnan(summary["p95_ttft_ms"]))
+        self.assertTrue(math.isnan(summary["p95_peak_memory_mib"]))
+        self.assertTrue(math.isnan(summary["violation_rate"]))
+        self.assertTrue(math.isnan(summary["controller_overhead_ms"]))
+
     def test_validate_profile_measurements_requires_all_configured_profiles(self) -> None:
         rows = [_measurement("r1", "full_gpu", 0.0)]
         with self.assertRaisesRegex(ValueError, "缺少必需 profile"):
@@ -369,6 +480,21 @@ class TailGuardCoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "profile 表为空"):
             validate_profile_measurements([])
 
+    def test_validate_profile_measurements_accepts_empty_measured_output_text(self) -> None:
+        row = ProfileMeasurement(
+            request_id="r1",
+            profile="engine_full_lru",
+            adapter="vllm_lru",
+            ok=True,
+            measured=True,
+            output_text="",
+            ttft_ms=1.0,
+            peak_memory_mib=1.0,
+            quality_loss=1.0,
+            extra={"task": "qa", "length_bucket": "short", "split": "eval"},
+        )
+        validate_profile_measurements([row], require_measured=True, required_profiles=["engine_full_lru"])
+
     def test_validate_profile_measurements_rejects_lossy_without_full_baseline_quality(self) -> None:
         rows = [
             _measurement("r1", "kivi_4bit", None),
@@ -390,6 +516,371 @@ class TailGuardCoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "policies.names"):
             config_policies({"profiles": {"adapters": ["full"], "names": ["full_gpu"]}, "policies": {}})
 
+    def test_pilot_config_limits_profile_requests_to_200(self) -> None:
+        config = load_config(Path("configs/pilot.yaml"))
+        self.assertEqual(config_runtime(config)["max_requests"], 200)
+
+    def test_run_experiment_parser_only_exposes_pilot_smoke_measured(self) -> None:
+        parser = build_experiment_parser()
+        args = parser.parse_args(["pilot-smoke-measured"])
+        self.assertIs(args.func, pilot_smoke_measured)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["run-policies"])
+
+    def test_build_profile_table_uses_profile_many(self) -> None:
+        class StubAdapter:
+            name = "stub"
+
+            def profiles(self):
+                return (ProfileSpec("full_gpu", "stub", "env", lossy=False, exact=True),)
+
+            def profile_many(self, requests, profile_name, dry_run=True):
+                self.requests = list(requests)
+                self.profile_name = profile_name
+                self.dry_run = dry_run
+                return [_measurement(request.request_id, profile_name, 0.0) for request in requests]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            output_path = Path(tmpdir) / "profiles.csv"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  adapters:",
+                        "    - stub",
+                        "  names:",
+                        "    - engine_full_lru",
+                        "data:",
+                        "  requests: data/fixtures/e0_reproduce_requests.jsonl",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            stub = StubAdapter()
+            with (
+                patch("run_build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu"]}, "data": {"requests": "data/fixtures/e0_reproduce_requests.jsonl"}}),
+                patch("run_build_profile_table.config_adapters", return_value=["stub"]),
+                patch("run_build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_build_profile_table.config_runtime", return_value={"repeat": 1}),
+                patch("run_build_profile_table.build_profile_adapters", return_value=[stub]),
+                patch(
+                    "run_build_profile_table.load_requests",
+                    return_value=(
+                        [
+                            Request("r1", "qa", "p", metadata={"split": "eval"}),
+                            Request("r2", "qa", "q", metadata={"split": "eval"}),
+                        ],
+                        False,
+                    ),
+                ),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config=str(config_path),
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+            self.assertEqual(code, 0)
+            self.assertFalse(stub.dry_run)
+            self.assertEqual(stub.profile_name, "full_gpu")
+            self.assertEqual([request.request_id for request in stub.requests], ["r1", "r2"])
+
+    def test_build_profile_table_respects_max_requests_before_chunking(self) -> None:
+        class StubAdapter:
+            name = "stub"
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            def profiles(self):
+                return (ProfileSpec("full_gpu", "stub", "env", lossy=False, exact=True),)
+
+            def profile_many(self, requests, profile_name, dry_run=True):
+                chunk = list(requests)
+                self.calls.append([request.request_id for request in chunk])
+                return [_measurement(request.request_id, profile_name, 0.0) for request in chunk]
+
+        requests = [
+            Request(f"r{index}", "qa", f"prompt {index}", metadata={"split": "eval"})
+            for index in range(23)
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            stub = StubAdapter()
+            with (
+                patch("run_build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu"]}}),
+                patch("run_build_profile_table.config_adapters", return_value=["stub"]),
+                patch("run_build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_build_profile_table.config_runtime", return_value={"repeat": 1, "max_requests": 20}),
+                patch("run_build_profile_table.build_profile_adapters", return_value=[stub]),
+                patch("run_build_profile_table.load_requests", return_value=(requests, False)),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual([len(call) for call in stub.calls], [10, 10])
+            self.assertEqual(stub.calls[-1][-1], "r19")
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 20)
+
+    def test_build_profile_table_chunks_profile_many_and_writes_incrementally(self) -> None:
+        class StubAdapter:
+            name = "stub"
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            def profiles(self):
+                return (ProfileSpec("full_gpu", "stub", "env", lossy=False, exact=True),)
+
+            def profile_many(self, requests, profile_name, dry_run=True):
+                chunk = list(requests)
+                self.calls.append([request.request_id for request in chunk])
+                return [_measurement(request.request_id, profile_name, 0.0) for request in chunk]
+
+        requests = [
+            Request(f"r{index}", "qa", f"prompt {index}", metadata={"split": "eval"})
+            for index in range(23)
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            stub = StubAdapter()
+            append_counts = []
+            append_impl = profile_table_module._append_profile_rows
+
+            def record_append(path, rows):
+                append_counts.append(len(rows))
+                append_impl(path, rows)
+
+            with (
+                patch("run_build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu"]}}),
+                patch("run_build_profile_table.config_adapters", return_value=["stub"]),
+                patch("run_build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_build_profile_table.config_runtime", return_value={"repeat": 1}),
+                patch("run_build_profile_table.build_profile_adapters", return_value=[stub]),
+                patch("run_build_profile_table.load_requests", return_value=(requests, False)),
+                patch("run_build_profile_table._append_profile_rows", side_effect=record_append),
+            ):
+                stream = io.StringIO()
+                with redirect_stderr(stream):
+                    code = build_profile_table(
+                        argparse.Namespace(
+                            config="config.yaml",
+                            adapters=None,
+                            output=str(output_path),
+                            import_measurements="",
+                            dry_run=False,
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            self.assertEqual([len(call) for call in stub.calls], [10, 10, 3])
+            self.assertEqual(append_counts, [10, 10, 3])
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 23)
+            progress = [
+                json.loads(line)
+                for line in stream.getvalue().splitlines()
+                if '"event": "profile_chunk_complete"' in line
+            ]
+            self.assertEqual([row["chunk_index"] for row in progress], [1, 2, 3])
+            self.assertEqual([row["completed_requests"] for row in progress], [10, 20, 23])
+            self.assertTrue(all(row["output"] == str(output_path) for row in progress))
+
+    def test_build_profile_table_chunk_failure_keeps_completed_output(self) -> None:
+        class StubAdapter:
+            name = "stub"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def profiles(self):
+                return (ProfileSpec("full_gpu", "stub", "env", lossy=False, exact=True),)
+
+            def profile_many(self, requests, profile_name, dry_run=True):
+                self.calls += 1
+                if self.calls == 2:
+                    return [
+                        ProfileMeasurement(
+                            request_id=request.request_id,
+                            profile=profile_name,
+                            adapter="stub",
+                            ok=False,
+                            measured=False,
+                            error="chunk failed",
+                        )
+                        for request in requests
+                    ]
+                return [_measurement(request.request_id, profile_name, 0.0) for request in requests]
+
+        requests = [
+            Request(f"r{index}", "qa", f"prompt {index}", metadata={"split": "eval"})
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            stub = StubAdapter()
+            with (
+                patch("run_build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu"]}}),
+                patch("run_build_profile_table.config_adapters", return_value=["stub"]),
+                patch("run_build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_build_profile_table.config_runtime", return_value={"repeat": 1}),
+                patch("run_build_profile_table.build_profile_adapters", return_value=[stub]),
+                patch("run_build_profile_table.load_requests", return_value=(requests, False)),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+            self.assertEqual(code, 2)
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["request_id"] for row in rows], [f"r{index}" for index in range(10)])
+
+    def test_pilot_smoke_measured_builds_profiles_without_dry_run_and_replays_same_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+            profiles = ["engine_full_lru", "compress_light", "compress_heavy", "offload_default", "recompute_default"]
+            calls = {}
+
+            def fake_build(args: argparse.Namespace) -> int:
+                calls["profile_args"] = args
+                write_csv(Path(args.output), [_measurement("e1", profile, 0.0).to_row() for profile in profiles])
+                print(json.dumps({"output": args.output, "rows": len(profiles), "summary": {"profiles": len(profiles)}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                calls["policy_args"] = args
+                print(
+                    json.dumps(
+                        {
+                            "output": args.output,
+                            "rows": 5,
+                            "epsilon": 0.05,
+                            "delta": 0.05,
+                            "memory_budget_mib": 6144.0,
+                            "summary": {"quality_oracle": {"p95_ttft_ms": 1.0}},
+                        }
+                    )
+                )
+                return 0
+
+            with (
+                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+            ):
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = pilot_smoke_measured(argparse.Namespace())
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stream.getvalue(), "")
+            self.assertFalse(calls["profile_args"].dry_run)
+            self.assertEqual(calls["profile_args"].output, str(profile_path))
+            self.assertEqual(calls["policy_args"].measurements, str(profile_path))
+            self.assertEqual(calls["policy_args"].output, str(policy_path))
+            self.assertFalse(calls["policy_args"].allow_dry_run_replay)
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["section"], "experiment")
+            self.assertEqual(summary_rows[0]["ok"], "True")
+            self.assertEqual(summary_rows[0]["profile_rows"], "5")
+            self.assertEqual(summary_rows[0]["policy_rows"], "5")
+            quality_oracle = next(row for row in summary_rows if row["section"] == "policy" and row["name"] == "quality_oracle")
+            self.assertEqual(quality_oracle["p95_ttft_ms"], "1.0")
+            self.assertLess(
+                list(summary_rows[0]).index("mean_ttft_ms"),
+                list(summary_rows[0]).index("action_distribution"),
+            )
+
+    def test_pilot_smoke_measured_stops_when_profile_stage_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+
+            def fake_build(args: argparse.Namespace) -> int:
+                print(json.dumps({"ok": False, "output": args.output, "error": "profile failed"}))
+                return 2
+
+            with (
+                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies") as policy_mock,
+            ):
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = pilot_smoke_measured(argparse.Namespace())
+
+            self.assertEqual(code, 2)
+            self.assertEqual(stream.getvalue(), "")
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["ok"], "False")
+            self.assertEqual(summary_rows[0]["step"], "build_profile_table")
+            self.assertEqual(summary_rows[0]["error"], "profile failed")
+            policy_mock.assert_not_called()
+
+    def test_pilot_smoke_measured_rejects_unmeasured_profile_before_policy_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+            profiles = ["engine_full_lru", "compress_light", "compress_heavy", "offload_default", "recompute_default"]
+
+            def fake_build(args: argparse.Namespace) -> int:
+                rows = [_measurement("e1", profile, 0.0, measured=(profile != "compress_light")).to_row() for profile in profiles]
+                write_csv(Path(args.output), rows)
+                print(json.dumps({"output": args.output, "rows": len(rows)}))
+                return 0
+
+            with (
+                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies") as policy_mock,
+            ):
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = pilot_smoke_measured(argparse.Namespace())
+
+            self.assertEqual(code, 2)
+            self.assertEqual(stream.getvalue(), "")
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["ok"], "False")
+            self.assertEqual(summary_rows[0]["step"], "validate_profile_table")
+            self.assertIn("measured=True", summary_rows[0]["error"])
+            policy_mock.assert_not_called()
+
     def test_run_policies_rejects_dry_run_replay_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "dry.csv"
@@ -398,8 +889,8 @@ class TailGuardCoreTest(unittest.TestCase):
                 [
                     {
                         "request_id": "r1",
-                        "profile": "full_gpu",
-                        "adapter": "full",
+                        "profile": "engine_full_lru",
+                        "adapter": "vllm_lru",
                         "ok": True,
                         "measured": False,
                         "output_text": "x",
@@ -459,7 +950,7 @@ class TailGuardCoreTest(unittest.TestCase):
                     [
                         "profiles:",
                         "  names:",
-                        "    - full_gpu",
+                        "    - engine_full_lru",
                         "policies:",
                         "  names:",
                         "    - full_lru",
@@ -467,7 +958,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            write_csv(measurements_path, [_measurement("e1", "full_gpu", 0.0).to_row()])
+            write_csv(measurements_path, [_measurement("e1", "engine_full_lru", 0.0).to_row()])
             args = argparse.Namespace(
                 config=str(config_path),
                 measurements=str(measurements_path),
@@ -570,6 +1061,47 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertTrue(all(record["ok"] == "False" for record in records))
             self.assertIn("cannot decide e1", records[0]["error"])
 
+    def test_policy_replay_missing_profile_records_failure_and_continues_other_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            measurements_path = Path(tmpdir) / "measured.csv"
+            output_path = Path(tmpdir) / "policy.csv"
+            rows = [
+                ProfileMeasurement(
+                    request_id="e1",
+                    profile="engine_full_lru",
+                    adapter="vllm_lru",
+                    ok=True,
+                    measured=True,
+                    output_text="x",
+                    ttft_ms=1.0,
+                    peak_memory_mib=1.0,
+                    quality_loss=0.0,
+                    extra={"task": "qa", "length_bucket": "short", "split": "eval"},
+                )
+            ]
+            write_csv(measurements_path, [row.to_row() for row in rows])
+            args = argparse.Namespace(
+                config="configs/pilot.yaml",
+                measurements=str(measurements_path),
+                output=str(output_path),
+                profiles=["engine_full_lru"],
+                policies=["static_profile:compress_light", "full_lru"],
+                epsilon=0.2,
+                delta=0.05,
+                memory_budget_mib=None,
+                allow_dry_run_replay=False,
+            )
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                code = run_policies(args)
+            self.assertEqual(code, 1)
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                records = list(csv.DictReader(handle))
+            self.assertEqual([record["policy"] for record in records], ["static_profile:compress_light", "full_lru"])
+            self.assertEqual(records[0]["ok"], "False")
+            self.assertIn("缺少回放数据", records[0]["error"])
+            self.assertEqual(records[1]["ok"], "True")
+
     def test_with_quality_uses_any_exact_profile_as_baseline(self) -> None:
         rows = [
             _measurement("r1", "full_cpu", None),
@@ -616,178 +1148,6 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(updated["r2"].quality_loss, 1.0)
         self.assertEqual(updated["r2"].quality_score, 0.0)
 
-    def test_tailguard_exact_fallback_record_fields_are_complete(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            measurements_path = Path(tmpdir) / "measured.csv"
-            output_path = Path(tmpdir) / "policy.csv"
-            rows = [
-                _measurement("c1", "full_gpu", 0.0),
-                _measurement("c1", "kivi_4bit", 0.8, ttft_ms=5.0),
-                _measurement("e1", "full_gpu", 0.0),
-                _measurement("e1", "kivi_4bit", 0.8, ttft_ms=5.0),
-            ]
-            rows = [
-                row if row.request_id == "c1" else ProfileMeasurement(
-                    request_id=row.request_id,
-                    profile=row.profile,
-                    adapter=row.adapter,
-                    ok=row.ok,
-                    measured=row.measured,
-                    output_text=row.output_text,
-                    error=row.error,
-                    latency_ms=row.latency_ms,
-                    ttft_ms=row.ttft_ms,
-                    peak_memory_mib=row.peak_memory_mib,
-                    resident_memory_mib=row.resident_memory_mib,
-                    quality_score=row.quality_score,
-                    quality_loss=row.quality_loss,
-                    extra={**row.extra, "split": "eval"},
-                )
-                for row in rows
-            ]
-            write_csv(measurements_path, [row.to_row() for row in rows])
-            args = argparse.Namespace(
-                config="configs/pilot.yaml",
-                measurements=str(measurements_path),
-                output=str(output_path),
-                profiles=["full_gpu", "kivi_4bit"],
-                policies=["tailguard"],
-                epsilon=0.2,
-                delta=0.05,
-                memory_budget_mib=None,
-                allow_dry_run_replay=False,
-            )
-
-            self.assertEqual(run_policies(args), 0)
-            with output_path.open("r", encoding="utf-8", newline="") as handle:
-                [record] = list(csv.DictReader(handle))
-            self.assertEqual(record["action_profile"], "full_gpu")
-            self.assertEqual(record["exact"], "True")
-            self.assertEqual(record["safe"], "True")
-            self.assertEqual(record["task"], "qa")
-            self.assertEqual(record["length_bucket"], "short")
-            self.assertIn("exact fallback", record["fallback_reason"])
-
-    def test_qwen2_kivi_runtime_proof_missing_is_unmeasured_failure(self) -> None:
-        proc = Mock(
-            returncode=1,
-            stdout='{"ok": false, "measured": false, "error": "KIVI proof missing", "backend": "qwen2_kivi", "kivi_kernel_calls": 0}\n',
-            stderr="",
-        )
-        with patch("profiles.base.subprocess.run", return_value=proc):
-            row = qwen2_kv_profile_measurement(
-                "kivi",
-                "edgekv-kivi",
-                Request("r1", "qa", "prompt"),
-                ProfileSpec("kivi_4bit", "kivi", "edgekv-kivi", lossy=True, metadata={"bits": 4}),
-                {"profile_smoke_model": "/models/qwen-smoke", "pilot_model": "/models/qwen", "max_new_tokens": 1},
-            )
-        self.assertFalse(row.ok)
-        self.assertFalse(row.measured)
-        self.assertIn("KIVI proof missing", row.error or "")
-        self.assertEqual(str(row.extra["kivi_kernel_calls"]), "0")
-        self.assertEqual(row.extra["model"], "/models/qwen-smoke")
-
-    def test_qwen2_attention_wrappers_are_top_level_classes(self) -> None:
-        self.assertEqual(Qwen2KIVIAttention.__name__, "Qwen2KIVIAttention")
-        self.assertEqual(Qwen2H2OAttention.__name__, "Qwen2H2OAttention")
-        self.assertTrue(hasattr(Qwen2KIVIAttention, "forward"))
-        self.assertTrue(hasattr(Qwen2H2OAttention, "forward"))
-
-        try:
-            from torch import nn
-        except Exception:
-            class _Projection:
-                pass
-
-            nn = SimpleNamespace(Identity=_Projection)
-        source = SimpleNamespace(q_proj=nn.Identity(), k_proj=nn.Identity(), v_proj=nn.Identity(), o_proj=nn.Identity(), head_dim=4)
-        config = SimpleNamespace(hidden_size=8, num_attention_heads=2, num_key_value_heads=1)
-        modules = {
-            "nn": nn,
-            "torch": None,
-            "F": None,
-            "repeat_kv": None,
-            "cuda_bmm_fA_qB_outer": None,
-            "triton_quantize_and_pack_along_last_dim": None,
-            "apply_rotary_pos_emb": None,
-        }
-        kivi = Qwen2KIVIAttention(source, config, 0, {}, 4, {}, modules)
-        h2o = Qwen2H2OAttention(source, config, 0, {}, 0, {"h2o_heavy_size": 1, "h2o_recent_size": 1}, modules)
-        self.assertIsInstance(kivi.impl, KIVIAttentionImpl)
-        self.assertIsInstance(h2o.impl, H2OAttentionImpl)
-
-    def test_qwen2_h2o_short_request_without_prune_is_unmeasured_failure(self) -> None:
-        proc = Mock(
-            returncode=1,
-            stdout=(
-                '{"ok": false, "measured": false, "error": "H2O proof missing: prompt_tokens=8 budget=10 prune_events=0", '
-                '"backend": "qwen2_h2o", "h2o_prune_events": 0, "h2o_cache_budget": 10}\n'
-            ),
-            stderr="",
-        )
-        with patch("profiles.base.subprocess.run", return_value=proc):
-            row = qwen2_kv_profile_measurement(
-                "h2o",
-                "edgekv-h2o",
-                Request("r1", "qa", "short"),
-                ProfileSpec("h2o_heavy_hitter", "h2o", "edgekv-h2o", lossy=True),
-                {"pilot_model": "/models/qwen", "max_new_tokens": 1},
-            )
-        self.assertFalse(row.ok)
-        self.assertFalse(row.measured)
-        self.assertIn("H2O proof missing", row.error or "")
-        self.assertEqual(str(row.extra["h2o_prune_events"]), "0")
-
-    def test_qwen2_success_proof_fields_round_trip_through_rows(self) -> None:
-        proc = Mock(
-            returncode=0,
-            stdout=(
-                '{"ok": true, "measured": true, "output_text": "x", "latency_ms": 2.0, "ttft_ms": 1.0, '
-                '"peak_memory_mib": 3.0, "resident_memory_mib": 4.0, "backend": "qwen2_kivi", '
-                '"kivi_kernel_calls": 2, "kivi_quantized_layers": 1}\n'
-            ),
-            stderr="",
-        )
-        with patch("profiles.base.subprocess.run", return_value=proc):
-            row = qwen2_kv_profile_measurement(
-                "kivi",
-                "edgekv-kivi",
-                Request("r1", "qa", "prompt"),
-                ProfileSpec("kivi_4bit", "kivi", "edgekv-kivi", lossy=True, metadata={"bits": 4}),
-                {"pilot_model": "/models/qwen", "max_new_tokens": 1},
-            )
-        hydrated = ProfileMeasurement.from_row(row.to_row())
-        self.assertTrue(hydrated.ok)
-        self.assertTrue(hydrated.measured)
-        self.assertEqual(str(hydrated.extra["kivi_kernel_calls"]), "2")
-        self.assertEqual(str(hydrated.extra["kivi_quantized_layers"]), "1")
-
-    def test_qwen2_timeout_returns_structured_unmeasured_failure(self) -> None:
-        with patch("profiles.base.subprocess.run", side_effect=subprocess.TimeoutExpired(["conda"], 3)):
-            row = qwen2_kv_profile_measurement(
-                "kivi",
-                "edgekv-kivi",
-                Request("r1", "qa", "prompt"),
-                ProfileSpec("kivi_4bit", "kivi", "edgekv-kivi", lossy=True, metadata={"bits": 4}),
-                {"pilot_model": "/models/qwen", "max_new_tokens": 1},
-                timeout_s=3,
-            )
-        self.assertFalse(row.ok)
-        self.assertFalse(row.measured)
-        self.assertEqual(row.extra["error_type"], "timeout")
-
-    def test_offline_ilp_oracle_finds_lower_or_equal_cost_plan(self) -> None:
-        rows = [
-            _measurement("r1", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=10.0),
-            _measurement("r1", "kivi_4bit", 0.1, ttft_ms=4.0, peak_memory_mib=5.0),
-            _measurement("r2", "full_gpu", 0.0, ttft_ms=10.0, peak_memory_mib=10.0),
-            _measurement("r2", "kivi_4bit", 0.1, ttft_ms=4.0, peak_memory_mib=5.0),
-        ]
-        plan, cost = solve_offline_oracle(rows, ["full_gpu", "kivi_4bit"], 0.2, 10.0)
-        self.assertEqual(plan, {"r1": "kivi_4bit", "r2": "kivi_4bit"})
-        self.assertEqual(cost, 8.0)
-
     def test_aal_wilson_marks_and_releases_unsafe_profile(self) -> None:
         state = AALState(epsilon=0.2, delta=0.05, window_size=5)
         for index in range(5):
@@ -799,45 +1159,6 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_wilson_empty_window_is_stable_zero_upper_bound(self) -> None:
         detector = WilsonDriftDetector(epsilon=0.2, delta=0.05)
         self.assertEqual(detector.wilson_upper(), 0.0)
-
-    def test_build_profile_table_no_dry_run_fails_on_kivi_failure_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_path = Path(tmpdir) / "config.yaml"
-            output_path = Path(tmpdir) / "profiles.csv"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "model:",
-                        "  pilot_model: /models/qwen",
-                        "profiles:",
-                        "  adapters:",
-                        "    - kivi",
-                        "  names:",
-                        "    - kivi_4bit",
-                        "profile_smoke:",
-                        "  max_new_tokens: 1",
-                        "  timeout_s: 5",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            proc = Mock(
-                returncode=1,
-                stdout='{"ok": false, "measured": false, "error": "KIVI proof missing", "backend": "qwen2_kivi"}\n',
-                stderr="",
-            )
-            with patch("profiles.base.subprocess.run", return_value=proc):
-                code = build_profile_table(
-                    argparse.Namespace(
-                        config=str(config_path),
-                        adapters=None,
-                        output=str(output_path),
-                        import_measurements="",
-                        dry_run=False,
-                    )
-                )
-            self.assertEqual(code, 2)
-            self.assertFalse(output_path.exists())
 
 
 if __name__ == "__main__":
