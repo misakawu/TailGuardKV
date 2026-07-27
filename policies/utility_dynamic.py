@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from math import inf
 
 from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
-from policies.base import StatsPolicy
+from policies.common import StatsPolicy
 
 
 class UtilityDynamicPolicy(StatsPolicy):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
-from policies.base import StatsPolicy
+from policies.common import StatsPolicy
 
 
 class UncalibratedDynamicPolicy(StatsPolicy):
