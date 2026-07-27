@@ -23,7 +23,12 @@ class UncalibratedDynamicPolicy(Policy):
         self.context = PolicyContext(list(calibration_measurements), profiles, epsilon, delta, exact_profiles, memory_budget_mib)
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        for profile in sorted(self.context.candidate_profiles(include_exact=False), key=self.context.ttft_or_inf):
+        lossy_candidates = [
+            profile
+            for profile in self.context.candidate_profiles(include_exact=False)
+            if profile not in self.context.exact_profiles
+        ]
+        for profile in sorted(lossy_candidates, key=self.context.ttft_or_inf):
             pred_loss = self.context.predictor.predict_loss(request, profile)
             if pred_loss <= self.context.epsilon:
                 risk_upper = self.context.guard.risk_upper(request, profile, pred_loss)

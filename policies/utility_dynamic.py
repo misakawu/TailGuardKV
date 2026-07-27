@@ -31,7 +31,7 @@ class UtilityDynamicPolicy(Policy):
         best_profile = self.context.fallback_profile()
         best_score = inf
         for profile in self.context.candidate_profiles(include_exact=True):
-            pred_loss = self.context.predictor.predict_loss(request, profile)
+            pred_loss = 0.0 if profile in self.context.exact_profiles else self.context.predictor.predict_loss(request, profile)
             score = (
                 self.context.ttft_or_inf(profile)
                 + self.memory_weight * self.context.memory_or_inf(profile)

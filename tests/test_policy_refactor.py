@@ -149,6 +149,24 @@ class PolicyRefactorTest(unittest.TestCase):
         self.assertEqual(action.profile, "offload_default")
         self.assertEqual(action.reason, "utility_dynamic")
 
+    def test_utility_dynamic_scores_any_exact_profile_as_zero_loss(self) -> None:
+        policies = build_policies(
+            [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 1000.0}],
+            calibration_measurements=[
+                measurement("c1", "recompute_default", None, ttft=12.0, memory=10.0),
+                measurement("c1", "compress_light", 0.01, ttft=5.0, memory=10.0),
+            ],
+            oracle_measurements=[],
+            profiles=["recompute_default", "compress_light"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"recompute_default"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        action = policies[0].decide(request, None, None)
+        self.assertEqual(action.profile, "recompute_default")
+        self.assertEqual(action.pred_loss, 0.0)
+
     def test_uncalibrated_dynamic_uses_point_prediction_threshold_only(self) -> None:
         policies = build_policies(
             ["uncalibrated_dynamic"],
@@ -183,6 +201,23 @@ class PolicyRefactorTest(unittest.TestCase):
         )
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         self.assertEqual(policies[0].decide(request, None, None).profile, "engine_full_lru")
+
+    def test_uncalibrated_dynamic_does_not_accept_exact_inside_lossy_candidate_loop(self) -> None:
+        policies = build_policies(
+            ["uncalibrated_dynamic"],
+            calibration_measurements=[
+                measurement("c1", "recompute_default", None, ttft=5.0),
+            ],
+            oracle_measurements=[],
+            profiles=["recompute_default"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"recompute_default"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        action = policies[0].decide(request, None, None)
+        self.assertEqual(action.profile, "recompute_default")
+        self.assertEqual(action.fallback_reason, "exact fallback")
 
     def test_quality_oracle_inherits_policy_directly_and_marks_oracle(self) -> None:
         from policies.quality_oracle import QualityOraclePolicy
