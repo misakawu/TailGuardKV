@@ -57,3 +57,68 @@ class PolicyRefactorTest(unittest.TestCase):
             exact_profiles={"engine_full_lru"},
         )
         self.assertEqual([policy.name for policy in policies], ["full_lru"])
+
+    def test_static_policy_classes_inherit_policy_directly(self) -> None:
+        from policies.static_best import StaticBestPolicy
+        from policies.static_safe import StaticSafePolicy
+
+        self.assertEqual(StaticBestPolicy.__mro__[1], Policy)
+        self.assertEqual(StaticSafePolicy.__mro__[1], Policy)
+
+    def test_static_best_selects_fastest_lossy_mean_safe_profile(self) -> None:
+        policies = build_policies(
+            ["static_best"],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("c1", "compress_light", 0.1, ttft=8.0),
+                measurement("c2", "compress_light", 0.1, ttft=9.0),
+                measurement("c1", "compress_heavy", 0.3, ttft=3.0),
+                measurement("c2", "compress_heavy", 0.3, ttft=4.0),
+            ],
+            oracle_measurements=[],
+            profiles=["engine_full_lru", "compress_light", "compress_heavy"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        action = policies[0].decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+        self.assertEqual(action.profile, "compress_light")
+        self.assertEqual(action.reason, "static_best")
+        self.assertEqual(action.epsilon, 0.2)
+        self.assertEqual(action.delta, 0.05)
+
+    def test_static_safe_rejects_high_tail_violation_profile(self) -> None:
+        policies = build_policies(
+            ["static_safe"],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("c1", "compress_light", 0.1, ttft=8.0),
+                measurement("c2", "compress_light", 0.3, ttft=9.0),
+                measurement("c1", "offload_default", 0.1, ttft=12.0),
+                measurement("c2", "offload_default", 0.1, ttft=13.0),
+            ],
+            oracle_measurements=[],
+            profiles=["engine_full_lru", "compress_light", "offload_default"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        action = policies[0].decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+        self.assertEqual(action.profile, "offload_default")
+        self.assertEqual(action.reason, "static_safe")
+
+    def test_static_policies_fallback_to_exact_when_no_lossy_profile_qualifies(self) -> None:
+        policies = build_policies(
+            ["static_best", "static_safe"],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("c1", "compress_light", 0.8, ttft=5.0),
+            ],
+            oracle_measurements=[],
+            profiles=["compress_light", "engine_full_lru"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        self.assertEqual([policy.decide(request, None, None).profile for policy in policies], ["engine_full_lru", "engine_full_lru"])
