@@ -45,7 +45,7 @@ def profile_stats(
         rows = grouped[profile]
         losses = [row.quality_loss for row in rows if row.quality_loss is not None]
         if profile in exact_profiles and not losses:
-            losses = [0.0 for row in rows if row.ok and row.measured]
+            losses = [0.0 for row in rows if row.ok and row.measured and row.output_text]
         ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
         memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
         stats[profile] = ProfileStats(
@@ -129,8 +129,10 @@ class PolicyContext:
         return stat.p95_peak_memory_mib
 
     def predict_and_guard(self, request: Request, profile: str) -> tuple[float, float, bool, str]:
+        if profile in self.exact_profiles:
+            return 0.0, 0.0, True, "exact fallback"
         pred_loss = self.predictor.predict_loss(request, profile)
         risk_upper = self.guard.risk_upper(request, profile, pred_loss)
-        safe = risk_upper <= self.epsilon or profile in self.exact_profiles
-        reason = "exact fallback" if profile in self.exact_profiles else ("calibrated safe" if safe else "calibrated unsafe")
+        safe = risk_upper <= self.epsilon
+        reason = "calibrated safe" if safe else "calibrated unsafe"
         return pred_loss, risk_upper, safe, reason

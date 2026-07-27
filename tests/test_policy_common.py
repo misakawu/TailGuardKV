@@ -43,6 +43,30 @@ class PolicyCommonTest(unittest.TestCase):
         self.assertEqual(stats["compress_light"].p95_peak_memory_mib, 250.0)
         self.assertIsNone(stats["missing"].mean_loss)
 
+    def test_profile_stats_does_not_treat_empty_exact_output_as_zero_loss(self) -> None:
+        stats = profile_stats(
+            [
+                ProfileMeasurement(
+                    request_id="c1",
+                    profile="recompute_default",
+                    adapter="test",
+                    ok=True,
+                    measured=True,
+                    output_text="",
+                    ttft_ms=12.0,
+                    peak_memory_mib=300.0,
+                    resident_memory_mib=300.0,
+                    quality_loss=None,
+                    extra={"task": "qa", "length_bucket": "short", "split": "calibration"},
+                )
+            ],
+            ["recompute_default"],
+            epsilon=0.2,
+            exact_profiles={"recompute_default"},
+        )
+        self.assertEqual(stats["recompute_default"].known_loss_count, 0)
+        self.assertIsNone(stats["recompute_default"].mean_loss)
+
     def test_policy_context_fallback_prefers_engine_full_lru_then_exact(self) -> None:
         context = PolicyContext(
             calibration_rows=[],
@@ -98,6 +122,23 @@ class PolicyCommonTest(unittest.TestCase):
         )
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         pred_loss, risk_upper, safe, reason = context.predict_and_guard(request, "engine_full_lru")
+        self.assertEqual(pred_loss, 0.0)
+        self.assertEqual(risk_upper, 0.0)
+        self.assertTrue(safe)
+        self.assertEqual(reason, "exact fallback")
+
+    def test_predict_and_guard_short_circuits_non_engine_full_lru_exact_profile(self) -> None:
+        context = PolicyContext(
+            calibration_rows=[
+                row("c1", "recompute_default", 0.4, 13.0, 300.0),
+            ],
+            profiles=["recompute_default"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"recompute_default"},
+        )
+        request = Request("e2", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        pred_loss, risk_upper, safe, reason = context.predict_and_guard(request, "recompute_default")
         self.assertEqual(pred_loss, 0.0)
         self.assertEqual(risk_upper, 0.0)
         self.assertTrue(safe)
