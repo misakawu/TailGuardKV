@@ -232,3 +232,60 @@ class PolicyRefactorTest(unittest.TestCase):
             exact_profiles={"engine_full_lru"},
         )
         self.assertEqual(policies[0].decide(Request("e1", "qa", "prompt"), None, None).profile, "engine_full_lru")
+
+    def test_registry_returns_one_policy_per_config_item(self) -> None:
+        rows = [
+            measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+            measurement("c1", "compress_light", 0.1, ttft=8.0),
+        ]
+        policies = build_policies(
+            ["full_lru", "static_best", {"type": "utility_dynamic", "memory_weight": 2.0, "loss_weight": 3.0}],
+            calibration_measurements=rows,
+            oracle_measurements=rows,
+            profiles=["engine_full_lru", "compress_light"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        self.assertEqual([policy.name for policy in policies], ["full_lru", "static_best", "utility_dynamic"])
+        self.assertEqual(policies[2].memory_weight, 2.0)
+        self.assertEqual(policies[2].loss_weight, 3.0)
+
+    def test_registry_rejects_unknown_policy(self) -> None:
+        with self.assertRaisesRegex(ValueError, "未知 policy: missing"):
+            build_policies(
+                ["missing"],
+                calibration_measurements=[],
+                oracle_measurements=[],
+                profiles=["engine_full_lru"],
+                epsilon=0.2,
+                delta=0.05,
+                exact_profiles={"engine_full_lru"},
+            )
+
+    def test_runner_policy_matrix_is_policy_by_request_not_profile_cross_product(self) -> None:
+        from backends.measured_replay import MeasuredReplayBackend
+        from run_run_policies import _run_policy_matrix
+
+        rows = [
+            measurement("e1", "engine_full_lru", 0.0, ttft=30.0),
+            measurement("e1", "compress_light", 0.1, ttft=8.0),
+        ]
+        policies = build_policies(
+            ["full_lru", "static_best"],
+            calibration_measurements=rows,
+            oracle_measurements=rows,
+            profiles=["engine_full_lru", "compress_light"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        records = _run_policy_matrix(
+            policies=policies,
+            requests=[Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})],
+            backend=MeasuredReplayBackend(rows),
+            exact={"engine_full_lru"},
+        )
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.policy for record in records], ["full_lru", "static_best"])
+        self.assertEqual([record.action_profile for record in records], ["engine_full_lru", "compress_light"])
