@@ -8,7 +8,6 @@ from math import inf, isfinite
 from calibration.conformal import ConformalGuard
 from calibration.predictor import MetadataOnlyRiskPredictor
 from core_types import ProfileMeasurement, Request
-from policies.base import Policy
 
 
 @dataclass(frozen=True)
@@ -137,61 +136,3 @@ class PolicyContext:
         safe = risk_upper <= self.epsilon
         reason = "calibrated safe" if safe else "calibrated unsafe"
         return pred_loss, risk_upper, safe, reason
-
-
-class StatsPolicy(PolicyContext, Policy):
-    def __init__(
-        self,
-        name: str,
-        calibration_measurements: Iterable[ProfileMeasurement],
-        profiles: list[str],
-        epsilon: float,
-        delta: float,
-        exact_profiles: set[str],
-        placeholder: bool = True,
-        memory_budget_mib: float = float("inf"),
-    ) -> None:
-        self.name = name
-        self.placeholder = placeholder
-        self.oracle = False
-        super().__init__(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib=memory_budget_mib)
-
-    def _fallback_profile(self) -> str:
-        return self.fallback_profile()
-
-    def _within_memory_budget(self, profile: str) -> bool:
-        return self.within_memory_budget(profile)
-
-    def _candidate_profiles(self, *, include_exact: bool = True) -> list[str]:
-        return self.candidate_profiles(include_exact=include_exact)
-
-    def _loss_or_inf(self, profile: str) -> float:
-        return self.loss_or_inf(profile)
-
-    def _ttft_or_inf(self, profile: str) -> float:
-        return self.ttft_or_inf(profile)
-
-    def _memory_or_inf(self, profile: str) -> float:
-        return self.memory_or_inf(profile)
-
-    def _best_profile(self, use_tail_constraint: bool) -> str:
-        best_profile = ""
-        best_score = inf
-        for profile in self._candidate_profiles(include_exact=False):
-            stat = self.stats.get(profile)
-            if stat is None or stat.known_loss_count == 0:
-                continue
-            mean_loss = self._loss_or_inf(profile)
-            violation = stat.violation_rate if stat.violation_rate is not None else inf
-            if mean_loss > self.epsilon:
-                continue
-            if use_tail_constraint and violation > self.delta:
-                continue
-            score = self._ttft_or_inf(profile)
-            if score < best_score:
-                best_profile = profile
-                best_score = score
-        return best_profile or self._fallback_profile()
-
-    def _predict_and_guard(self, request: Request, profile: str) -> tuple[float, float, bool, str]:
-        return self.predict_and_guard(request, profile)
