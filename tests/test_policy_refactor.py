@@ -122,3 +122,64 @@ class PolicyRefactorTest(unittest.TestCase):
         )
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         self.assertEqual([policy.decide(request, None, None).profile for policy in policies], ["engine_full_lru", "engine_full_lru"])
+
+    def test_dynamic_policy_classes_inherit_policy_directly(self) -> None:
+        from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
+        from policies.utility_dynamic import UtilityDynamicPolicy
+
+        self.assertEqual(UtilityDynamicPolicy.__mro__[1], Policy)
+        self.assertEqual(UncalibratedDynamicPolicy.__mro__[1], Policy)
+
+    def test_utility_dynamic_uses_configured_utility_weights_without_tail_filter(self) -> None:
+        policies = build_policies(
+            [{"type": "utility_dynamic", "memory_weight": 1.0, "loss_weight": 1.0}],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0, memory=10.0),
+                measurement("c1", "compress_light", 0.1, ttft=5.0, memory=100.0),
+                measurement("c1", "offload_default", 0.12, ttft=8.0, memory=10.0),
+            ],
+            oracle_measurements=[],
+            profiles=["engine_full_lru", "compress_light", "offload_default"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        action = policies[0].decide(request, None, None)
+        self.assertEqual(action.profile, "offload_default")
+        self.assertEqual(action.reason, "utility_dynamic")
+
+    def test_uncalibrated_dynamic_uses_point_prediction_threshold_only(self) -> None:
+        policies = build_policies(
+            ["uncalibrated_dynamic"],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("c1", "compress_light", 0.1, ttft=5.0),
+                measurement("c1", "compress_heavy", 0.3, ttft=3.0),
+            ],
+            oracle_measurements=[],
+            profiles=["engine_full_lru", "compress_heavy", "compress_light"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        action = policies[0].decide(request, None, None)
+        self.assertEqual(action.profile, "compress_light")
+        self.assertEqual(action.fallback_reason, "point prediction accepted")
+
+    def test_uncalibrated_dynamic_falls_back_to_exact_when_no_point_safe_lossy_candidate_exists(self) -> None:
+        policies = build_policies(
+            ["uncalibrated_dynamic"],
+            calibration_measurements=[
+                measurement("c1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("c1", "compress_heavy", 0.4, ttft=3.0),
+            ],
+            oracle_measurements=[],
+            profiles=["engine_full_lru", "compress_heavy"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+        self.assertEqual(policies[0].decide(request, None, None).profile, "engine_full_lru")

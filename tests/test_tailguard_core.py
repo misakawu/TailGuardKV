@@ -276,7 +276,7 @@ class TailGuardCoreTest(unittest.TestCase):
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         action = policy.decide(request, None, None)
         self.assertEqual(action.profile, "compress_light")
-        self.assertEqual(action.fallback_reason, "点预测阈值通过")
+        self.assertEqual(action.fallback_reason, "point prediction accepted")
 
     def test_quality_oracle_uses_evaluation_truth_and_request_ttft(self) -> None:
         rows = [

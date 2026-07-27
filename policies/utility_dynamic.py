@@ -4,10 +4,11 @@ from collections.abc import Iterable
 from math import inf
 
 from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
-from policies.common import StatsPolicy
+from policies.base import Policy
+from policies.common import PolicyContext
 
 
-class UtilityDynamicPolicy(StatsPolicy):
+class UtilityDynamicPolicy(Policy):
     def __init__(
         self,
         calibration_measurements: Iterable[ProfileMeasurement],
@@ -19,27 +20,34 @@ class UtilityDynamicPolicy(StatsPolicy):
         memory_weight: float = 0.05,
         loss_weight: float = 1000.0,
     ) -> None:
-        super().__init__("utility_dynamic", calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib=memory_budget_mib)
+        self.name = "utility_dynamic"
+        self.placeholder = False
+        self.oracle = False
+        self.context = PolicyContext(list(calibration_measurements), profiles, epsilon, delta, exact_profiles, memory_budget_mib)
         self.memory_weight = memory_weight
         self.loss_weight = loss_weight
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        best_profile = self._fallback_profile()
+        best_profile = self.context.fallback_profile()
         best_score = inf
-        for profile in self._candidate_profiles():
-            pred_loss = self.predictor.predict_loss(request, profile)
-            score = self._ttft_or_inf(profile) + self.memory_weight * self._memory_or_inf(profile) + self.loss_weight * pred_loss
+        for profile in self.context.candidate_profiles(include_exact=True):
+            pred_loss = self.context.predictor.predict_loss(request, profile)
+            score = (
+                self.context.ttft_or_inf(profile)
+                + self.memory_weight * self.context.memory_or_inf(profile)
+                + self.loss_weight * pred_loss
+            )
             if score < best_score:
                 best_profile = profile
                 best_score = score
-        pred_loss, risk_upper, safe, reason = self._predict_and_guard(request, best_profile)
+        pred_loss, risk_upper, safe, reason = self.context.predict_and_guard(request, best_profile)
         return Action(
             profile=best_profile,
             reason="utility_dynamic",
             pred_loss=pred_loss,
             risk_upper=risk_upper,
             safe=safe,
-            epsilon=self.epsilon,
-            delta=self.delta,
+            epsilon=self.context.epsilon,
+            delta=self.context.delta,
             fallback_reason=reason,
         )
