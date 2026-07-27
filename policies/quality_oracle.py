@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
-from policies.base import Policy, _percentile
+from policies.base import Policy
+from policies.common import percentile
 
 
 class QualityOraclePolicy(Policy):
@@ -61,7 +62,7 @@ class QualityOraclePolicy(Policy):
             for (request_id, row_profile), measurement in self.measurements.items()
             if row_profile == profile and measurement.ttft_ms is not None
         ]
-        return _percentile(values, 0.95)
+        return percentile(values, 0.95)
 
     def _request_ttft_or_inf(self, request_id: str, profile: str) -> float:
         measurement = self.measurements.get((request_id, profile))
