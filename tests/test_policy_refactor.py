@@ -183,3 +183,52 @@ class PolicyRefactorTest(unittest.TestCase):
         )
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         self.assertEqual(policies[0].decide(request, None, None).profile, "engine_full_lru")
+
+    def test_quality_oracle_inherits_policy_directly_and_marks_oracle(self) -> None:
+        from policies.quality_oracle import QualityOraclePolicy
+
+        self.assertEqual(QualityOraclePolicy.__mro__[1], Policy)
+        policy = QualityOraclePolicy(
+            measurements=[measurement("e1", "engine_full_lru", 0.0)],
+            profiles=["engine_full_lru"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        self.assertTrue(policy.oracle)
+        self.assertFalse(policy.placeholder)
+
+    def test_quality_oracle_uses_request_truth_and_ttft(self) -> None:
+        policies = build_policies(
+            ["quality_oracle"],
+            calibration_measurements=[],
+            oracle_measurements=[
+                measurement("e1", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("e1", "compress_light", 0.1, ttft=9.0),
+                measurement("e1", "compress_heavy", 0.3, ttft=2.0),
+                measurement("e2", "engine_full_lru", 0.0, ttft=30.0),
+                measurement("e2", "compress_light", 0.1, ttft=12.0),
+                measurement("e2", "compress_heavy", 0.1, ttft=3.0),
+            ],
+            profiles=["engine_full_lru", "compress_light", "compress_heavy"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        self.assertEqual(policies[0].decide(Request("e1", "qa", "prompt"), None, None).profile, "compress_light")
+        self.assertEqual(policies[0].decide(Request("e2", "qa", "prompt"), None, None).profile, "compress_heavy")
+
+    def test_quality_oracle_falls_back_when_no_lossy_profile_is_true_safe(self) -> None:
+        policies = build_policies(
+            ["quality_oracle"],
+            calibration_measurements=[],
+            oracle_measurements=[
+                measurement("e1", "engine_full_lru", None, ttft=30.0),
+                measurement("e1", "compress_light", 0.4, ttft=9.0),
+            ],
+            profiles=["engine_full_lru", "compress_light"],
+            epsilon=0.2,
+            delta=0.05,
+            exact_profiles={"engine_full_lru"},
+        )
+        self.assertEqual(policies[0].decide(Request("e1", "qa", "prompt"), None, None).profile, "engine_full_lru")

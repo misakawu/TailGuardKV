@@ -30,6 +30,8 @@ class QualityOraclePolicy(Policy):
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         feasible: list[str] = []
         for profile in self.profiles:
+            if profile in self.exact_profiles:
+                continue
             measurement = self.measurements.get((request.request_id, profile))
             if measurement is None or measurement.quality_loss is None:
                 continue
@@ -39,11 +41,12 @@ class QualityOraclePolicy(Policy):
             feasible = [self._fallback_profile()]
         chosen = min(feasible, key=lambda profile: self._request_ttft_or_inf(request.request_id, profile))
         measurement = self.measurements.get((request.request_id, chosen))
+        oracle_loss = None if measurement is None else measurement.quality_loss
         return Action(
             profile=chosen,
-            reason="oracle 上界：允许查评估真值",
-            pred_loss=None if measurement is None else measurement.quality_loss,
-            risk_upper=None if measurement is None else measurement.quality_loss,
+            reason="oracle upper bound with evaluation truth",
+            pred_loss=oracle_loss,
+            risk_upper=oracle_loss,
             safe=True,
             epsilon=self.epsilon,
             delta=self.delta,
