@@ -34,4 +34,4 @@ pilot_pass_criteria:
     bootstrap_ci_lower: 0.05
   exact_fallback:
     max_ratio: 0.60
-    source: quality_oracle_plus_2sigma
+    source: exact_fallback_plus_2sigma

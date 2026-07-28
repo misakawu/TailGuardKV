@@ -20,8 +20,6 @@ policies:
     - static_safe
     - utility_dynamic
     - uncalibrated_dynamic
-    - tailguard
-    - quality_oracle
 
 pilot:
   epsilons: [0.05]

@@ -69,7 +69,7 @@ def exact_profiles(profiles: list[str], config: dict[str, Any] | None = None) ->
                 for profile in profiles
                 if isinstance(specs.get(profile), dict) and bool(specs[profile].get("exact"))
             }
-    return {profile for profile in profiles if profile == "engine_full_lru"}
+    return {profile for profile in profiles if profile in {"full_gpu", "full_cpu", "recompute", "engine_full_lru"}}
 
 
 def _required_mapping(config: dict[str, Any], key: str) -> dict[str, Any]:

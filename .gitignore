@@ -1,5 +1,6 @@
 /id_rsa
 /id_rsa.pub
+.worktrees/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

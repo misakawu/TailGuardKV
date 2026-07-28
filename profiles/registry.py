@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from profiles.base import ProfileAdapter
-from profiles.vllm_lru import VLLMLRUAdapter
+from profiles.full import FullKVAdapter
+from profiles.h2o import H2OAdapter
+from profiles.kivi import KIVIAdapter
 
 
 def build_profile_adapters(
@@ -9,7 +11,9 @@ def build_profile_adapters(
     runtime_config: dict[str, object] | None = None,
 ) -> list[ProfileAdapter]:
     registry: dict[str, type[ProfileAdapter]] = {
-        "vllm_lru": VLLMLRUAdapter,
+        "full": FullKVAdapter,
+        "kivi": KIVIAdapter,
+        "h2o": H2OAdapter,
     }
     selected = names or list(registry)
     unknown = sorted(set(selected) - set(registry))

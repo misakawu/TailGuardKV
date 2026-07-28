@@ -6,7 +6,7 @@ from policies.base import StaticProfilePolicy
 
 class FullLRUPolicy(StaticProfilePolicy):
     def __init__(self) -> None:
-        super().__init__("engine_full_lru", name="full_lru")
+        super().__init__("full_gpu", name="full_lru")
 
     def decide(self, request, cache_state, device_state) -> Action:
-        return Action(profile=self.profile, reason="full precision vLLM LRU")
+        return Action(profile=self.profile, reason="full precision exact profile")
