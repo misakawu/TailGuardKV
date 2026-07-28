@@ -18,7 +18,7 @@ from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
 from core_types import Action
 from core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
-from experiment_common import config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, load_config, validate_profile_measurements, with_quality, write_csv
+from experiment_common import config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
 from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, token_f1_loss
 from metrics import MetricCollector
 from policies.base import Policy
@@ -28,7 +28,7 @@ from vllm_lru_policy import create_vllm_policy
 import run_build_profile_table as profile_table_module
 from run_build_profile_table import build_profile_table
 from run_cli_common import run_command
-from run_experiment import build_parser as build_experiment_parser, pilot_smoke_measured
+from run_experiment import _policy_output_for_sweep, _policy_sweep_points, _summary_rows, build_parser as build_experiment_parser, pilot_smoke_measured
 from run_run_policies import run_policies
 
 
@@ -732,6 +732,39 @@ class TailGuardCoreTest(unittest.TestCase):
         config = load_config(Path("configs/pilot.yaml"))
         self.assertEqual(config_runtime(config)["max_requests"], 200)
 
+    def test_limit_requests_by_split_balances_calibration_and_eval(self) -> None:
+        requests = [
+            Request(f"c{index}", "qa", "prompt", metadata={"split": "calibration"})
+            for index in range(250)
+        ] + [
+            Request(f"e{index}", "qa", "prompt", metadata={"split": "eval"})
+            for index in range(250)
+        ]
+
+        limited = limit_requests_by_split(requests, 50)
+
+        self.assertEqual(len(limited), 50)
+        self.assertEqual(sum(request.metadata.get("split") == "calibration" for request in limited), 25)
+        self.assertEqual(sum(request.metadata.get("split") == "eval" for request in limited), 25)
+
+    def test_limit_requests_by_split_preserves_single_split_prefix(self) -> None:
+        requests = [
+            Request(f"e{index}", "qa", "prompt", metadata={"split": "eval"})
+            for index in range(23)
+        ]
+
+        limited = limit_requests_by_split(requests, 20)
+
+        self.assertEqual([request.request_id for request in limited], [f"e{index}" for index in range(20)])
+
+    def test_limit_requests_by_split_zero_keeps_all_requests(self) -> None:
+        requests = [
+            Request(f"r{index}", "qa", "prompt", metadata={"split": "eval"})
+            for index in range(3)
+        ]
+
+        self.assertIs(limit_requests_by_split(requests, 0), requests)
+
     def test_run_experiment_parser_only_exposes_pilot_smoke_measured(self) -> None:
         parser = build_experiment_parser()
         args = parser.parse_args(["pilot-smoke-measured"])
@@ -817,8 +850,11 @@ class TailGuardCoreTest(unittest.TestCase):
                 return [_measurement(request.request_id, profile_name, 0.0) for request in chunk]
 
         requests = [
-            Request(f"r{index}", "qa", f"prompt {index}", metadata={"split": "eval"})
-            for index in range(23)
+            Request(f"c{index}", "qa", f"prompt {index}", metadata={"split": "calibration"})
+            for index in range(25)
+        ] + [
+            Request(f"e{index}", "qa", f"prompt {index}", metadata={"split": "eval"})
+            for index in range(25)
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "profiles.csv"
@@ -843,10 +879,13 @@ class TailGuardCoreTest(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual([len(call) for call in stub.calls], [10, 10])
-            self.assertEqual(stub.calls[-1][-1], "r19")
+            self.assertEqual(stub.calls[0], [f"c{index}" for index in range(10)])
+            self.assertEqual(stub.calls[1], [f"e{index}" for index in range(10)])
             with output_path.open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 20)
+            self.assertEqual(sum(row["split"] == "calibration" for row in rows), 10)
+            self.assertEqual(sum(row["split"] == "eval" for row in rows), 10)
 
     def test_build_profile_table_dry_run_covers_required_pilot_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1029,20 +1068,31 @@ class TailGuardCoreTest(unittest.TestCase):
                 patch("run_build_profile_table.build_profile_adapters", return_value=[stub]),
                 patch("run_build_profile_table.load_requests", return_value=(requests, False)),
             ):
-                code = build_profile_table(
-                    argparse.Namespace(
-                        config="config.yaml",
-                        adapters=None,
-                        output=str(output_path),
-                        import_measurements="",
-                        dry_run=False,
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = build_profile_table(
+                        argparse.Namespace(
+                            config="config.yaml",
+                            adapters=None,
+                            output=str(output_path),
+                            import_measurements="",
+                            dry_run=False,
+                        )
                     )
-                )
 
             self.assertEqual(code, 2)
             with output_path.open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["request_id"] for row in rows], [f"r{index}" for index in range(10)])
+            diagnostic_path = Path(tmpdir) / "profiles_failed_chunks.csv"
+            self.assertTrue(diagnostic_path.exists())
+            with diagnostic_path.open("r", encoding="utf-8", newline="") as handle:
+                failed_rows = list(csv.DictReader(handle))
+            self.assertEqual([row["request_id"] for row in failed_rows], ["r10", "r11"])
+            payload = json.loads(stream.getvalue())
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["diagnostic_output"], str(diagnostic_path))
+            self.assertEqual(payload["failures"][0]["error"], "chunk failed")
 
     def test_pilot_smoke_measured_builds_profiles_without_dry_run_and_replays_same_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1109,6 +1159,160 @@ class TailGuardCoreTest(unittest.TestCase):
             for deleted in ("return_code", "step", "profile_output", "policy_output", "summary_output"):
                 self.assertNotIn(deleted, summary_rows[0])
 
+    def test_policy_sweep_points_expand_cartesian_product(self) -> None:
+        config = {
+            "pilot": {
+                "epsilons": [0.05, 0.10],
+                "deltas": [0.05],
+                "memory_budgets_mib": [6144, 8192],
+            }
+        }
+
+        self.assertEqual(
+            _policy_sweep_points(config),
+            [
+                {"epsilon": 0.05, "delta": 0.05, "memory_budget_mib": 6144.0},
+                {"epsilon": 0.05, "delta": 0.05, "memory_budget_mib": 8192.0},
+                {"epsilon": 0.10, "delta": 0.05, "memory_budget_mib": 6144.0},
+                {"epsilon": 0.10, "delta": 0.05, "memory_budget_mib": 8192.0},
+            ],
+        )
+
+    def test_policy_output_for_sweep_keeps_single_run_path(self) -> None:
+        self.assertEqual(
+            _policy_output_for_sweep(
+                "out/policy_tables/pilot_policy.csv",
+                {"epsilon": 0.05, "delta": 0.05, "memory_budget_mib": 6144.0},
+                1,
+            ),
+            "out/policy_tables/pilot_policy.csv",
+        )
+
+    def test_policy_output_for_sweep_namespaces_multi_run_path(self) -> None:
+        self.assertEqual(
+            _policy_output_for_sweep(
+                "out/policy_tables/pilot_policy.csv",
+                {"epsilon": 0.05, "delta": 0.10, "memory_budget_mib": 8192.0},
+                4,
+            ),
+            "out/policy_tables/pilot_policy_eps0p05_delta0p1_mem8192.csv",
+        )
+
+    def test_pilot_smoke_measured_runs_all_policy_sweep_outputs_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+            config_path = Path(tmpdir) / "pilot.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  names: [full_lru]",
+                        "pilot:",
+                        "  epsilons: [0.05, 0.10]",
+                        "  deltas: [0.05]",
+                        "  memory_budgets_mib: [6144, 8192]",
+                        "outputs:",
+                        f"  smoke_profiles: {profile_path}",
+                        f"  smoke_policy: {policy_path}",
+                        f"  smoke_summary: {summary_path}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            policy_calls = []
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                policy_calls.append((args.epsilon, args.delta, args.memory_budget_mib, args.output))
+                print(
+                    json.dumps(
+                        {
+                            "output": args.output,
+                            "rows": 2,
+                            "epsilon": float(args.epsilon),
+                            "delta": float(args.delta),
+                            "memory_budget_mib": float(args.memory_budget_mib),
+                            "summary": {"full_lru": {"count": 2.0}},
+                        }
+                    )
+                )
+                return 0
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path)))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(policy_calls), 4)
+            self.assertEqual(policy_calls[0][0:3], (0.05, 0.05, 6144.0))
+            self.assertEqual(policy_calls[-1][0:3], (0.10, 0.05, 8192.0))
+            self.assertEqual(len({call[3] for call in policy_calls}), 4)
+            self.assertTrue(all(call[3] != str(policy_path) for call in policy_calls))
+
+    def test_pilot_summary_contains_each_policy_sweep_row(self) -> None:
+        rows = _summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "rows": {"profiles": 10, "policy": 4},
+                "profile": {"summary": {}},
+                "policy_runs": [
+                    {
+                        "ok": True,
+                        "epsilon": 0.05,
+                        "delta": 0.05,
+                        "memory_budget_mib": 6144.0,
+                        "payload": {"summary": {"full_lru": {"count": 2.0, "p95_ttft_ms": 1.0}}},
+                    },
+                    {
+                        "ok": True,
+                        "epsilon": 0.1,
+                        "delta": 0.05,
+                        "memory_budget_mib": 6144.0,
+                        "payload": {"summary": {"full_lru": {"count": 2.0, "p95_ttft_ms": 2.0}}},
+                    },
+                ],
+            }
+        )
+
+        policy_rows = [row for row in rows if row["section"] == "policy" and row["name"] == "full_lru"]
+        self.assertEqual(len(policy_rows), 2)
+        self.assertEqual([row["epsilon"] for row in policy_rows], [0.05, 0.1])
+        self.assertEqual([row["p95_ttft_ms"] for row in policy_rows], [1.0, 2.0])
+
+    def test_pilot_summary_experiment_error_uses_failed_policy_sweep_payload(self) -> None:
+        rows = _summary_rows(
+            {
+                "ok": False,
+                "config": "pilot.yaml",
+                "rows": {"profiles": 10, "policy": 2},
+                "policy_runs": [
+                    {
+                        "ok": False,
+                        "epsilon": 0.05,
+                        "delta": 0.05,
+                        "memory_budget_mib": 6144.0,
+                        "payload": {"error": "policy failed"},
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(rows[0]["error"], "policy failed")
+
     def test_run_experiment_pilot_accepts_config_argument(self) -> None:
         parser = build_experiment_parser()
         args = parser.parse_args(["pilot-smoke-measured", "--config", "configs/pilot_50.yaml"])
@@ -1169,7 +1373,17 @@ class TailGuardCoreTest(unittest.TestCase):
             _write_pilot_test_config(config_path, profile_path, policy_path, summary_path)
 
             def fake_build(args: argparse.Namespace) -> int:
-                print(json.dumps({"ok": False, "output": args.output, "error": "profile failed"}))
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "output": args.output,
+                            "diagnostic_output": str(Path(tmpdir) / "profiles_failed_chunks.csv"),
+                            "error": "profile failed",
+                            "failures": [{"request_id": "r10", "error": "chunk failed"}],
+                        }
+                    )
+                )
                 return 2
 
             with (
@@ -1189,6 +1403,8 @@ class TailGuardCoreTest(unittest.TestCase):
                 summary_rows = list(csv.DictReader(handle))
             self.assertEqual(summary_rows[0]["ok"], "False")
             self.assertEqual(summary_rows[0]["error"], "profile failed")
+            self.assertEqual(summary_rows[0]["diagnostic_output"], str(Path(tmpdir) / "profiles_failed_chunks.csv"))
+            self.assertEqual(json.loads(summary_rows[0]["failures"])[0]["error"], "chunk failed")
             self.assertNotIn("step", summary_rows[0])
             policy_mock.assert_not_called()
 

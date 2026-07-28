@@ -18,7 +18,7 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
 python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 ```
 
-`configs/pilot_50.yaml` 是快速 measured gate，使用与 `configs/pilot.yaml` 相同的 10-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。
+`configs/pilot_50.yaml` 是快速 measured gate，使用与 `configs/pilot.yaml` 相同的 10-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样，例如 50 条会取 25 条 calibration 和 25 条 eval；只有单一 split 或缺少 split 时保持原有前缀截断语义。
 
 正式 profile grid 为：
 
@@ -30,8 +30,8 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 
 1. 调用 `run_build_profile_table.py` 的 `build_profile_table`，以真实 measured 模式生成 profile 表。
 2. 读取并校验生成的 profile 表，要求配置中的全部 profile 都存在且 `measured=True`。
-3. 调用 `run_run_policies.py` 的 `run_policies`，用同一 profile 表做 measured replay policy 评估。
-4. 将完整 summary 写入宽表 CSV 文件。
+3. 按 `pilot.epsilons x pilot.deltas x pilot.memory_budgets_mib` 展开 policy 参数组合，逐个调用 `run_run_policies.py` 的 `run_policies`，用同一 profile 表做 measured replay policy 评估。
+4. 将完整 summary 写入宽表 CSV 文件；多组合 policy sweep 会在 summary 中为每个组合分别展开 policy 汇总行。
 
 输出位置由配置的 `outputs.smoke_profiles`、`outputs.smoke_policy` 和 `outputs.smoke_summary` 决定。`configs/pilot_50.yaml` 默认输出到：
 
@@ -39,12 +39,22 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 - `out/policy_tables/pilot_50_measured_policy.csv`
 - `out/policy_tables/pilot_50_measured_summary.csv`
 
+单个 policy 参数组合继续写入 `outputs.smoke_policy` 指定路径。多个组合会生成带参数后缀的 CSV，避免覆盖，例如：
+
+```text
+out/policy_tables/pilot_50_measured_policy_eps0p05_delta0p1_mem8192.csv
+```
+
 summary 使用宽表 CSV，一行对应 `experiment`、单个 `profile` 或单个 `policy` 汇总对象。
 左侧列优先放置 `section`、`name`、`ok`、`count`、`ok_count`、
 `mean_ttft_ms`、`p95_ttft_ms`、`mean_peak_memory_mib`、`p95_peak_memory_mib`、
 `mean_quality_loss`、`p95_quality_loss`、`violation_rate`、`delta_slack` 等关键对比指标。
 policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`unsafe_action_count` 和逐请求均值 `candidate_safe_count`。summary 宽表不再输出 `return_code`、`step`、`profile_output`、`policy_output`、`summary_output`。
 配置加载或 profile 表校验错误返回 `2`；profile 或 policy 阶段运行失败时返回对应阶段的非零返回码。
+
+Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile CSV 只保留此前成功 chunk，失败 chunk 会写入同目录 sidecar 诊断表 `<profile_stem>_failed_chunks.csv`，并在 summary 的 `diagnostic_output`、`failures` 列暴露失败位置和 error，便于复跑定位。
+
+当前 `full_cpu` 内存口径不在本轮修复内；RSS/GPU/CPU resident memory 的一致口径需要后续单独确认。
 
 `policies.record_rejected_unsafe: true` 会让 `utility_dynamic` 和 `uncalibrated_dynamic` 在 calibrated unsafe lossy 动作上强制回退到校准集 p95 TTFT 最低的 exact profile，并在 policy CSV 写入 `rejected_profile`、`rejected_pred_loss`、`rejected_risk_upper`。关闭该记录开关时仍会强制回退，但 rejected 字段保持为空。
 

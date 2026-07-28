@@ -1,15 +1,32 @@
 from __future__ import annotations
 
+# 常用运行命令:
+# 1. profile runtime 预检:
+#    python3 run_check_profiles.py --config configs/pilot_50.yaml --timeout 180
+# 2. 快速 measured gate，50 requests，policy sweep 写参数后缀 CSV:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
+# 3. 正式 pilot measured，200 requests:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+# 4. 完整实验一键运行，含 profile 构建、profile 校验、policy sweep 和 summary 聚合:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+# 5. dry-run/CLI 兼容检查:
+#    python3 run_build_profile_table.py --config configs/pilot.yaml --dry-run --output /tmp/tailguardkv_profiles.csv
+#    python3 run_run_policies.py --config configs/pilot.yaml --measurements /tmp/tailguardkv_profiles.csv --output /tmp/tailguardkv_policy.csv --allow-dry-run-replay
+# 6. 单个 policy 组合复跑:
+#    python3 run_run_policies.py --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output /tmp/tailguardkv_policy_eps0p05_delta0p05_mem6144.csv --epsilon 0.05 --delta 0.05 --memory-budget-mib 6144
+
 import argparse
 import csv
 import io
 import json
 from contextlib import redirect_stdout
+from itertools import product
 from pathlib import Path
 from typing import Any, Callable
 
 from experiment_common import config_policies, config_profiles, json_ready, load_config, read_measurements, validate_profile_measurements
 from run_build_profile_table import build_profile_table
+from run_cli_common import first_number
 from run_run_policies import run_policies
 
 
@@ -23,6 +40,8 @@ SUMMARY_KEY_COLUMNS = [
     "name",
     "ok",
     "error",
+    "diagnostic_output",
+    "failures",
     "config",
     "profile_rows",
     "policy_rows",
@@ -78,11 +97,66 @@ def _csv_value(value: Any) -> Any:
 def _summary_error(payload: dict[str, Any]) -> Any:
     if payload.get("error"):
         return payload.get("error")
-    for section in ("profile", "policy"):
+    policy_runs = payload.get("policy_runs")
+    sections = ("profile",) if isinstance(policy_runs, list) else ("profile", "policy")
+    for section in sections:
         nested = payload.get(section)
         if isinstance(nested, dict) and nested.get("error"):
             return nested.get("error")
+    if isinstance(policy_runs, list):
+        for policy_run in policy_runs:
+            if not isinstance(policy_run, dict):
+                continue
+            run_payload = policy_run.get("payload")
+            if isinstance(run_payload, dict) and run_payload.get("error"):
+                return run_payload.get("error")
     return ""
+
+
+def _number_list(value: Any, *, default: float, name: str) -> list[float]:
+    if value is None:
+        return [default]
+    if isinstance(value, str):
+        return [first_number(value, None, default=default, name=name)]
+    try:
+        values = list(value)
+    except TypeError:
+        values = [value]
+    if not values:
+        return [default]
+    return [first_number(item, None, default=default, name=name) for item in values]
+
+
+def _policy_sweep_points(config: dict[str, Any]) -> list[dict[str, float]]:
+    pilot = config.get("pilot", {})
+    pilot = pilot if isinstance(pilot, dict) else {}
+    epsilons = _number_list(pilot.get("epsilons"), default=0.2, name="epsilon")
+    deltas = _number_list(pilot.get("deltas"), default=0.05, name="delta")
+    budgets = _number_list(pilot.get("memory_budgets_mib"), default=float("inf"), name="memory-budget-mib")
+    return [
+        {"epsilon": epsilon, "delta": delta, "memory_budget_mib": memory_budget_mib}
+        for epsilon, delta, memory_budget_mib in product(epsilons, deltas, budgets)
+    ]
+
+
+def _slug_number(value: float) -> str:
+    if value == float("inf"):
+        return "inf"
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:g}".replace(".", "p").replace("-", "m")
+
+
+def _policy_output_for_sweep(base_output: str, sweep: dict[str, float], sweep_count: int) -> str:
+    if sweep_count <= 1:
+        return base_output
+    path = Path(base_output)
+    suffix = (
+        f"eps{_slug_number(sweep['epsilon'])}"
+        f"_delta{_slug_number(sweep['delta'])}"
+        f"_mem{_slug_number(sweep['memory_budget_mib'])}"
+    )
+    return str(path.with_name(f"{path.stem}_{suffix}{path.suffix}"))
 
 
 def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -92,6 +166,8 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "name": "pilot-smoke-measured",
             "ok": payload.get("ok"),
             "error": _summary_error(payload),
+            "diagnostic_output": payload.get("diagnostic_output", ""),
+            "failures": payload.get("failures", ""),
             "config": payload.get("config"),
             "profile_rows": (payload.get("rows") or {}).get("profiles") if isinstance(payload.get("rows"), dict) else "",
             "policy_rows": (payload.get("rows") or {}).get("policy") if isinstance(payload.get("rows"), dict) else "",
@@ -100,7 +176,9 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "memory_budget_mib": payload.get("memory_budget_mib"),
         }
     ]
-    for section in ("profile", "policy"):
+    policy_runs = payload.get("policy_runs")
+    sections = ("profile",) if isinstance(policy_runs, list) else ("profile", "policy")
+    for section in sections:
         section_payload = payload.get(section)
         if not isinstance(section_payload, dict):
             continue
@@ -120,6 +198,29 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(metrics, dict):
                 row.update(metrics)
             rows.append(row)
+    if isinstance(policy_runs, list):
+        for policy_run in policy_runs:
+            if not isinstance(policy_run, dict):
+                continue
+            run_payload = policy_run.get("payload")
+            if not isinstance(run_payload, dict):
+                continue
+            summary = run_payload.get("summary")
+            if not isinstance(summary, dict):
+                continue
+            for name, metrics in summary.items():
+                row = {
+                    "section": "policy",
+                    "name": name,
+                    "ok": policy_run.get("ok"),
+                    "config": payload.get("config"),
+                    "epsilon": policy_run.get("epsilon"),
+                    "delta": policy_run.get("delta"),
+                    "memory_budget_mib": policy_run.get("memory_budget_mib"),
+                }
+                if isinstance(metrics, dict):
+                    row.update(metrics)
+                rows.append(row)
     return rows
 
 
@@ -176,6 +277,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "step": "build_profile_table",
             "config": config_path,
             "summary_output": summary_output,
+            "diagnostic_output": profile_payload.get("diagnostic_output"),
+            "failures": profile_payload.get("failures"),
             "profile": profile_payload,
         }
         _print_and_write(payload)
@@ -197,25 +300,47 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "error": str(exc),
             "config": config_path,
             "summary_output": summary_output,
+            "diagnostic_output": profile_payload.get("diagnostic_output"),
+            "failures": profile_payload.get("failures"),
             "profile": profile_payload,
         }
         _print_and_write(payload)
         return 2
 
-    policy_args = argparse.Namespace(
-        config=config_path,
-        measurements=profile_output,
-        output=policy_output,
-        profiles=None,
-        policies=None,
-        policy_config=None,
-        epsilon=None,
-        delta=None,
-        memory_budget_mib=None,
-        use_pandas_replay=False,
-        allow_dry_run_replay=False,
-    )
-    policy_code, policy_payload = _run_stage(run_policies, policy_args)
+    sweeps = _policy_sweep_points(config)
+    policy_runs: list[dict[str, Any]] = []
+    policy_rows = 0
+    policy_code = 0
+    policy_payload: dict[str, Any] = {}
+    for sweep in sweeps:
+        run_output = _policy_output_for_sweep(policy_output, sweep, len(sweeps))
+        policy_args = argparse.Namespace(
+            config=config_path,
+            measurements=profile_output,
+            output=run_output,
+            profiles=None,
+            policies=None,
+            policy_config=None,
+            epsilon=sweep["epsilon"],
+            delta=sweep["delta"],
+            memory_budget_mib=sweep["memory_budget_mib"],
+            use_pandas_replay=False,
+            allow_dry_run_replay=False,
+        )
+        policy_code, policy_payload = _run_stage(run_policies, policy_args)
+        run = {
+            "ok": policy_code == 0,
+            "return_code": policy_code,
+            "epsilon": sweep["epsilon"],
+            "delta": sweep["delta"],
+            "memory_budget_mib": sweep["memory_budget_mib"],
+            "output": run_output,
+            "payload": policy_payload,
+        }
+        policy_runs.append(run)
+        policy_rows += int(policy_payload.get("rows") or 0)
+        if policy_code != 0:
+            break
     payload = {
         "ok": policy_code == 0,
         "return_code": policy_code,
@@ -226,13 +351,14 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "policies": policies,
         "rows": {
             "profiles": profile_payload.get("rows", len(measurements)),
-            "policy": policy_payload.get("rows"),
+            "policy": policy_rows,
         },
         "epsilon": policy_payload.get("epsilon"),
         "delta": policy_payload.get("delta"),
         "memory_budget_mib": policy_payload.get("memory_budget_mib"),
         "profile": profile_payload,
         "policy": policy_payload,
+        "policy_runs": policy_runs,
     }
     _print_and_write(payload)
     return policy_code
