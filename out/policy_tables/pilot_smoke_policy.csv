@@ -1,0 +1,501 @@
+action_profile,audit_rate,controller_cg_ms,controller_overhead_ms,controller_qrp_ms,controller_stc_ms,delta,drift_state,epsilon,error,exact,fallback_reason,latency_ms,length_bucket,measured,ok,optimality_gap,oracle,oracle_cost_ms,peak_memory_mib,placeholder,policy,pred_loss,quality_loss,reason,request_id,resident_memory_mib,risk_upper,safe,task,ttft_ms
+full_gpu,,,,,,,,,,True,,1.84,short,False,True,,False,,0.044921875,False,full_lru,,,full precision exact profile,longbench_qasper_000100,0.044921875,,,qa_long_context,1.84
+full_gpu,,,,,,,,,,True,,4.16,short,False,True,,False,,0.1015625,False,full_lru,,,full precision exact profile,longbench_qasper_000101,0.1015625,,,qa_long_context,4.16
+full_gpu,,,,,,,,,,True,,3.12,short,False,True,,False,,0.076171875,False,full_lru,,,full precision exact profile,longbench_qasper_000102,0.076171875,,,qa_long_context,3.12
+full_gpu,,,,,,,,,,True,,5.36,short,False,True,,False,,0.130859375,False,full_lru,,,full precision exact profile,longbench_qasper_000103,0.130859375,,,qa_long_context,5.36
+full_gpu,,,,,,,,,,True,,3.36,short,False,True,,False,,0.08203125,False,full_lru,,,full precision exact profile,longbench_qasper_000104,0.08203125,,,qa_long_context,3.36
+full_gpu,,,,,,,,,,True,,3.44,short,False,True,,False,,0.083984375,False,full_lru,,,full precision exact profile,longbench_qasper_000105,0.083984375,,,qa_long_context,3.44
+full_gpu,,,,,,,,,,True,,4.96,short,False,True,,False,,0.12109375,False,full_lru,,,full precision exact profile,longbench_qasper_000106,0.12109375,,,qa_long_context,4.96
+full_gpu,,,,,,,,,,True,,4.72,short,False,True,,False,,0.115234375,False,full_lru,,,full precision exact profile,longbench_qasper_000107,0.115234375,,,qa_long_context,4.72
+full_gpu,,,,,,,,,,True,,3.68,short,False,True,,False,,0.08984375,False,full_lru,,,full precision exact profile,longbench_qasper_000108,0.08984375,,,qa_long_context,3.68
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000109,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,3.12,short,False,True,,False,,0.076171875,False,full_lru,,,full precision exact profile,longbench_qasper_000110,0.076171875,,,qa_long_context,3.12
+full_gpu,,,,,,,,,,True,,3.12,short,False,True,,False,,0.076171875,False,full_lru,,,full precision exact profile,longbench_qasper_000111,0.076171875,,,qa_long_context,3.12
+full_gpu,,,,,,,,,,True,,2.64,short,False,True,,False,,0.064453125,False,full_lru,,,full precision exact profile,longbench_qasper_000112,0.064453125,,,qa_long_context,2.64
+full_gpu,,,,,,,,,,True,,2.24,short,False,True,,False,,0.0546875,False,full_lru,,,full precision exact profile,longbench_qasper_000113,0.0546875,,,qa_long_context,2.24
+full_gpu,,,,,,,,,,True,,4.8,short,False,True,,False,,0.1171875,False,full_lru,,,full precision exact profile,longbench_qasper_000114,0.1171875,,,qa_long_context,4.8
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000115,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,2.08,short,False,True,,False,,0.05078125,False,full_lru,,,full precision exact profile,longbench_qasper_000116,0.05078125,,,qa_long_context,2.08
+full_gpu,,,,,,,,,,True,,2.56,short,False,True,,False,,0.0625,False,full_lru,,,full precision exact profile,longbench_qasper_000117,0.0625,,,qa_long_context,2.56
+full_gpu,,,,,,,,,,True,,5.6000000000000005,short,False,True,,False,,0.13671875,False,full_lru,,,full precision exact profile,longbench_qasper_000118,0.13671875,,,qa_long_context,5.6000000000000005
+full_gpu,,,,,,,,,,True,,3.04,short,False,True,,False,,0.07421875,False,full_lru,,,full precision exact profile,longbench_qasper_000119,0.07421875,,,qa_long_context,3.04
+full_gpu,,,,,,,,,,True,,3.84,short,False,True,,False,,0.09375,False,full_lru,,,full precision exact profile,longbench_qasper_000120,0.09375,,,qa_long_context,3.84
+full_gpu,,,,,,,,,,True,,2.88,short,False,True,,False,,0.0703125,False,full_lru,,,full precision exact profile,longbench_qasper_000121,0.0703125,,,qa_long_context,2.88
+full_gpu,,,,,,,,,,True,,3.52,short,False,True,,False,,0.0859375,False,full_lru,,,full precision exact profile,longbench_qasper_000122,0.0859375,,,qa_long_context,3.52
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000123,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,4.24,short,False,True,,False,,0.103515625,False,full_lru,,,full precision exact profile,longbench_qasper_000124,0.103515625,,,qa_long_context,4.24
+full_gpu,,,,,,,,,,True,,6.640000000000001,short,False,True,,False,,0.162109375,False,full_lru,,,full precision exact profile,longbench_qasper_000125,0.162109375,,,qa_long_context,6.640000000000001
+full_gpu,,,,,,,,,,True,,4.0,short,False,True,,False,,0.09765625,False,full_lru,,,full precision exact profile,longbench_qasper_000126,0.09765625,,,qa_long_context,4.0
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000127,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,2.8000000000000003,short,False,True,,False,,0.068359375,False,full_lru,,,full precision exact profile,longbench_qasper_000128,0.068359375,,,qa_long_context,2.8000000000000003
+full_gpu,,,,,,,,,,True,,2.32,short,False,True,,False,,0.056640625,False,full_lru,,,full precision exact profile,longbench_qasper_000129,0.056640625,,,qa_long_context,2.32
+full_gpu,,,,,,,,,,True,,6.72,short,False,True,,False,,0.1640625,False,full_lru,,,full precision exact profile,longbench_qasper_000130,0.1640625,,,qa_long_context,6.72
+full_gpu,,,,,,,,,,True,,2.4,short,False,True,,False,,0.05859375,False,full_lru,,,full precision exact profile,longbench_qasper_000131,0.05859375,,,qa_long_context,2.4
+full_gpu,,,,,,,,,,True,,3.04,short,False,True,,False,,0.07421875,False,full_lru,,,full precision exact profile,longbench_qasper_000132,0.07421875,,,qa_long_context,3.04
+full_gpu,,,,,,,,,,True,,3.52,short,False,True,,False,,0.0859375,False,full_lru,,,full precision exact profile,longbench_qasper_000133,0.0859375,,,qa_long_context,3.52
+full_gpu,,,,,,,,,,True,,4.96,short,False,True,,False,,0.12109375,False,full_lru,,,full precision exact profile,longbench_qasper_000134,0.12109375,,,qa_long_context,4.96
+full_gpu,,,,,,,,,,True,,4.24,short,False,True,,False,,0.103515625,False,full_lru,,,full precision exact profile,longbench_qasper_000135,0.103515625,,,qa_long_context,4.24
+full_gpu,,,,,,,,,,True,,3.12,short,False,True,,False,,0.076171875,False,full_lru,,,full precision exact profile,longbench_qasper_000136,0.076171875,,,qa_long_context,3.12
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000137,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,3.92,short,False,True,,False,,0.095703125,False,full_lru,,,full precision exact profile,longbench_qasper_000138,0.095703125,,,qa_long_context,3.92
+full_gpu,,,,,,,,,,True,,5.68,short,False,True,,False,,0.138671875,False,full_lru,,,full precision exact profile,longbench_qasper_000139,0.138671875,,,qa_long_context,5.68
+full_gpu,,,,,,,,,,True,,6.24,short,False,True,,False,,0.15234375,False,full_lru,,,full precision exact profile,longbench_qasper_000140,0.15234375,,,qa_long_context,6.24
+full_gpu,,,,,,,,,,True,,7.36,short,False,True,,False,,0.1796875,False,full_lru,,,full precision exact profile,longbench_qasper_000141,0.1796875,,,qa_long_context,7.36
+full_gpu,,,,,,,,,,True,,8.8,short,False,True,,False,,0.21484375,False,full_lru,,,full precision exact profile,longbench_qasper_000142,0.21484375,,,qa_long_context,8.8
+full_gpu,,,,,,,,,,True,,5.12,short,False,True,,False,,0.125,False,full_lru,,,full precision exact profile,longbench_qasper_000143,0.125,,,qa_long_context,5.12
+full_gpu,,,,,,,,,,True,,2.56,short,False,True,,False,,0.0625,False,full_lru,,,full precision exact profile,longbench_qasper_000144,0.0625,,,qa_long_context,2.56
+full_gpu,,,,,,,,,,True,,5.2,short,False,True,,False,,0.126953125,False,full_lru,,,full precision exact profile,longbench_qasper_000145,0.126953125,,,qa_long_context,5.2
+full_gpu,,,,,,,,,,True,,1.84,short,False,True,,False,,0.044921875,False,full_lru,,,full precision exact profile,longbench_qasper_000146,0.044921875,,,qa_long_context,1.84
+full_gpu,,,,,,,,,,True,,5.92,short,False,True,,False,,0.14453125,False,full_lru,,,full precision exact profile,longbench_qasper_000147,0.14453125,,,qa_long_context,5.92
+full_gpu,,,,,,,,,,True,,3.2,short,False,True,,False,,0.078125,False,full_lru,,,full precision exact profile,longbench_qasper_000148,0.078125,,,qa_long_context,3.2
+full_gpu,,,,,,,,,,True,,3.6,short,False,True,,False,,0.087890625,False,full_lru,,,full precision exact profile,longbench_qasper_000149,0.087890625,,,qa_long_context,3.6
+full_gpu,,,,,,,,,,True,,3.44,short,False,True,,False,,0.083984375,False,full_lru,,,full precision exact profile,longbench_qasper_000150,0.083984375,,,qa_long_context,3.44
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000151,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,4.16,short,False,True,,False,,0.1015625,False,full_lru,,,full precision exact profile,longbench_qasper_000152,0.1015625,,,qa_long_context,4.16
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000153,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,3.6,short,False,True,,False,,0.087890625,False,full_lru,,,full precision exact profile,longbench_qasper_000154,0.087890625,,,qa_long_context,3.6
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000155,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,2.32,short,False,True,,False,,0.056640625,False,full_lru,,,full precision exact profile,longbench_qasper_000156,0.056640625,,,qa_long_context,2.32
+full_gpu,,,,,,,,,,True,,3.6,short,False,True,,False,,0.087890625,False,full_lru,,,full precision exact profile,longbench_qasper_000157,0.087890625,,,qa_long_context,3.6
+full_gpu,,,,,,,,,,True,,2.08,short,False,True,,False,,0.05078125,False,full_lru,,,full precision exact profile,longbench_qasper_000158,0.05078125,,,qa_long_context,2.08
+full_gpu,,,,,,,,,,True,,2.16,short,False,True,,False,,0.052734375,False,full_lru,,,full precision exact profile,longbench_qasper_000159,0.052734375,,,qa_long_context,2.16
+full_gpu,,,,,,,,,,True,,4.48,short,False,True,,False,,0.109375,False,full_lru,,,full precision exact profile,longbench_qasper_000160,0.109375,,,qa_long_context,4.48
+full_gpu,,,,,,,,,,True,,3.52,short,False,True,,False,,0.0859375,False,full_lru,,,full precision exact profile,longbench_qasper_000161,0.0859375,,,qa_long_context,3.52
+full_gpu,,,,,,,,,,True,,2.08,short,False,True,,False,,0.05078125,False,full_lru,,,full precision exact profile,longbench_qasper_000162,0.05078125,,,qa_long_context,2.08
+full_gpu,,,,,,,,,,True,,1.84,short,False,True,,False,,0.044921875,False,full_lru,,,full precision exact profile,longbench_qasper_000163,0.044921875,,,qa_long_context,1.84
+full_gpu,,,,,,,,,,True,,2.32,short,False,True,,False,,0.056640625,False,full_lru,,,full precision exact profile,longbench_qasper_000164,0.056640625,,,qa_long_context,2.32
+full_gpu,,,,,,,,,,True,,3.44,short,False,True,,False,,0.083984375,False,full_lru,,,full precision exact profile,longbench_qasper_000165,0.083984375,,,qa_long_context,3.44
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000166,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000167,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,2.88,short,False,True,,False,,0.0703125,False,full_lru,,,full precision exact profile,longbench_qasper_000168,0.0703125,,,qa_long_context,2.88
+full_gpu,,,,,,,,,,True,,2.88,short,False,True,,False,,0.0703125,False,full_lru,,,full precision exact profile,longbench_qasper_000169,0.0703125,,,qa_long_context,2.88
+full_gpu,,,,,,,,,,True,,5.5200000000000005,short,False,True,,False,,0.134765625,False,full_lru,,,full precision exact profile,longbench_qasper_000170,0.134765625,,,qa_long_context,5.5200000000000005
+full_gpu,,,,,,,,,,True,,3.92,short,False,True,,False,,0.095703125,False,full_lru,,,full precision exact profile,longbench_qasper_000171,0.095703125,,,qa_long_context,3.92
+full_gpu,,,,,,,,,,True,,2.56,short,False,True,,False,,0.0625,False,full_lru,,,full precision exact profile,longbench_qasper_000172,0.0625,,,qa_long_context,2.56
+full_gpu,,,,,,,,,,True,,2.64,short,False,True,,False,,0.064453125,False,full_lru,,,full precision exact profile,longbench_qasper_000173,0.064453125,,,qa_long_context,2.64
+full_gpu,,,,,,,,,,True,,3.36,short,False,True,,False,,0.08203125,False,full_lru,,,full precision exact profile,longbench_qasper_000174,0.08203125,,,qa_long_context,3.36
+full_gpu,,,,,,,,,,True,,2.8000000000000003,short,False,True,,False,,0.068359375,False,full_lru,,,full precision exact profile,longbench_qasper_000175,0.068359375,,,qa_long_context,2.8000000000000003
+full_gpu,,,,,,,,,,True,,3.92,short,False,True,,False,,0.095703125,False,full_lru,,,full precision exact profile,longbench_qasper_000176,0.095703125,,,qa_long_context,3.92
+full_gpu,,,,,,,,,,True,,4.08,short,False,True,,False,,0.099609375,False,full_lru,,,full precision exact profile,longbench_qasper_000177,0.099609375,,,qa_long_context,4.08
+full_gpu,,,,,,,,,,True,,9.52,short,False,True,,False,,0.232421875,False,full_lru,,,full precision exact profile,longbench_qasper_000178,0.232421875,,,qa_long_context,9.52
+full_gpu,,,,,,,,,,True,,7.04,short,False,True,,False,,0.171875,False,full_lru,,,full precision exact profile,longbench_qasper_000179,0.171875,,,qa_long_context,7.04
+full_gpu,,,,,,,,,,True,,2.8000000000000003,short,False,True,,False,,0.068359375,False,full_lru,,,full precision exact profile,longbench_qasper_000180,0.068359375,,,qa_long_context,2.8000000000000003
+full_gpu,,,,,,,,,,True,,2.48,short,False,True,,False,,0.060546875,False,full_lru,,,full precision exact profile,longbench_qasper_000181,0.060546875,,,qa_long_context,2.48
+full_gpu,,,,,,,,,,True,,5.12,short,False,True,,False,,0.125,False,full_lru,,,full precision exact profile,longbench_qasper_000182,0.125,,,qa_long_context,5.12
+full_gpu,,,,,,,,,,True,,3.6,short,False,True,,False,,0.087890625,False,full_lru,,,full precision exact profile,longbench_qasper_000183,0.087890625,,,qa_long_context,3.6
+full_gpu,,,,,,,,,,True,,3.2800000000000002,short,False,True,,False,,0.080078125,False,full_lru,,,full precision exact profile,longbench_qasper_000184,0.080078125,,,qa_long_context,3.2800000000000002
+full_gpu,,,,,,,,,,True,,5.68,short,False,True,,False,,0.138671875,False,full_lru,,,full precision exact profile,longbench_qasper_000185,0.138671875,,,qa_long_context,5.68
+full_gpu,,,,,,,,,,True,,2.96,short,False,True,,False,,0.072265625,False,full_lru,,,full precision exact profile,longbench_qasper_000186,0.072265625,,,qa_long_context,2.96
+full_gpu,,,,,,,,,,True,,1.92,short,False,True,,False,,0.046875,False,full_lru,,,full precision exact profile,longbench_qasper_000187,0.046875,,,qa_long_context,1.92
+full_gpu,,,,,,,,,,True,,6.640000000000001,short,False,True,,False,,0.162109375,False,full_lru,,,full precision exact profile,longbench_qasper_000188,0.162109375,,,qa_long_context,6.640000000000001
+full_gpu,,,,,,,,,,True,,2.56,short,False,True,,False,,0.0625,False,full_lru,,,full precision exact profile,longbench_qasper_000189,0.0625,,,qa_long_context,2.56
+full_gpu,,,,,,,,,,True,,3.92,short,False,True,,False,,0.095703125,False,full_lru,,,full precision exact profile,longbench_qasper_000190,0.095703125,,,qa_long_context,3.92
+full_gpu,,,,,,,,,,True,,7.12,short,False,True,,False,,0.173828125,False,full_lru,,,full precision exact profile,longbench_qasper_000191,0.173828125,,,qa_long_context,7.12
+full_gpu,,,,,,,,,,True,,3.52,short,False,True,,False,,0.0859375,False,full_lru,,,full precision exact profile,longbench_qasper_000192,0.0859375,,,qa_long_context,3.52
+full_gpu,,,,,,,,,,True,,3.44,short,False,True,,False,,0.083984375,False,full_lru,,,full precision exact profile,longbench_qasper_000193,0.083984375,,,qa_long_context,3.44
+full_gpu,,,,,,,,,,True,,4.5600000000000005,short,False,True,,False,,0.111328125,False,full_lru,,,full precision exact profile,longbench_qasper_000194,0.111328125,,,qa_long_context,4.5600000000000005
+full_gpu,,,,,,,,,,True,,3.36,short,False,True,,False,,0.08203125,False,full_lru,,,full precision exact profile,longbench_qasper_000195,0.08203125,,,qa_long_context,3.36
+full_gpu,,,,,,,,,,True,,2.64,short,False,True,,False,,0.064453125,False,full_lru,,,full precision exact profile,longbench_qasper_000196,0.064453125,,,qa_long_context,2.64
+full_gpu,,,,,,,,,,True,,2.72,short,False,True,,False,,0.06640625,False,full_lru,,,full precision exact profile,longbench_qasper_000197,0.06640625,,,qa_long_context,2.72
+full_gpu,,,,,,,,,,True,,12.16,short,False,True,,False,,0.296875,False,full_lru,,,full precision exact profile,longbench_qasper_000198,0.296875,,,qa_long_context,12.16
+full_gpu,,,,,,,,,,True,,4.32,short,False,True,,False,,0.10546875,False,full_lru,,,full precision exact profile,longbench_qasper_000199,0.10546875,,,qa_long_context,4.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_best,1.0,,static_best,longbench_qasper_000100,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,static_best,1.0,,static_best,longbench_qasper_000101,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_best,1.0,,static_best,longbench_qasper_000102,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.36,short,False,True,,False,,0.130859375,True,static_best,1.0,,static_best,longbench_qasper_000103,0.130859375,0.0,True,qa_long_context,5.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_best,1.0,,static_best,longbench_qasper_000104,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_best,1.0,,static_best,longbench_qasper_000105,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,static_best,1.0,,static_best,longbench_qasper_000106,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.72,short,False,True,,False,,0.115234375,True,static_best,1.0,,static_best,longbench_qasper_000107,0.115234375,0.0,True,qa_long_context,4.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.68,short,False,True,,False,,0.08984375,True,static_best,1.0,,static_best,longbench_qasper_000108,0.08984375,0.0,True,qa_long_context,3.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000109,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_best,1.0,,static_best,longbench_qasper_000110,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_best,1.0,,static_best,longbench_qasper_000111,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_best,1.0,,static_best,longbench_qasper_000112,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.24,short,False,True,,False,,0.0546875,True,static_best,1.0,,static_best,longbench_qasper_000113,0.0546875,0.0,True,qa_long_context,2.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.8,short,False,True,,False,,0.1171875,True,static_best,1.0,,static_best,longbench_qasper_000114,0.1171875,0.0,True,qa_long_context,4.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000115,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_best,1.0,,static_best,longbench_qasper_000116,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_best,1.0,,static_best,longbench_qasper_000117,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.6000000000000005,short,False,True,,False,,0.13671875,True,static_best,1.0,,static_best,longbench_qasper_000118,0.13671875,0.0,True,qa_long_context,5.6000000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,static_best,1.0,,static_best,longbench_qasper_000119,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.84,short,False,True,,False,,0.09375,True,static_best,1.0,,static_best,longbench_qasper_000120,0.09375,0.0,True,qa_long_context,3.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_best,1.0,,static_best,longbench_qasper_000121,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_best,1.0,,static_best,longbench_qasper_000122,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000123,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,static_best,1.0,,static_best,longbench_qasper_000124,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,static_best,1.0,,static_best,longbench_qasper_000125,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.0,short,False,True,,False,,0.09765625,True,static_best,1.0,,static_best,longbench_qasper_000126,0.09765625,0.0,True,qa_long_context,4.0
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000127,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_best,1.0,,static_best,longbench_qasper_000128,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_best,1.0,,static_best,longbench_qasper_000129,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.72,short,False,True,,False,,0.1640625,True,static_best,1.0,,static_best,longbench_qasper_000130,0.1640625,0.0,True,qa_long_context,6.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.4,short,False,True,,False,,0.05859375,True,static_best,1.0,,static_best,longbench_qasper_000131,0.05859375,0.0,True,qa_long_context,2.4
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,static_best,1.0,,static_best,longbench_qasper_000132,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_best,1.0,,static_best,longbench_qasper_000133,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,static_best,1.0,,static_best,longbench_qasper_000134,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,static_best,1.0,,static_best,longbench_qasper_000135,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_best,1.0,,static_best,longbench_qasper_000136,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000137,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_best,1.0,,static_best,longbench_qasper_000138,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,static_best,1.0,,static_best,longbench_qasper_000139,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.24,short,False,True,,False,,0.15234375,True,static_best,1.0,,static_best,longbench_qasper_000140,0.15234375,0.0,True,qa_long_context,6.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.36,short,False,True,,False,,0.1796875,True,static_best,1.0,,static_best,longbench_qasper_000141,0.1796875,0.0,True,qa_long_context,7.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,8.8,short,False,True,,False,,0.21484375,True,static_best,1.0,,static_best,longbench_qasper_000142,0.21484375,0.0,True,qa_long_context,8.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,static_best,1.0,,static_best,longbench_qasper_000143,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_best,1.0,,static_best,longbench_qasper_000144,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.2,short,False,True,,False,,0.126953125,True,static_best,1.0,,static_best,longbench_qasper_000145,0.126953125,0.0,True,qa_long_context,5.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_best,1.0,,static_best,longbench_qasper_000146,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.92,short,False,True,,False,,0.14453125,True,static_best,1.0,,static_best,longbench_qasper_000147,0.14453125,0.0,True,qa_long_context,5.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2,short,False,True,,False,,0.078125,True,static_best,1.0,,static_best,longbench_qasper_000148,0.078125,0.0,True,qa_long_context,3.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_best,1.0,,static_best,longbench_qasper_000149,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_best,1.0,,static_best,longbench_qasper_000150,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000151,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,static_best,1.0,,static_best,longbench_qasper_000152,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000153,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_best,1.0,,static_best,longbench_qasper_000154,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000155,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_best,1.0,,static_best,longbench_qasper_000156,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_best,1.0,,static_best,longbench_qasper_000157,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_best,1.0,,static_best,longbench_qasper_000158,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.16,short,False,True,,False,,0.052734375,True,static_best,1.0,,static_best,longbench_qasper_000159,0.052734375,0.0,True,qa_long_context,2.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.48,short,False,True,,False,,0.109375,True,static_best,1.0,,static_best,longbench_qasper_000160,0.109375,0.0,True,qa_long_context,4.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_best,1.0,,static_best,longbench_qasper_000161,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_best,1.0,,static_best,longbench_qasper_000162,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_best,1.0,,static_best,longbench_qasper_000163,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_best,1.0,,static_best,longbench_qasper_000164,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_best,1.0,,static_best,longbench_qasper_000165,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000166,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000167,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_best,1.0,,static_best,longbench_qasper_000168,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_best,1.0,,static_best,longbench_qasper_000169,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.5200000000000005,short,False,True,,False,,0.134765625,True,static_best,1.0,,static_best,longbench_qasper_000170,0.134765625,0.0,True,qa_long_context,5.5200000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_best,1.0,,static_best,longbench_qasper_000171,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_best,1.0,,static_best,longbench_qasper_000172,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_best,1.0,,static_best,longbench_qasper_000173,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_best,1.0,,static_best,longbench_qasper_000174,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_best,1.0,,static_best,longbench_qasper_000175,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_best,1.0,,static_best,longbench_qasper_000176,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.08,short,False,True,,False,,0.099609375,True,static_best,1.0,,static_best,longbench_qasper_000177,0.099609375,0.0,True,qa_long_context,4.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,9.52,short,False,True,,False,,0.232421875,True,static_best,1.0,,static_best,longbench_qasper_000178,0.232421875,0.0,True,qa_long_context,9.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.04,short,False,True,,False,,0.171875,True,static_best,1.0,,static_best,longbench_qasper_000179,0.171875,0.0,True,qa_long_context,7.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_best,1.0,,static_best,longbench_qasper_000180,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.48,short,False,True,,False,,0.060546875,True,static_best,1.0,,static_best,longbench_qasper_000181,0.060546875,0.0,True,qa_long_context,2.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,static_best,1.0,,static_best,longbench_qasper_000182,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_best,1.0,,static_best,longbench_qasper_000183,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_best,1.0,,static_best,longbench_qasper_000184,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,static_best,1.0,,static_best,longbench_qasper_000185,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_best,1.0,,static_best,longbench_qasper_000186,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.92,short,False,True,,False,,0.046875,True,static_best,1.0,,static_best,longbench_qasper_000187,0.046875,0.0,True,qa_long_context,1.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,static_best,1.0,,static_best,longbench_qasper_000188,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_best,1.0,,static_best,longbench_qasper_000189,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_best,1.0,,static_best,longbench_qasper_000190,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.12,short,False,True,,False,,0.173828125,True,static_best,1.0,,static_best,longbench_qasper_000191,0.173828125,0.0,True,qa_long_context,7.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_best,1.0,,static_best,longbench_qasper_000192,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_best,1.0,,static_best,longbench_qasper_000193,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.5600000000000005,short,False,True,,False,,0.111328125,True,static_best,1.0,,static_best,longbench_qasper_000194,0.111328125,0.0,True,qa_long_context,4.5600000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_best,1.0,,static_best,longbench_qasper_000195,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_best,1.0,,static_best,longbench_qasper_000196,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.72,short,False,True,,False,,0.06640625,True,static_best,1.0,,static_best,longbench_qasper_000197,0.06640625,0.0,True,qa_long_context,2.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,12.16,short,False,True,,False,,0.296875,True,static_best,1.0,,static_best,longbench_qasper_000198,0.296875,0.0,True,qa_long_context,12.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.32,short,False,True,,False,,0.10546875,True,static_best,1.0,,static_best,longbench_qasper_000199,0.10546875,0.0,True,qa_long_context,4.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_safe,1.0,,static_safe,longbench_qasper_000100,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,static_safe,1.0,,static_safe,longbench_qasper_000101,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_safe,1.0,,static_safe,longbench_qasper_000102,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.36,short,False,True,,False,,0.130859375,True,static_safe,1.0,,static_safe,longbench_qasper_000103,0.130859375,0.0,True,qa_long_context,5.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_safe,1.0,,static_safe,longbench_qasper_000104,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_safe,1.0,,static_safe,longbench_qasper_000105,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,static_safe,1.0,,static_safe,longbench_qasper_000106,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.72,short,False,True,,False,,0.115234375,True,static_safe,1.0,,static_safe,longbench_qasper_000107,0.115234375,0.0,True,qa_long_context,4.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.68,short,False,True,,False,,0.08984375,True,static_safe,1.0,,static_safe,longbench_qasper_000108,0.08984375,0.0,True,qa_long_context,3.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000109,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_safe,1.0,,static_safe,longbench_qasper_000110,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_safe,1.0,,static_safe,longbench_qasper_000111,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_safe,1.0,,static_safe,longbench_qasper_000112,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.24,short,False,True,,False,,0.0546875,True,static_safe,1.0,,static_safe,longbench_qasper_000113,0.0546875,0.0,True,qa_long_context,2.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.8,short,False,True,,False,,0.1171875,True,static_safe,1.0,,static_safe,longbench_qasper_000114,0.1171875,0.0,True,qa_long_context,4.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000115,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_safe,1.0,,static_safe,longbench_qasper_000116,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_safe,1.0,,static_safe,longbench_qasper_000117,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.6000000000000005,short,False,True,,False,,0.13671875,True,static_safe,1.0,,static_safe,longbench_qasper_000118,0.13671875,0.0,True,qa_long_context,5.6000000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,static_safe,1.0,,static_safe,longbench_qasper_000119,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.84,short,False,True,,False,,0.09375,True,static_safe,1.0,,static_safe,longbench_qasper_000120,0.09375,0.0,True,qa_long_context,3.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_safe,1.0,,static_safe,longbench_qasper_000121,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_safe,1.0,,static_safe,longbench_qasper_000122,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000123,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,static_safe,1.0,,static_safe,longbench_qasper_000124,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,static_safe,1.0,,static_safe,longbench_qasper_000125,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.0,short,False,True,,False,,0.09765625,True,static_safe,1.0,,static_safe,longbench_qasper_000126,0.09765625,0.0,True,qa_long_context,4.0
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000127,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_safe,1.0,,static_safe,longbench_qasper_000128,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_safe,1.0,,static_safe,longbench_qasper_000129,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.72,short,False,True,,False,,0.1640625,True,static_safe,1.0,,static_safe,longbench_qasper_000130,0.1640625,0.0,True,qa_long_context,6.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.4,short,False,True,,False,,0.05859375,True,static_safe,1.0,,static_safe,longbench_qasper_000131,0.05859375,0.0,True,qa_long_context,2.4
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,static_safe,1.0,,static_safe,longbench_qasper_000132,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_safe,1.0,,static_safe,longbench_qasper_000133,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,static_safe,1.0,,static_safe,longbench_qasper_000134,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,static_safe,1.0,,static_safe,longbench_qasper_000135,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,static_safe,1.0,,static_safe,longbench_qasper_000136,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000137,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_safe,1.0,,static_safe,longbench_qasper_000138,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,static_safe,1.0,,static_safe,longbench_qasper_000139,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.24,short,False,True,,False,,0.15234375,True,static_safe,1.0,,static_safe,longbench_qasper_000140,0.15234375,0.0,True,qa_long_context,6.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.36,short,False,True,,False,,0.1796875,True,static_safe,1.0,,static_safe,longbench_qasper_000141,0.1796875,0.0,True,qa_long_context,7.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,8.8,short,False,True,,False,,0.21484375,True,static_safe,1.0,,static_safe,longbench_qasper_000142,0.21484375,0.0,True,qa_long_context,8.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,static_safe,1.0,,static_safe,longbench_qasper_000143,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_safe,1.0,,static_safe,longbench_qasper_000144,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.2,short,False,True,,False,,0.126953125,True,static_safe,1.0,,static_safe,longbench_qasper_000145,0.126953125,0.0,True,qa_long_context,5.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_safe,1.0,,static_safe,longbench_qasper_000146,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.92,short,False,True,,False,,0.14453125,True,static_safe,1.0,,static_safe,longbench_qasper_000147,0.14453125,0.0,True,qa_long_context,5.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2,short,False,True,,False,,0.078125,True,static_safe,1.0,,static_safe,longbench_qasper_000148,0.078125,0.0,True,qa_long_context,3.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_safe,1.0,,static_safe,longbench_qasper_000149,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_safe,1.0,,static_safe,longbench_qasper_000150,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000151,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,static_safe,1.0,,static_safe,longbench_qasper_000152,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000153,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_safe,1.0,,static_safe,longbench_qasper_000154,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000155,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_safe,1.0,,static_safe,longbench_qasper_000156,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_safe,1.0,,static_safe,longbench_qasper_000157,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_safe,1.0,,static_safe,longbench_qasper_000158,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.16,short,False,True,,False,,0.052734375,True,static_safe,1.0,,static_safe,longbench_qasper_000159,0.052734375,0.0,True,qa_long_context,2.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.48,short,False,True,,False,,0.109375,True,static_safe,1.0,,static_safe,longbench_qasper_000160,0.109375,0.0,True,qa_long_context,4.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_safe,1.0,,static_safe,longbench_qasper_000161,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,static_safe,1.0,,static_safe,longbench_qasper_000162,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,static_safe,1.0,,static_safe,longbench_qasper_000163,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,static_safe,1.0,,static_safe,longbench_qasper_000164,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_safe,1.0,,static_safe,longbench_qasper_000165,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000166,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000167,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_safe,1.0,,static_safe,longbench_qasper_000168,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,static_safe,1.0,,static_safe,longbench_qasper_000169,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.5200000000000005,short,False,True,,False,,0.134765625,True,static_safe,1.0,,static_safe,longbench_qasper_000170,0.134765625,0.0,True,qa_long_context,5.5200000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_safe,1.0,,static_safe,longbench_qasper_000171,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_safe,1.0,,static_safe,longbench_qasper_000172,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_safe,1.0,,static_safe,longbench_qasper_000173,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_safe,1.0,,static_safe,longbench_qasper_000174,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_safe,1.0,,static_safe,longbench_qasper_000175,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_safe,1.0,,static_safe,longbench_qasper_000176,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.08,short,False,True,,False,,0.099609375,True,static_safe,1.0,,static_safe,longbench_qasper_000177,0.099609375,0.0,True,qa_long_context,4.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,9.52,short,False,True,,False,,0.232421875,True,static_safe,1.0,,static_safe,longbench_qasper_000178,0.232421875,0.0,True,qa_long_context,9.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.04,short,False,True,,False,,0.171875,True,static_safe,1.0,,static_safe,longbench_qasper_000179,0.171875,0.0,True,qa_long_context,7.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,static_safe,1.0,,static_safe,longbench_qasper_000180,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.48,short,False,True,,False,,0.060546875,True,static_safe,1.0,,static_safe,longbench_qasper_000181,0.060546875,0.0,True,qa_long_context,2.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,static_safe,1.0,,static_safe,longbench_qasper_000182,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,static_safe,1.0,,static_safe,longbench_qasper_000183,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,static_safe,1.0,,static_safe,longbench_qasper_000184,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,static_safe,1.0,,static_safe,longbench_qasper_000185,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,static_safe,1.0,,static_safe,longbench_qasper_000186,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.92,short,False,True,,False,,0.046875,True,static_safe,1.0,,static_safe,longbench_qasper_000187,0.046875,0.0,True,qa_long_context,1.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,static_safe,1.0,,static_safe,longbench_qasper_000188,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,static_safe,1.0,,static_safe,longbench_qasper_000189,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,static_safe,1.0,,static_safe,longbench_qasper_000190,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.12,short,False,True,,False,,0.173828125,True,static_safe,1.0,,static_safe,longbench_qasper_000191,0.173828125,0.0,True,qa_long_context,7.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,static_safe,1.0,,static_safe,longbench_qasper_000192,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,static_safe,1.0,,static_safe,longbench_qasper_000193,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.5600000000000005,short,False,True,,False,,0.111328125,True,static_safe,1.0,,static_safe,longbench_qasper_000194,0.111328125,0.0,True,qa_long_context,4.5600000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,static_safe,1.0,,static_safe,longbench_qasper_000195,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,static_safe,1.0,,static_safe,longbench_qasper_000196,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.72,short,False,True,,False,,0.06640625,True,static_safe,1.0,,static_safe,longbench_qasper_000197,0.06640625,0.0,True,qa_long_context,2.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,12.16,short,False,True,,False,,0.296875,True,static_safe,1.0,,static_safe,longbench_qasper_000198,0.296875,0.0,True,qa_long_context,12.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.32,short,False,True,,False,,0.10546875,True,static_safe,1.0,,static_safe,longbench_qasper_000199,0.10546875,0.0,True,qa_long_context,4.32
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.7249999999999999,short,False,True,,False,,0.0224609375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000100,0.0224609375,inf,False,qa_long_context,1.7249999999999999
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.9,short,False,True,,False,,0.05078125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000101,0.05078125,inf,False,qa_long_context,3.9
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.925,short,False,True,,False,,0.0380859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000102,0.0380859375,inf,False,qa_long_context,2.925
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.0249999999999995,short,False,True,,False,,0.0654296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000103,0.0654296875,inf,False,qa_long_context,5.0249999999999995
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.15,short,False,True,,False,,0.041015625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000104,0.041015625,inf,False,qa_long_context,3.15
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.225,short,False,True,,False,,0.0419921875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000105,0.0419921875,inf,False,qa_long_context,3.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.6499999999999995,short,False,True,,False,,0.060546875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000106,0.060546875,inf,False,qa_long_context,4.6499999999999995
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.425,short,False,True,,False,,0.0576171875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000107,0.0576171875,inf,False,qa_long_context,4.425
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.4499999999999997,short,False,True,,False,,0.044921875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000108,0.044921875,inf,False,qa_long_context,3.4499999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000109,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.925,short,False,True,,False,,0.0380859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000110,0.0380859375,inf,False,qa_long_context,2.925
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.925,short,False,True,,False,,0.0380859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000111,0.0380859375,inf,False,qa_long_context,2.925
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.475,short,False,True,,False,,0.0322265625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000112,0.0322265625,inf,False,qa_long_context,2.475
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.1,short,False,True,,False,,0.02734375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000113,0.02734375,inf,False,qa_long_context,2.1
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.5,short,False,True,,False,,0.05859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000114,0.05859375,inf,False,qa_long_context,4.5
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000115,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.95,short,False,True,,False,,0.025390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000116,0.025390625,inf,False,qa_long_context,1.95
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.4,short,False,True,,False,,0.03125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000117,0.03125,inf,False,qa_long_context,2.4
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.25,short,False,True,,False,,0.068359375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000118,0.068359375,inf,False,qa_long_context,5.25
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.85,short,False,True,,False,,0.037109375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000119,0.037109375,inf,False,qa_long_context,2.85
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.5999999999999996,short,False,True,,False,,0.046875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000120,0.046875,inf,False,qa_long_context,3.5999999999999996
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.6999999999999997,short,False,True,,False,,0.03515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000121,0.03515625,inf,False,qa_long_context,2.6999999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.3,short,False,True,,False,,0.04296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000122,0.04296875,inf,False,qa_long_context,3.3
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000123,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.9749999999999996,short,False,True,,False,,0.0517578125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000124,0.0517578125,inf,False,qa_long_context,3.9749999999999996
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.225,short,False,True,,False,,0.0810546875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000125,0.0810546875,inf,False,qa_long_context,6.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.75,short,False,True,,False,,0.048828125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000126,0.048828125,inf,False,qa_long_context,3.75
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000127,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.625,short,False,True,,False,,0.0341796875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000128,0.0341796875,inf,False,qa_long_context,2.625
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.175,short,False,True,,False,,0.0283203125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000129,0.0283203125,inf,False,qa_long_context,2.175
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.3,short,False,True,,False,,0.08203125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000130,0.08203125,inf,False,qa_long_context,6.3
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.25,short,False,True,,False,,0.029296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000131,0.029296875,inf,False,qa_long_context,2.25
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.85,short,False,True,,False,,0.037109375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000132,0.037109375,inf,False,qa_long_context,2.85
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.3,short,False,True,,False,,0.04296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000133,0.04296875,inf,False,qa_long_context,3.3
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.6499999999999995,short,False,True,,False,,0.060546875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000134,0.060546875,inf,False,qa_long_context,4.6499999999999995
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.9749999999999996,short,False,True,,False,,0.0517578125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000135,0.0517578125,inf,False,qa_long_context,3.9749999999999996
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.925,short,False,True,,False,,0.0380859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000136,0.0380859375,inf,False,qa_long_context,2.925
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000137,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.675,short,False,True,,False,,0.0478515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000138,0.0478515625,inf,False,qa_long_context,3.675
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.325,short,False,True,,False,,0.0693359375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000139,0.0693359375,inf,False,qa_long_context,5.325
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.85,short,False,True,,False,,0.076171875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000140,0.076171875,inf,False,qa_long_context,5.85
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.8999999999999995,short,False,True,,False,,0.08984375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000141,0.08984375,inf,False,qa_long_context,6.8999999999999995
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,8.25,short,False,True,,False,,0.107421875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000142,0.107421875,inf,False,qa_long_context,8.25
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.8,short,False,True,,False,,0.0625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000143,0.0625,inf,False,qa_long_context,4.8
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.4,short,False,True,,False,,0.03125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000144,0.03125,inf,False,qa_long_context,2.4
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.875,short,False,True,,False,,0.0634765625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000145,0.0634765625,inf,False,qa_long_context,4.875
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.7249999999999999,short,False,True,,False,,0.0224609375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000146,0.0224609375,inf,False,qa_long_context,1.7249999999999999
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.55,short,False,True,,False,,0.072265625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000147,0.072265625,inf,False,qa_long_context,5.55
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0,short,False,True,,False,,0.0390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000148,0.0390625,inf,False,qa_long_context,3.0
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.375,short,False,True,,False,,0.0439453125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000149,0.0439453125,inf,False,qa_long_context,3.375
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.225,short,False,True,,False,,0.0419921875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000150,0.0419921875,inf,False,qa_long_context,3.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000151,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.9,short,False,True,,False,,0.05078125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000152,0.05078125,inf,False,qa_long_context,3.9
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000153,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.375,short,False,True,,False,,0.0439453125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000154,0.0439453125,inf,False,qa_long_context,3.375
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000155,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.175,short,False,True,,False,,0.0283203125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000156,0.0283203125,inf,False,qa_long_context,2.175
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.375,short,False,True,,False,,0.0439453125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000157,0.0439453125,inf,False,qa_long_context,3.375
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.95,short,False,True,,False,,0.025390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000158,0.025390625,inf,False,qa_long_context,1.95
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.025,short,False,True,,False,,0.0263671875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000159,0.0263671875,inf,False,qa_long_context,2.025
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.2,short,False,True,,False,,0.0546875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000160,0.0546875,inf,False,qa_long_context,4.2
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.3,short,False,True,,False,,0.04296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000161,0.04296875,inf,False,qa_long_context,3.3
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.95,short,False,True,,False,,0.025390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000162,0.025390625,inf,False,qa_long_context,1.95
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.7249999999999999,short,False,True,,False,,0.0224609375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000163,0.0224609375,inf,False,qa_long_context,1.7249999999999999
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.175,short,False,True,,False,,0.0283203125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000164,0.0283203125,inf,False,qa_long_context,2.175
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.225,short,False,True,,False,,0.0419921875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000165,0.0419921875,inf,False,qa_long_context,3.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000166,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000167,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.6999999999999997,short,False,True,,False,,0.03515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000168,0.03515625,inf,False,qa_long_context,2.6999999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.6999999999999997,short,False,True,,False,,0.03515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000169,0.03515625,inf,False,qa_long_context,2.6999999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.175,short,False,True,,False,,0.0673828125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000170,0.0673828125,inf,False,qa_long_context,5.175
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.675,short,False,True,,False,,0.0478515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000171,0.0478515625,inf,False,qa_long_context,3.675
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.4,short,False,True,,False,,0.03125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000172,0.03125,inf,False,qa_long_context,2.4
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.475,short,False,True,,False,,0.0322265625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000173,0.0322265625,inf,False,qa_long_context,2.475
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.15,short,False,True,,False,,0.041015625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000174,0.041015625,inf,False,qa_long_context,3.15
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.625,short,False,True,,False,,0.0341796875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000175,0.0341796875,inf,False,qa_long_context,2.625
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.675,short,False,True,,False,,0.0478515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000176,0.0478515625,inf,False,qa_long_context,3.675
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.8249999999999997,short,False,True,,False,,0.0498046875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000177,0.0498046875,inf,False,qa_long_context,3.8249999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,8.924999999999999,short,False,True,,False,,0.1162109375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000178,0.1162109375,inf,False,qa_long_context,8.924999999999999
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.6,short,False,True,,False,,0.0859375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000179,0.0859375,inf,False,qa_long_context,6.6
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.625,short,False,True,,False,,0.0341796875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000180,0.0341796875,inf,False,qa_long_context,2.625
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.3249999999999997,short,False,True,,False,,0.0302734375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000181,0.0302734375,inf,False,qa_long_context,2.3249999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.8,short,False,True,,False,,0.0625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000182,0.0625,inf,False,qa_long_context,4.8
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.375,short,False,True,,False,,0.0439453125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000183,0.0439453125,inf,False,qa_long_context,3.375
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.0749999999999997,short,False,True,,False,,0.0400390625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000184,0.0400390625,inf,False,qa_long_context,3.0749999999999997
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,5.325,short,False,True,,False,,0.0693359375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000185,0.0693359375,inf,False,qa_long_context,5.325
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.775,short,False,True,,False,,0.0361328125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000186,0.0361328125,inf,False,qa_long_context,2.775
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,1.7999999999999998,short,False,True,,False,,0.0234375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000187,0.0234375,inf,False,qa_long_context,1.7999999999999998
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.225,short,False,True,,False,,0.0810546875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000188,0.0810546875,inf,False,qa_long_context,6.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.4,short,False,True,,False,,0.03125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000189,0.03125,inf,False,qa_long_context,2.4
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.675,short,False,True,,False,,0.0478515625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000190,0.0478515625,inf,False,qa_long_context,3.675
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,6.675,short,False,True,,False,,0.0869140625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000191,0.0869140625,inf,False,qa_long_context,6.675
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.3,short,False,True,,False,,0.04296875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000192,0.04296875,inf,False,qa_long_context,3.3
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.225,short,False,True,,False,,0.0419921875,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000193,0.0419921875,inf,False,qa_long_context,3.225
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.2749999999999995,short,False,True,,False,,0.0556640625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000194,0.0556640625,inf,False,qa_long_context,4.2749999999999995
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,3.15,short,False,True,,False,,0.041015625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000195,0.041015625,inf,False,qa_long_context,3.15
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.475,short,False,True,,False,,0.0322265625,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000196,0.0322265625,inf,False,qa_long_context,2.475
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,2.55,short,False,True,,False,,0.033203125,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000197,0.033203125,inf,False,qa_long_context,2.55
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,11.4,short,False,True,,False,,0.1484375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000198,0.1484375,inf,False,qa_long_context,11.4
+h2o_heavy_hitter,,,,,,0.05,,0.05,,False,calibrated unsafe,4.05,short,False,True,,False,,0.052734375,True,utility_dynamic,1.0,,utility_dynamic,longbench_qasper_000199,0.052734375,inf,False,qa_long_context,4.05
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000100,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000101,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000102,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.36,short,False,True,,False,,0.130859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000103,0.130859375,0.0,True,qa_long_context,5.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000104,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000105,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000106,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.72,short,False,True,,False,,0.115234375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000107,0.115234375,0.0,True,qa_long_context,4.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.68,short,False,True,,False,,0.08984375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000108,0.08984375,0.0,True,qa_long_context,3.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000109,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000110,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000111,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000112,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.24,short,False,True,,False,,0.0546875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000113,0.0546875,0.0,True,qa_long_context,2.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.8,short,False,True,,False,,0.1171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000114,0.1171875,0.0,True,qa_long_context,4.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000115,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000116,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000117,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.6000000000000005,short,False,True,,False,,0.13671875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000118,0.13671875,0.0,True,qa_long_context,5.6000000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000119,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.84,short,False,True,,False,,0.09375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000120,0.09375,0.0,True,qa_long_context,3.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000121,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000122,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000123,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000124,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000125,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.0,short,False,True,,False,,0.09765625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000126,0.09765625,0.0,True,qa_long_context,4.0
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000127,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000128,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000129,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.72,short,False,True,,False,,0.1640625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000130,0.1640625,0.0,True,qa_long_context,6.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.4,short,False,True,,False,,0.05859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000131,0.05859375,0.0,True,qa_long_context,2.4
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.04,short,False,True,,False,,0.07421875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000132,0.07421875,0.0,True,qa_long_context,3.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000133,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.96,short,False,True,,False,,0.12109375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000134,0.12109375,0.0,True,qa_long_context,4.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.24,short,False,True,,False,,0.103515625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000135,0.103515625,0.0,True,qa_long_context,4.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.12,short,False,True,,False,,0.076171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000136,0.076171875,0.0,True,qa_long_context,3.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000137,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000138,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000139,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.24,short,False,True,,False,,0.15234375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000140,0.15234375,0.0,True,qa_long_context,6.24
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.36,short,False,True,,False,,0.1796875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000141,0.1796875,0.0,True,qa_long_context,7.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,8.8,short,False,True,,False,,0.21484375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000142,0.21484375,0.0,True,qa_long_context,8.8
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000143,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000144,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.2,short,False,True,,False,,0.126953125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000145,0.126953125,0.0,True,qa_long_context,5.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000146,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.92,short,False,True,,False,,0.14453125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000147,0.14453125,0.0,True,qa_long_context,5.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2,short,False,True,,False,,0.078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000148,0.078125,0.0,True,qa_long_context,3.2
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000149,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000150,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000151,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.16,short,False,True,,False,,0.1015625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000152,0.1015625,0.0,True,qa_long_context,4.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000153,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000154,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000155,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000156,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000157,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000158,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.16,short,False,True,,False,,0.052734375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000159,0.052734375,0.0,True,qa_long_context,2.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.48,short,False,True,,False,,0.109375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000160,0.109375,0.0,True,qa_long_context,4.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000161,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.08,short,False,True,,False,,0.05078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000162,0.05078125,0.0,True,qa_long_context,2.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.84,short,False,True,,False,,0.044921875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000163,0.044921875,0.0,True,qa_long_context,1.84
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.32,short,False,True,,False,,0.056640625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000164,0.056640625,0.0,True,qa_long_context,2.32
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000165,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000166,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000167,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000168,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.88,short,False,True,,False,,0.0703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000169,0.0703125,0.0,True,qa_long_context,2.88
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.5200000000000005,short,False,True,,False,,0.134765625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000170,0.134765625,0.0,True,qa_long_context,5.5200000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000171,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000172,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000173,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000174,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000175,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000176,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.08,short,False,True,,False,,0.099609375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000177,0.099609375,0.0,True,qa_long_context,4.08
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,9.52,short,False,True,,False,,0.232421875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000178,0.232421875,0.0,True,qa_long_context,9.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.04,short,False,True,,False,,0.171875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000179,0.171875,0.0,True,qa_long_context,7.04
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.8000000000000003,short,False,True,,False,,0.068359375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000180,0.068359375,0.0,True,qa_long_context,2.8000000000000003
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.48,short,False,True,,False,,0.060546875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000181,0.060546875,0.0,True,qa_long_context,2.48
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.12,short,False,True,,False,,0.125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000182,0.125,0.0,True,qa_long_context,5.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.6,short,False,True,,False,,0.087890625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000183,0.087890625,0.0,True,qa_long_context,3.6
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.2800000000000002,short,False,True,,False,,0.080078125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000184,0.080078125,0.0,True,qa_long_context,3.2800000000000002
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,5.68,short,False,True,,False,,0.138671875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000185,0.138671875,0.0,True,qa_long_context,5.68
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.96,short,False,True,,False,,0.072265625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000186,0.072265625,0.0,True,qa_long_context,2.96
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,1.92,short,False,True,,False,,0.046875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000187,0.046875,0.0,True,qa_long_context,1.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,6.640000000000001,short,False,True,,False,,0.162109375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000188,0.162109375,0.0,True,qa_long_context,6.640000000000001
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.56,short,False,True,,False,,0.0625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000189,0.0625,0.0,True,qa_long_context,2.56
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.92,short,False,True,,False,,0.095703125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000190,0.095703125,0.0,True,qa_long_context,3.92
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,7.12,short,False,True,,False,,0.173828125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000191,0.173828125,0.0,True,qa_long_context,7.12
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.52,short,False,True,,False,,0.0859375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000192,0.0859375,0.0,True,qa_long_context,3.52
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.44,short,False,True,,False,,0.083984375,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000193,0.083984375,0.0,True,qa_long_context,3.44
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.5600000000000005,short,False,True,,False,,0.111328125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000194,0.111328125,0.0,True,qa_long_context,4.5600000000000005
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,3.36,short,False,True,,False,,0.08203125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000195,0.08203125,0.0,True,qa_long_context,3.36
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.64,short,False,True,,False,,0.064453125,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000196,0.064453125,0.0,True,qa_long_context,2.64
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,2.72,short,False,True,,False,,0.06640625,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000197,0.06640625,0.0,True,qa_long_context,2.72
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,12.16,short,False,True,,False,,0.296875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000198,0.296875,0.0,True,qa_long_context,12.16
+full_gpu,,,,,,0.05,,0.05,,True,exact fallback,4.32,short,False,True,,False,,0.10546875,True,uncalibrated_dynamic,1.0,,uncalibrated_dynamic,longbench_qasper_000199,0.10546875,0.0,True,qa_long_context,4.32

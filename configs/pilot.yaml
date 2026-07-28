@@ -5,24 +5,29 @@ model:
 
 profiles:
   adapters:
-    - vllm_lru
+    - full
+    - kivi
+    - h2o
   names:
-    - engine_full_lru
-    - compress_light
-    - compress_heavy
-    - offload_default
-    - recompute_default
+    - full_gpu
+    - kivi_4bit
+    - kivi_2bit
+    - h2o_heavy_hitter
+    - full_cpu
+    - recompute
   specs:
-    engine_full_lru:
+    full_gpu:
       exact: true
-    compress_light:
+    kivi_4bit:
       exact: false
-    compress_heavy:
+    kivi_2bit:
       exact: false
-    offload_default:
+    h2o_heavy_hitter:
       exact: false
-    recompute_default:
-      exact: false
+    full_cpu:
+      exact: true
+    recompute:
+      exact: true
 
 policies:
   names:
@@ -31,7 +36,6 @@ policies:
     - static_safe
     - utility_dynamic
     - uncalibrated_dynamic
-    - quality_oracle
 
 pilot:
   epsilons: [0.05, 0.10]
