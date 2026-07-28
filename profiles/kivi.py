@@ -12,8 +12,10 @@ class KIVIAdapter(ProfileAdapter):
 
     def profiles(self) -> tuple[ProfileSpec, ...]:
         return (
-            ProfileSpec("kivi_4bit", self.name, self.env, lossy=True, metadata={"bits": 4}),
-            ProfileSpec("kivi_2bit", self.name, self.env, lossy=True, metadata={"bits": 2}),
+            ProfileSpec("kivi_4bit_residual32", self.name, self.env, lossy=True, metadata={"bits": 4, "kivi_residual_length": 32}),
+            ProfileSpec("kivi_4bit_residual64", self.name, self.env, lossy=True, metadata={"bits": 4, "kivi_residual_length": 64}),
+            ProfileSpec("kivi_2bit_residual32", self.name, self.env, lossy=True, metadata={"bits": 2, "kivi_residual_length": 32}),
+            ProfileSpec("kivi_2bit_residual64", self.name, self.env, lossy=True, metadata={"bits": 2, "kivi_residual_length": 64}),
         )
 
     def smoke(self, timeout_s: int = 120) -> SmokeResult:
@@ -44,15 +46,17 @@ class KIVIAdapter(ProfileAdapter):
                 extra={
                     "family": spec.family,
                     "bits": spec.metadata.get("bits", ""),
+                    "kivi_residual_length": spec.metadata.get("kivi_residual_length", ""),
                 },
             )
             if not row.ok:
                 return replace(row, error=f"KIVI proof/runtime failed ({profile_name}): {row.error or ''}")
             return row
         bits = int(spec.metadata["bits"])
+        residual = int(spec.metadata["kivi_residual_length"])
         scale = max(request.prompt_chars, 1)
         memory_factor = 0.5 if bits == 4 else 0.25
-        latency_factor = 0.09 if bits == 4 else 0.095
+        latency_factor = (0.09 if bits == 4 else 0.095) + (0.002 if residual == 64 else 0.0)
         return dry_profile_measurement(
             self.name,
             request,

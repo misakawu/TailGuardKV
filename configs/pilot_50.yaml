@@ -48,7 +48,7 @@ pilot:
 data:
   requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
   calibration_fraction: 0.5
-  max_requests: 200
+  max_requests: 50
 
 profile_smoke:
   max_new_tokens: 16
@@ -60,7 +60,7 @@ profile_smoke:
   vllm_max_model_len: 1024
 
 outputs:
-  smoke_profiles: out/profile_tables/pilot_smoke_measured_profiles.csv
-  smoke_profile_checks: out/profile_tables/pilot_profile_smoke.csv
-  smoke_policy: out/policy_tables/pilot_smoke_measured_policy.csv
-  smoke_summary: out/policy_tables/pilot_smoke_measured_summary.csv
+  smoke_profiles: out/profile_tables/pilot_50_measured_profiles.csv
+  smoke_profile_checks: out/profile_tables/pilot_50_profile_smoke.csv
+  smoke_policy: out/policy_tables/pilot_50_measured_policy.csv
+  smoke_summary: out/policy_tables/pilot_50_measured_summary.csv

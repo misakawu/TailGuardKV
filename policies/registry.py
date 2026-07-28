@@ -18,6 +18,7 @@ def build_policies(
     delta: float,
     exact_profiles: set[str],
     memory_budget_mib: float = float("inf"),
+    record_rejected_unsafe: bool = False,
 ) -> list[Policy]:
     policies: list[Policy] = []
     for item in names:
@@ -39,10 +40,21 @@ def build_policies(
                     memory_budget_mib,
                     memory_weight=float(options.get("memory_weight", 0.05)),
                     loss_weight=float(options.get("loss_weight", 1000.0)),
+                    record_rejected_unsafe=record_rejected_unsafe,
                 )
             )
         elif name == "uncalibrated_dynamic":
-            policies.append(UncalibratedDynamicPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
+            policies.append(
+                UncalibratedDynamicPolicy(
+                    calibration_measurements,
+                    profiles,
+                    epsilon,
+                    delta,
+                    exact_profiles,
+                    memory_budget_mib,
+                    record_rejected_unsafe=record_rejected_unsafe,
+                )
+            )
         else:
             raise ValueError(f"未知 policy: {name}")
     return policies

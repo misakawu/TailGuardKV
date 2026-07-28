@@ -14,11 +14,25 @@ class H2OAdapter(ProfileAdapter):
     def profiles(self) -> tuple[ProfileSpec, ...]:
         return (
             ProfileSpec(
-                "h2o_heavy_hitter",
+                "h2o_heavy10_recent10",
                 self.name,
                 self.env,
                 lossy=True,
-                metadata={"strategy": "heavy_hitter"},
+                metadata={"h2o_heavy_ratio": 0.10, "h2o_recent_ratio": 0.10},
+            ),
+            ProfileSpec(
+                "h2o_heavy15_recent15",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"h2o_heavy_ratio": 0.15, "h2o_recent_ratio": 0.15},
+            ),
+            ProfileSpec(
+                "h2o_heavy20_recent20",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"h2o_heavy_ratio": 0.20, "h2o_recent_ratio": 0.20},
             ),
         )
 
@@ -50,11 +64,13 @@ class H2OAdapter(ProfileAdapter):
                 self.runtime_config,
                 extra={
                     "family": spec.family,
-                    "strategy": spec.metadata.get("strategy", ""),
+                    "h2o_heavy_ratio": spec.metadata.get("h2o_heavy_ratio", ""),
+                    "h2o_recent_ratio": spec.metadata.get("h2o_recent_ratio", ""),
                 },
             )
             if not row.ok:
                 return replace(row, error=f"H2O proof/runtime failed ({profile_name}): {row.error or ''}")
             return row
         scale = max(request.prompt_chars, 1)
-        return dry_profile_measurement(self.name, request, spec, scale * 0.075, scale * 1.0 / 1024.0)
+        heavy_ratio = float(spec.metadata["h2o_heavy_ratio"])
+        return dry_profile_measurement(self.name, request, spec, scale * (0.07 + heavy_ratio * 0.05), scale * (0.7 + heavy_ratio) / 1024.0)

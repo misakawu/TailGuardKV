@@ -139,7 +139,7 @@ def transformers_profile_measurement(
     pythonpath: Sequence[str] = (),
     extra: dict[str, object] | None = None,
 ) -> ProfileMeasurement:
-    model_name = str(runtime_config.get("profile_smoke_model") or runtime_config.get("pilot_model") or "")
+    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
     if not model_name:
         return ProfileMeasurement(
             request_id=request.request_id,
@@ -245,7 +245,7 @@ def qwen2_kv_profile_measurement(
     timeout_s: int | None = None,
     extra: dict[str, object] | None = None,
 ) -> ProfileMeasurement:
-    model_name = str(runtime_config.get("profile_smoke_model") or runtime_config.get("pilot_model") or "")
+    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
     if not model_name:
         return ProfileMeasurement(
             request_id=request.request_id,
@@ -265,10 +265,10 @@ def qwen2_kv_profile_measurement(
         "cache_dir": runtime_config.get("model_cache_dir"),
         "local_files_only": bool(runtime_config.get("local_files_only", True)),
         "bits": spec.metadata.get("bits"),
-        "kivi_group_size": int(runtime_config.get("kivi_group_size", 32)),
-        "kivi_residual_length": int(runtime_config.get("kivi_residual_length", 32)),
-        "h2o_heavy_ratio": float(runtime_config.get("h2o_heavy_ratio", 0.1)),
-        "h2o_recent_ratio": float(runtime_config.get("h2o_recent_ratio", 0.1)),
+        "kivi_group_size": int(spec.metadata.get("kivi_group_size", runtime_config.get("kivi_group_size", 32))),
+        "kivi_residual_length": int(spec.metadata.get("kivi_residual_length", runtime_config.get("kivi_residual_length", 32))),
+        "h2o_heavy_ratio": float(spec.metadata.get("h2o_heavy_ratio", runtime_config.get("h2o_heavy_ratio", 0.1))),
+        "h2o_recent_ratio": float(spec.metadata.get("h2o_recent_ratio", runtime_config.get("h2o_recent_ratio", 0.1))),
     }
     env = os.environ.copy()
     repo_root = str(Path(__file__).resolve().parents[1])

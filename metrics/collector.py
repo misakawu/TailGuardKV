@@ -65,11 +65,13 @@ class MetricCollector:
             drift_states: Counter[str] = Counter()
             safe_count = 0
             fallback_count = 0
+            unsafe_action_count = 0
             violation_count = 0
             known_count = 0
             exact_count = 0
             ok_count = 0
             actions: Counter[str] = Counter()
+            candidate_safe_counts: list[float] = []
             grouped_request = defaultdict(list)
             for row in rows:
                 if row.ok:
@@ -105,6 +107,10 @@ class MetricCollector:
                     drift_states[row.drift_state] += 1
                 if row.safe is True:
                     safe_count += 1
+                if row.safe is False or row.rejected_profile:
+                    unsafe_action_count += 1
+                if row.candidate_safe_count is not None:
+                    candidate_safe_counts.append(row.candidate_safe_count)
                 if row.fallback_reason:
                     fallback_count += 1
                 if row.action_profile in exact_profiles:
@@ -141,6 +147,10 @@ class MetricCollector:
                 "fallback_ratio": fallback_count / len(rows) if rows else float("nan"),
                 "exact_fallback_ratio": exact_count / len(rows) if rows else float("nan"),
                 "lossy_action_ratio": (len(rows) - exact_count) / len(rows) if rows else float("nan"),
+                "unique_action_count": float(len(actions)),
+                "identical_to_full_lru": bool(rows and all(row.action_profile == "full_gpu" for row in rows)),
+                "unsafe_action_count": float(unsafe_action_count),
+                "candidate_safe_count": _mean(candidate_safe_counts),
                 "target_delta": delta,
                 "violation_rate": violation_count / known_count if known_count else float("nan"),
                 "delta_slack": _delta_slack(rows, epsilon, delta),
