@@ -72,6 +72,7 @@ def _build_policy_set(
     delta: float,
     exact: set[str],
     memory_budget_mib: float,
+    record_rejected_unsafe: bool = False,
 ) -> list[Policy]:
     return build_policies(
         policy_names,
@@ -82,6 +83,7 @@ def _build_policy_set(
         delta,
         exact,
         memory_budget_mib=memory_budget_mib,
+        record_rejected_unsafe=record_rejected_unsafe,
     )
 
 
@@ -106,6 +108,10 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         epsilon=action.epsilon if action is not None else None,
         delta=action.delta if action is not None else None,
         fallback_reason=action.fallback_reason if action is not None else "",
+        rejected_profile=action.rejected_profile if action is not None else "",
+        rejected_pred_loss=action.rejected_pred_loss if action is not None else None,
+        rejected_risk_upper=action.rejected_risk_upper if action is not None else None,
+        candidate_safe_count=action.candidate_safe_count if action is not None else None,
         controller_overhead_ms=action.controller_overhead_ms if action is not None else None,
         controller_qrp_ms=action.controller_qrp_ms if action is not None else None,
         controller_cg_ms=action.controller_cg_ms if action is not None else None,
@@ -158,6 +164,10 @@ def _run_policy_matrix(
                         epsilon=action.epsilon,
                         delta=action.delta,
                         fallback_reason=action.fallback_reason,
+                        rejected_profile=action.rejected_profile,
+                        rejected_pred_loss=action.rejected_pred_loss,
+                        rejected_risk_upper=action.rejected_risk_upper,
+                        candidate_safe_count=action.candidate_safe_count,
                         controller_overhead_ms=action.controller_overhead_ms,
                         controller_qrp_ms=action.controller_qrp_ms,
                         controller_cg_ms=action.controller_cg_ms,
@@ -177,6 +187,8 @@ def run_policies(args: argparse.Namespace) -> int:
     try:
         config = load_config(Path(args.config))
         output, profiles, policy_names, epsilon, delta, memory_budget_mib = _run_settings(args, config)
+        policy_config = config.get("policies", {})
+        record_rejected_unsafe = bool(policy_config.get("record_rejected_unsafe", False)) if isinstance(policy_config, dict) else False
         measurements, calibration_measurements, requests = _load_replay_inputs(args, profiles)
         backend = MeasuredReplayBackend(
             measurements,
@@ -193,6 +205,7 @@ def run_policies(args: argparse.Namespace) -> int:
             delta,
             exact,
             memory_budget_mib,
+            record_rejected_unsafe=record_rejected_unsafe,
         )
     except (FileNotFoundError, ValueError) as exc:
         print_error(exc)

@@ -115,6 +115,10 @@ class Action:
     epsilon: float | None = None
     delta: float | None = None
     fallback_reason: str = ""
+    rejected_profile: str = ""
+    rejected_pred_loss: float | None = None
+    rejected_risk_upper: float | None = None
+    candidate_safe_count: float | None = None
     controller_overhead_ms: float | None = None
     controller_qrp_ms: float | None = None
     controller_cg_ms: float | None = None
@@ -163,6 +167,10 @@ class PolicyRunRecord:
     epsilon: float | None = None
     delta: float | None = None
     fallback_reason: str = ""
+    rejected_profile: str = ""
+    rejected_pred_loss: float | None = None
+    rejected_risk_upper: float | None = None
+    candidate_safe_count: float | None = None
     controller_overhead_ms: float | None = None
     controller_qrp_ms: float | None = None
     controller_cg_ms: float | None = None

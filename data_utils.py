@@ -165,14 +165,13 @@ def expand_repeated_requests(requests: list[Request], repeat: int) -> list[Reque
 
 
 def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> list[ProfileMeasurement]:
-    baseline_by_request = {
+    full_gpu_by_request = {
         row.request_id: row
         for row in measurements
-        if row.profile in exact and row.ok and row.measured
+        if row.profile == "full_gpu" and row.ok and row.measured
     }
     updated: list[ProfileMeasurement] = []
     for row in measurements:
-        baseline = baseline_by_request.get(row.request_id)
         if row.profile in exact and row.ok and row.measured:
             updated.append(
                 replace(
@@ -186,8 +185,12 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
         if not row.ok or not row.measured:
             updated.append(row)
             continue
-        reference = baseline.output_text if baseline is not None else row.extra.get("reference")
-        task = str(row.extra.get("task") or (baseline.extra.get("task") if baseline is not None else "") or "unknown")
+        baseline = full_gpu_by_request.get(row.request_id)
+        if baseline is None:
+            updated.append(replace(row, quality_loss=None, quality_score=None))
+            continue
+        reference = baseline.output_text
+        task = str(row.extra.get("task") or baseline.extra.get("task") or "unknown")
         loss, metrics = compute_quality_loss(task, row.output_text, None if reference is None else str(reference))
         updated.append(
             replace(

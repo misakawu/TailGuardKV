@@ -22,13 +22,8 @@ SUMMARY_KEY_COLUMNS = [
     "section",
     "name",
     "ok",
-    "return_code",
-    "step",
     "error",
     "config",
-    "profile_output",
-    "policy_output",
-    "summary_output",
     "profile_rows",
     "policy_rows",
     "epsilon",
@@ -53,6 +48,10 @@ SUMMARY_KEY_COLUMNS = [
     "fallback_ratio",
     "exact_fallback_ratio",
     "lossy_action_ratio",
+    "unique_action_count",
+    "identical_to_full_lru",
+    "unsafe_action_count",
+    "candidate_safe_count",
     "action_distribution",
 ]
 
@@ -92,13 +91,8 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "section": "experiment",
             "name": "pilot-smoke-measured",
             "ok": payload.get("ok"),
-            "return_code": payload.get("return_code"),
-            "step": payload.get("step"),
             "error": _summary_error(payload),
             "config": payload.get("config"),
-            "profile_output": payload.get("profile_output"),
-            "policy_output": payload.get("policy_output"),
-            "summary_output": payload.get("summary_output"),
             "profile_rows": (payload.get("rows") or {}).get("profiles") if isinstance(payload.get("rows"), dict) else "",
             "policy_rows": (payload.get("rows") or {}).get("policy") if isinstance(payload.get("rows"), dict) else "",
             "epsilon": payload.get("epsilon"),
@@ -118,12 +112,7 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "section": section,
                 "name": name,
                 "ok": payload.get("ok"),
-                "return_code": payload.get("return_code"),
-                "step": payload.get("step"),
                 "config": payload.get("config"),
-                "profile_output": payload.get("profile_output"),
-                "policy_output": payload.get("policy_output"),
-                "summary_output": payload.get("summary_output"),
                 "epsilon": payload.get("epsilon"),
                 "delta": payload.get("delta"),
                 "memory_budget_mib": payload.get("memory_budget_mib"),
@@ -135,7 +124,7 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _write_summary(payload: dict[str, Any]) -> None:
-    path = Path(PILOT_SUMMARY_OUTPUT)
+    path = Path(str(payload.get("summary_output") or PILOT_SUMMARY_OUTPUT))
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = _summary_rows(payload)
     fieldnames = SUMMARY_KEY_COLUMNS + sorted({key for row in rows for key in row}.difference(SUMMARY_KEY_COLUMNS))
@@ -155,6 +144,11 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         config = load_config(Path(config_path))
         profiles = config_profiles(config)
         policies = config_policies(config)
+        outputs = config.get("outputs", {})
+        outputs = outputs if isinstance(outputs, dict) else {}
+        profile_output = str(outputs.get("smoke_profiles", PILOT_PROFILE_OUTPUT))
+        policy_output = str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT))
+        summary_output = str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT))
     except (FileNotFoundError, ValueError) as exc:
         payload = {
             "ok": False,
@@ -162,8 +156,6 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "step": "load_config",
             "error": str(exc),
             "config": config_path,
-            "profile_output": PILOT_PROFILE_OUTPUT,
-            "policy_output": PILOT_POLICY_OUTPUT,
             "summary_output": PILOT_SUMMARY_OUTPUT,
         }
         _print_and_write(payload)
@@ -172,7 +164,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
     profile_args = argparse.Namespace(
         config=config_path,
         adapters=None,
-        output=PILOT_PROFILE_OUTPUT,
+        output=profile_output,
         import_measurements="",
         dry_run=False,
     )
@@ -183,19 +175,17 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "return_code": profile_code,
             "step": "build_profile_table",
             "config": config_path,
-            "profile_output": PILOT_PROFILE_OUTPUT,
-            "policy_output": PILOT_POLICY_OUTPUT,
-            "summary_output": PILOT_SUMMARY_OUTPUT,
+            "summary_output": summary_output,
             "profile": profile_payload,
         }
         _print_and_write(payload)
         return profile_code
 
     try:
-        measurements = read_measurements(Path(PILOT_PROFILE_OUTPUT))
+        measurements = read_measurements(Path(profile_output))
         validate_profile_measurements(
             measurements,
-            PILOT_PROFILE_OUTPUT,
+            profile_output,
             required_profiles=profiles,
             require_measured=True,
         )
@@ -206,9 +196,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "step": "validate_profile_table",
             "error": str(exc),
             "config": config_path,
-            "profile_output": PILOT_PROFILE_OUTPUT,
-            "policy_output": PILOT_POLICY_OUTPUT,
-            "summary_output": PILOT_SUMMARY_OUTPUT,
+            "summary_output": summary_output,
             "profile": profile_payload,
         }
         _print_and_write(payload)
@@ -216,8 +204,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
 
     policy_args = argparse.Namespace(
         config=config_path,
-        measurements=PILOT_PROFILE_OUTPUT,
-        output=PILOT_POLICY_OUTPUT,
+        measurements=profile_output,
+        output=policy_output,
         profiles=None,
         policies=None,
         policy_config=None,
@@ -233,9 +221,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "return_code": policy_code,
         "step": "complete" if policy_code == 0 else "run_policies",
         "config": config_path,
-        "profile_output": PILOT_PROFILE_OUTPUT,
-        "policy_output": PILOT_POLICY_OUTPUT,
-        "summary_output": PILOT_SUMMARY_OUTPUT,
+        "summary_output": summary_output,
         "profiles": profiles,
         "policies": policies,
         "rows": {
@@ -256,6 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="TailGuardKV 正式实验入口。")
     subparsers = parser.add_subparsers(dest="command", required=True)
     pilot = subparsers.add_parser("pilot-smoke-measured", help="运行真实 pilot measured smoke 实验。")
+    pilot.add_argument("--config", default=PILOT_CONFIG)
     pilot.set_defaults(func=pilot_smoke_measured)
     return parser
 

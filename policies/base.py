@@ -85,6 +85,20 @@ class StatsPolicy(Policy):
                 return profile
         return self.profiles[0]
 
+    def _fastest_exact_profile(self) -> str:
+        best_profile = ""
+        best_ttft = inf
+        for profile in self.profiles:
+            if profile not in self.exact_profiles:
+                continue
+            ttft = self._ttft_or_inf(profile)
+            if ttft < best_ttft:
+                best_profile = profile
+                best_ttft = ttft
+        if best_profile:
+            return best_profile
+        return self._fallback_profile()
+
     def _within_memory_budget(self, profile: str) -> bool:
         if not isfinite(self.memory_budget_mib):
             return True
@@ -147,6 +161,15 @@ class StatsPolicy(Policy):
         safe = risk_upper <= self.epsilon or profile in self.exact_profiles
         reason = "exact fallback" if profile in self.exact_profiles else ("calibrated safe" if safe else "calibrated unsafe")
         return pred_loss, risk_upper, safe, reason
+
+    def _candidate_safe_count(self, request: Request) -> int:
+        count = 0
+        for profile in self._candidate_profiles():
+            pred_loss = self.predictor.predict_loss(request, profile)
+            risk_upper = self.guard.risk_upper(request, profile, pred_loss)
+            if risk_upper <= self.epsilon or profile in self.exact_profiles:
+                count += 1
+        return count
 
 
 def _profile_stats(
