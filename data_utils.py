@@ -94,6 +94,18 @@ def _ensure_request_splits(requests: list[Request], calibration_fraction: float)
     ]
 
 
+def limit_requests_by_split(requests: list[Request], max_requests: int) -> list[Request]:
+    if max_requests <= 0 or len(requests) <= max_requests:
+        return requests
+    calibration = [request for request in requests if request.metadata.get("split") == "calibration"]
+    evaluation = [request for request in requests if request.metadata.get("split") == "eval"]
+    if not calibration or not evaluation or max_requests < 2:
+        return requests[:max_requests]
+    calibration_limit = max_requests // 2
+    evaluation_limit = max_requests - calibration_limit
+    return calibration[:calibration_limit] + evaluation[:evaluation_limit]
+
+
 def requests_from_measurements(measurements: list[ProfileMeasurement]) -> list[Request]:
     seen: dict[str, Request] = {}
     for measurement in measurements:

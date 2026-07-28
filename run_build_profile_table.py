@@ -17,6 +17,7 @@ from experiment_common import (
     failed_measurement_summary,
     json_ready,
     length_bucket,
+    limit_requests_by_split,
     load_config,
     load_requests,
     read_measurements,
@@ -95,6 +96,11 @@ def _append_profile_rows(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def _failed_chunks_output(output: str | Path) -> Path:
+    path = Path(output)
+    return path.with_name(f"{path.stem}_failed_chunks.csv")
+
+
 def _print_chunk_progress(
     *,
     adapter: str,
@@ -162,8 +168,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
         adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
         requests, fallback_requests = load_requests(config)
         max_requests = int(runtime.get("max_requests", 0) or 0)
-        if max_requests > 0:
-            requests = requests[:max_requests]
+        requests = limit_requests_by_split(requests, max_requests)
         requests = expand_repeated_requests(requests, int(runtime.get("repeat", 1)))
         requests = [
             replace(
@@ -192,12 +197,24 @@ def build_profile_table(args: argparse.Namespace) -> int:
                     ]
                     updated = with_quality(measurements + chunk_measurements, exact)
                     chunk_measurements = updated[-len(chunk_measurements) :]
-                    validate_profile_measurements(
-                        chunk_measurements,
-                        output,
-                        required_profiles=[spec.name],
-                        require_measured=not args.dry_run,
-                    )
+                    try:
+                        validate_profile_measurements(
+                            chunk_measurements,
+                            output,
+                            required_profiles=[spec.name],
+                            require_measured=not args.dry_run,
+                        )
+                    except ValueError as exc:
+                        diagnostic_output = _failed_chunks_output(output)
+                        write_csv(diagnostic_output, [measurement.to_row() for measurement in chunk_measurements])
+                        print(json.dumps(json_ready({
+                            "ok": False,
+                            "output": output,
+                            "diagnostic_output": str(diagnostic_output),
+                            "error": str(exc),
+                            "failures": failed_measurement_summary(chunk_measurements),
+                        }), ensure_ascii=False, indent=2))
+                        return 2
                     measurements = updated
                     _append_profile_rows(output_path, [measurement.to_row() for measurement in chunk_measurements])
                     completed_requests = min(chunk_index * PROFILE_CHUNK_SIZE, len(requests))
