@@ -25,6 +25,7 @@ from policies.base import Policy
 from policies.registry import build_policies
 from profiles.registry import build_profile_adapters
 from vllm_lru_policy import create_vllm_policy
+from env_asset_prepare.prepare_pilot_assets import format_longbench_prompt
 import run_build_profile_table as profile_table_module
 from run_build_profile_table import build_profile_table
 from run_cli_common import run_command
@@ -99,6 +100,19 @@ def _write_pilot_test_config(path: Path, profile_output: Path, policy_output: Pa
 
 
 class TailGuardCoreTest(unittest.TestCase):
+    def test_format_longbench_prompt_includes_context_and_question(self) -> None:
+        row = {
+            "context": "Paper context sentence. " * 40,
+            "input": "What is the result?",
+        }
+
+        prompt = format_longbench_prompt(row)
+
+        self.assertIn("Context:\nPaper context sentence.", prompt)
+        self.assertIn("\n\nQuestion:\nWhat is the result?", prompt)
+        self.assertTrue(prompt.endswith("\nAnswer:"))
+        self.assertGreater(len(prompt), 900)
+
     def test_pytest_ini_limits_collection_to_project_tests(self) -> None:
         pytest_ini = Path("pytest.ini").read_text(encoding="utf-8")
         self.assertIn("testpaths = tests", pytest_ini)

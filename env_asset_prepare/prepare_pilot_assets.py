@@ -100,6 +100,16 @@ def normalize_answer(value: Any) -> str:
     return str(value).strip()
 
 
+def format_longbench_prompt(row: dict[str, Any]) -> str:
+    context = str(row.get("context") or "").strip()
+    question = str(row.get("input") or "").strip()
+    if context and question:
+        return f"Context:\n{context}\n\nQuestion:\n{question}\nAnswer:"
+    if question:
+        return question
+    return context
+
+
 def split_label(position: int, total: int) -> str:
     return "calibration" if position < total / 2 else "eval"
 
@@ -117,7 +127,7 @@ def collect_longbench(output_root: Path, target: int) -> tuple[list[dict[str, An
     skipped_empty_reference = 0
 
     for source_index, row in enumerate(rows):
-        prompt = str(row.get("input") or "").strip()
+        prompt = format_longbench_prompt(row)
         answers = row.get("answers")
         reference = normalize_answer(answers)
         if not prompt:
