@@ -114,6 +114,19 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(prompt.endswith("\nAnswer:"))
         self.assertGreater(len(prompt), 900)
 
+    def test_format_longbench_prompt_caps_pilot_context_without_dropping_question(self) -> None:
+        row = {
+            "context": "Long context sentence. " * 1000,
+            "input": "What is the result?",
+        }
+
+        prompt = format_longbench_prompt(row, max_chars=1200)
+
+        self.assertLessEqual(len(prompt), 1200)
+        self.assertTrue(prompt.startswith("Context:\nLong context sentence."))
+        self.assertIn("\n\nQuestion:\nWhat is the result?", prompt)
+        self.assertTrue(prompt.endswith("\nAnswer:"))
+
     def test_qwen2_runtime_dispatches_parameterized_h2o_profiles(self) -> None:
         calls = []
 
