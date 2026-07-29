@@ -23,6 +23,7 @@ from metrics.quality import compute_quality_loss, normalized_exact_match_loss, r
 from metrics import MetricCollector
 from policies.base import Policy
 from policies.registry import build_policies
+from profiles import qwen2_kv_runtime
 from profiles.registry import build_profile_adapters
 from vllm_lru_policy import create_vllm_policy
 from env_asset_prepare.prepare_pilot_assets import format_longbench_prompt
@@ -112,6 +113,19 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertIn("\n\nQuestion:\nWhat is the result?", prompt)
         self.assertTrue(prompt.endswith("\nAnswer:"))
         self.assertGreater(len(prompt), 900)
+
+    def test_qwen2_runtime_dispatches_parameterized_h2o_profiles(self) -> None:
+        calls = []
+
+        def fake_h2o(payload):
+            calls.append(payload["profile"])
+            return {"ok": True, "measured": True, "backend": "qwen2_h2o"}
+
+        with patch.object(qwen2_kv_runtime, "_run_h2o_profile", side_effect=fake_h2o):
+            result = qwen2_kv_runtime.run_profile({"profile": "h2o_heavy10_recent10"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, ["h2o_heavy10_recent10"])
 
     def test_pytest_ini_limits_collection_to_project_tests(self) -> None:
         pytest_ini = Path("pytest.ini").read_text(encoding="utf-8")
