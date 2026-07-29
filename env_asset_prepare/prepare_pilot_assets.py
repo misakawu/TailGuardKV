@@ -24,6 +24,7 @@ LONGBENCH_CONFIGS = ("qasper", "multifieldqa_en", "hotpotqa")
 XSUM_REPO = "EdinburghNLP/xsum"
 TARGET_PER_TASK = 300
 MIN_PER_TASK = 200
+MAX_LONGBENCH_PROMPT_CHARS = 6000
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,14 +101,23 @@ def normalize_answer(value: Any) -> str:
     return str(value).strip()
 
 
-def format_longbench_prompt(row: dict[str, Any]) -> str:
+def _cap_text(text: str, max_chars: int | None) -> str:
+    if max_chars is None or max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip()
+
+
+def format_longbench_prompt(row: dict[str, Any], max_chars: int | None = None) -> str:
     context = str(row.get("context") or "").strip()
     question = str(row.get("input") or "").strip()
     if context and question:
-        return f"Context:\n{context}\n\nQuestion:\n{question}\nAnswer:"
+        suffix = f"\n\nQuestion:\n{question}\nAnswer:"
+        prefix = "Context:\n"
+        context_budget = (max_chars - len(prefix) - len(suffix)) if max_chars else None
+        return f"{prefix}{_cap_text(context, context_budget)}{suffix}"
     if question:
-        return question
-    return context
+        return _cap_text(question, max_chars)
+    return _cap_text(context, max_chars)
 
 
 def split_label(position: int, total: int) -> str:
@@ -127,7 +137,7 @@ def collect_longbench(output_root: Path, target: int) -> tuple[list[dict[str, An
     skipped_empty_reference = 0
 
     for source_index, row in enumerate(rows):
-        prompt = format_longbench_prompt(row)
+        prompt = format_longbench_prompt(row, max_chars=MAX_LONGBENCH_PROMPT_CHARS)
         answers = row.get("answers")
         reference = normalize_answer(answers)
         if not prompt:
