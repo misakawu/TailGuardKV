@@ -18,7 +18,7 @@ def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         if profile.startswith("kivi_"):
             return _run_kivi_profile(payload)
-        if profile == "h2o_heavy_hitter":
+        if profile.startswith("h2o_heavy"):
             return _run_h2o_profile(payload)
         return _failure(payload, f"unsupported Qwen2 KV profile: {profile}")
     except Exception as exc:
