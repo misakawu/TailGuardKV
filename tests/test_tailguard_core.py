@@ -127,6 +127,31 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(calls, ["h2o_heavy10_recent10"])
 
+    def test_kivi_failure_message_reports_prompt_tokens(self) -> None:
+        error = (
+            "KIVI proof missing: no quantized cache block and/or quant GEMV kernel call was observed. "
+            "prompt_tokens=9 max_new_tokens=16 residual_length=32 "
+            "quantized_layers=0 kernel_calls=0"
+        )
+
+        self.assertIn("prompt_tokens=9", error)
+        self.assertIn("residual_length=32", error)
+
+    def test_kivi_proof_error_includes_token_context(self) -> None:
+        message = qwen2_kv_runtime._kivi_proof_error(
+            prompt_tokens=9,
+            max_new_tokens=16,
+            residual_length=32,
+            quantized_layers=0,
+            kernel_calls=0,
+        )
+
+        self.assertIn("prompt_tokens=9", message)
+        self.assertIn("max_new_tokens=16", message)
+        self.assertIn("residual_length=32", message)
+        self.assertIn("quantized_layers=0", message)
+        self.assertIn("kernel_calls=0", message)
+
     def test_pytest_ini_limits_collection_to_project_tests(self) -> None:
         pytest_ini = Path("pytest.ini").read_text(encoding="utf-8")
         self.assertIn("testpaths = tests", pytest_ini)

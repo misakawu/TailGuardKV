@@ -33,12 +33,30 @@ def main() -> int:
     return 0 if result.get("ok") else 1
 
 
+def _kivi_proof_error(
+    *,
+    prompt_tokens: int,
+    max_new_tokens: int,
+    residual_length: int,
+    quantized_layers: int,
+    kernel_calls: int,
+) -> str:
+    return (
+        "KIVI proof missing: no quantized cache block and/or quant GEMV kernel call was observed. "
+        f"prompt_tokens={prompt_tokens} max_new_tokens={max_new_tokens} residual_length={residual_length} "
+        f"quantized_layers={quantized_layers} kernel_calls={kernel_calls}"
+    )
+
+
 def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
     modules = _import_runtime_modules(use_kivi=True)
     torch = modules["torch"]
     _require_cuda(torch)
 
     model, tokenizer, device = _load_qwen2_model(payload, torch, modules["AutoModelForCausalLM"], modules["AutoTokenizer"])
+    prompt_tokens = int(tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")["input_ids"].shape[-1])
+    max_new_tokens = int(payload.get("max_new_tokens") or 16)
+    residual_length = int(payload.get("kivi_residual_length") or 32)
     bits = int(payload.get("bits") or (2 if str(payload.get("profile")) == "kivi_2bit" else 4))
     tracker = {
         "kivi_kernel_calls": 0,
@@ -54,15 +72,20 @@ def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
             "backend": "qwen2_kivi",
             "bits": bits,
             "kivi_group_size": int(payload.get("kivi_group_size") or 32),
-            "kivi_residual_length": int(payload.get("kivi_residual_length") or 32),
+            "kivi_residual_length": residual_length,
+            "prompt_tokens": prompt_tokens,
+            "max_new_tokens": max_new_tokens,
         }
     )
     if tracker["kivi_quantized_layers"] <= 0 or tracker["kivi_kernel_calls"] <= 0:
         result["ok"] = False
         result["measured"] = False
-        result["error"] = (
-            "KIVI proof missing: no quantized cache block and/or quant GEMV kernel call was observed. "
-            f"quantized_layers={tracker['kivi_quantized_layers']} kernel_calls={tracker['kivi_kernel_calls']}"
+        result["error"] = _kivi_proof_error(
+            prompt_tokens=prompt_tokens,
+            max_new_tokens=max_new_tokens,
+            residual_length=residual_length,
+            quantized_layers=tracker["kivi_quantized_layers"],
+            kernel_calls=tracker["kivi_kernel_calls"],
         )
     return result
 
