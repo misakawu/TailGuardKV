@@ -42,7 +42,6 @@ def config_runtime(config: dict[str, Any]) -> dict[str, Any]:
     data = config.get("data", {})
     return {
         "pilot_model": model.get("pilot_model") or model.get("path") or model.get("name"),
-        "profile_smoke_model": model.get("profile_smoke_model") or model.get("path") or model.get("name"),
         "model_cache_dir": model.get("cache_dir"),
         "max_new_tokens": int(profile.get("max_new_tokens", pilot.get("max_new_tokens", 16))),
         "timeout_s": int(profile.get("timeout_s", profile.get("timeout", 180))),
@@ -69,7 +68,7 @@ def exact_profiles(profiles: list[str], config: dict[str, Any] | None = None) ->
                 for profile in profiles
                 if isinstance(specs.get(profile), dict) and bool(specs[profile].get("exact"))
             }
-    return {profile for profile in profiles if profile in {"full_gpu", "full_cpu", "recompute", "engine_full_lru"}}
+    return {profile for profile in profiles if profile in {"full_gpu", "engine_full_lru"}}
 
 
 def _required_mapping(config: dict[str, Any], key: str) -> dict[str, Any]:

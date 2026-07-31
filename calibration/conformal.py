@@ -38,7 +38,7 @@ class ConformalGuard:
     min_group_samples: int = 2
 
     def __post_init__(self) -> None:
-        self.exact_profiles = self.exact_profiles or {"full_gpu", "full_cpu", "recompute"}
+        self.exact_profiles = self.exact_profiles or {"full_gpu"}
         configured_lossy_profiles = {
             profile
             for profile in (self.profiles or [])

@@ -144,13 +144,13 @@ def transformers_profile_many_measurements(
     request_list = list(requests)
     if not request_list:
         return []
-    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    model_name = _runtime_model_name(runtime_config)
     if not model_name:
         return _missing_model_measurements(
             adapter,
             request_list,
             spec,
-            "未配置 model.profile_smoke_model 或 model.pilot_model，无法执行真实 transformers profile。",
+            "未配置 model.pilot_model，无法执行真实 transformers profile。",
             {"backend": "transformers", **(extra or {})},
         )
     payload = {
@@ -161,7 +161,7 @@ def transformers_profile_many_measurements(
         "profiles.transformers_runtime",
         "TRANSFORMERS_PROFILE_PAYLOAD",
         payload,
-        timeout_s=timeout_s or int(runtime_config.get("timeout_s", 180)),
+        timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
         pythonpath=pythonpath,
     )
     if error is not None:
@@ -196,13 +196,13 @@ def qwen2_kv_profile_many_measurements(
     request_list = list(requests)
     if not request_list:
         return []
-    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    model_name = _runtime_model_name(runtime_config)
     if not model_name:
         return _missing_model_measurements(
             adapter,
             request_list,
             spec,
-            "未配置 model.profile_smoke_model 或 model.pilot_model，无法执行 Qwen2 KV runtime。",
+            "未配置 model.pilot_model，无法执行 Qwen2 KV runtime。",
             {"backend": "qwen2_kv_runtime", "env": env_name, **(extra or {})},
         )
     payload = {
@@ -213,7 +213,7 @@ def qwen2_kv_profile_many_measurements(
         "profiles.qwen2_kv_runtime",
         "QWEN2_KV_PAYLOAD",
         payload,
-        timeout_s=timeout_s or int(runtime_config.get("timeout_s", 180)),
+        timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
         pythonpath=pythonpath,
     )
     if error is not None:
@@ -244,7 +244,7 @@ def transformers_profile_measurement(
     pythonpath: Sequence[str] = (),
     extra: dict[str, object] | None = None,
 ) -> ProfileMeasurement:
-    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    model_name = _runtime_model_name(runtime_config)
     if not model_name:
         return ProfileMeasurement(
             request_id=request.request_id,
@@ -252,7 +252,7 @@ def transformers_profile_measurement(
             adapter=adapter,
             ok=False,
             measured=False,
-            error="未配置 model.profile_smoke_model 或 model.pilot_model，无法执行真实 transformers profile。",
+            error="未配置 model.pilot_model，无法执行真实 transformers profile。",
             extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
         )
 
@@ -342,7 +342,7 @@ def qwen2_kv_profile_measurement(
     timeout_s: int | None = None,
     extra: dict[str, object] | None = None,
 ) -> ProfileMeasurement:
-    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    model_name = _runtime_model_name(runtime_config)
     if not model_name:
         return ProfileMeasurement(
             request_id=request.request_id,
@@ -350,7 +350,7 @@ def qwen2_kv_profile_measurement(
             adapter=adapter,
             ok=False,
             measured=False,
-            error="未配置 model.profile_smoke_model 或 model.pilot_model，无法执行 Qwen2 KV runtime。",
+            error="未配置 model.pilot_model，无法执行 Qwen2 KV runtime。",
             extra={"backend": "qwen2_kv_runtime", "env": env_name, "unsupported": "true", **(extra or {})},
         )
 
@@ -459,6 +459,15 @@ def _transformers_payload(
     }
 
 
+def _runtime_model_name(runtime_config: dict[str, object]) -> str:
+    return str(runtime_config.get("pilot_model") or "")
+
+
+def _batch_timeout_s(runtime_config: dict[str, object], request_count: int) -> int:
+    per_request = int(runtime_config.get("timeout_s", 180))
+    return max(per_request, per_request * max(1, request_count))
+
+
 def _qwen2_payload(
     request: Request,
     spec: ProfileSpec,
@@ -507,6 +516,8 @@ def _run_runtime_batch(
             timeout=timeout_s,
             check=False,
         )
+    except subprocess.TimeoutExpired as exc:
+        return None, None, _format_timeout_error(module_name, timeout_s, exc)
     except Exception as exc:
         return None, None, f"{module_name} 启动失败: {type(exc).__name__}: {exc}"
     output = proc.stdout.strip()
@@ -660,6 +671,11 @@ def _worker_failure_measurements(
     error: str,
     extra: dict[str, object],
 ) -> list[ProfileMeasurement]:
+    failure_extra = dict(extra)
+    failure_extra.setdefault("unsupported", "true")
+    if "TimeoutExpired" in error:
+        failure_extra.setdefault("error_type", "timeout")
+        failure_extra.setdefault("failure_stage", "worker_startup")
     return [
         ProfileMeasurement(
             request_id=request.request_id,
@@ -668,10 +684,31 @@ def _worker_failure_measurements(
             ok=False,
             measured=False,
             error=error,
-            extra={**extra, "unsupported": "true"},
+            extra=dict(failure_extra),
         )
         for request in requests
     ]
+
+
+def _format_timeout_error(module_name: str, timeout_s: int, exc: subprocess.TimeoutExpired) -> str:
+    stderr_tail = _trim_timeout_output(exc.stderr)
+    stdout_tail = _trim_timeout_output(exc.output)
+    detail = f"{module_name} 启动超时: TimeoutExpired after {timeout_s}s"
+    if stderr_tail:
+        detail = f"{detail}; stderr={stderr_tail}"
+    if stdout_tail:
+        detail = f"{detail}; stdout={stdout_tail}"
+    return detail
+
+
+def _trim_timeout_output(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value)
+    return text.strip()[-800:]
 
 
 def _transformers_profile_code(payload: dict[str, object]) -> str:

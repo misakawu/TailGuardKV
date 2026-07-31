@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import math
+import subprocess
 import tempfile
 import time
 from types import SimpleNamespace
@@ -18,12 +19,13 @@ from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
 from core_types import Action
 from core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
-from experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
+from experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, failed_measurement_summary, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
 from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, token_f1_loss
 from metrics import MetricCollector
 from policies.base import Policy
 from policies.registry import build_policies
-from profiles.base import qwen2_kv_profile_many_measurements, transformers_profile_many_measurements
+from profiles import base as profiles_base
+from profiles.base import qwen2_kv_profile_many_measurements, qwen2_kv_profile_measurement, transformers_profile_many_measurements, transformers_profile_measurement
 from profiles.full import FullKVAdapter
 from profiles.h2o import H2OAdapter
 from profiles.kivi import KIVIAdapter
@@ -65,8 +67,6 @@ def _measurement(
 
 FORMAL_PROFILES = [
     "full_gpu",
-    "full_cpu",
-    "recompute",
     "kivi_4bit_residual32",
     "kivi_4bit_residual64",
     "kivi_2bit_residual32",
@@ -79,7 +79,7 @@ FORMAL_PROFILES = [
 
 def _write_pilot_test_config(path: Path, profile_output: Path, policy_output: Path, summary_output: Path) -> None:
     profile_names = "\n".join(f"    - {profile}" for profile in FORMAL_PROFILES)
-    specs = "\n".join(f"    {profile}: {{exact: {str(profile in {'full_gpu', 'full_cpu', 'recompute'}).lower()}}}" for profile in FORMAL_PROFILES)
+    specs = "\n".join(f"    {profile}: {{exact: {str(profile == 'full_gpu').lower()}}}" for profile in FORMAL_PROFILES)
     path.write_text(
         "\n".join(
             [
@@ -195,6 +195,112 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(rows[0].extra["worker_mode"], "batch")
         self.assertEqual(rows[0].extra["stage_total_ms"], 5)
 
+    def test_transformers_profile_many_uses_pilot_model_only(self) -> None:
+        requests = [Request(request_id="r1", task="summary", prompt="a")]
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+
+        def fake_run(command, **kwargs):
+            payload = json.loads(kwargs["env"]["TRANSFORMERS_PROFILE_PAYLOAD"])
+            self.assertEqual(payload["requests"][0]["model_name"], "/tmp/pilot")
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "results": [
+                            {
+                                "ok": True,
+                                "measured": True,
+                                "output_text": "x",
+                                "ttft_ms": 1,
+                                "latency_ms": 2,
+                                "peak_memory_mib": 3,
+                                "resident_memory_mib": 4,
+                            }
+                        ],
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            rows = transformers_profile_many_measurements(
+                "full",
+                "tailguardkv-base",
+                requests,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/pilot"},
+            )
+
+        self.assertTrue(rows[0].ok)
+
+    def test_transformers_profile_measurement_uses_pilot_model_only(self) -> None:
+        request = Request(request_id="r1", task="summary", prompt="a")
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+
+        def fake_run(command, **kwargs):
+            code = command[-1]
+            self.assertIn("'model_name': '/tmp/pilot'", code)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "output_text": "x",
+                        "ttft_ms": 1,
+                        "latency_ms": 2,
+                        "peak_memory_mib": 3,
+                        "resident_memory_mib": 4,
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            row = transformers_profile_measurement(
+                "full",
+                "tailguardkv-base",
+                request,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/pilot"},
+            )
+
+        self.assertTrue(row.ok)
+
+    def test_qwen2_profile_measurement_falls_back_to_pilot_model(self) -> None:
+        request = Request(request_id="r1", task="summary", prompt="a")
+        spec = ProfileSpec("kivi_4bit_residual32", "kivi", "tailguardkv-base", lossy=True)
+
+        def fake_run(command, **kwargs):
+            payload = json.loads(kwargs["env"]["QWEN2_KV_PAYLOAD"])
+            self.assertEqual(payload["model_name"], "/tmp/pilot")
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "measured": True,
+                        "output_text": "x",
+                        "ttft_ms": 1,
+                        "latency_ms": 2,
+                        "peak_memory_mib": 3,
+                        "resident_memory_mib": 4,
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            row = qwen2_kv_profile_measurement(
+                "kivi",
+                "tailguardkv-base",
+                request,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/pilot"},
+            )
+
+        self.assertTrue(row.ok)
+
     def test_batch_runtime_maps_worker_failure_to_every_request(self) -> None:
         requests = [
             Request(request_id="r1", task="summary", prompt="a"),
@@ -210,6 +316,105 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(not row.ok and not row.measured for row in rows))
         self.assertTrue(all("CUDA out of memory" in (row.error or "") for row in rows))
+
+    def test_batch_timeout_scales_with_request_count(self) -> None:
+        self.assertEqual(profiles_base._batch_timeout_s({"timeout_s": 180}, request_count=10), 1800)
+
+    def test_batch_timeout_keeps_single_request_budget(self) -> None:
+        self.assertEqual(profiles_base._batch_timeout_s({"timeout_s": 180}, request_count=1), 180)
+
+    def test_transformers_profile_many_uses_scaled_batch_timeout(self) -> None:
+        requests = [
+            Request(request_id="r1", task="summary", prompt="a"),
+            Request(request_id="r2", task="summary", prompt="b"),
+            Request(request_id="r3", task="summary", prompt="c"),
+            Request(request_id="r4", task="summary", prompt="d"),
+            Request(request_id="r5", task="summary", prompt="e"),
+            Request(request_id="r6", task="summary", prompt="f"),
+            Request(request_id="r7", task="summary", prompt="g"),
+            Request(request_id="r8", task="summary", prompt="h"),
+            Request(request_id="r9", task="summary", prompt="i"),
+            Request(request_id="r10", task="summary", prompt="j"),
+        ]
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+
+        def fake_run(command, **kwargs):
+            self.assertEqual(kwargs["timeout"], 1800)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "results": [
+                            {
+                                "ok": True,
+                                "measured": True,
+                                "output_text": request.request_id,
+                                "ttft_ms": 1,
+                                "latency_ms": 2,
+                                "peak_memory_mib": 3,
+                                "resident_memory_mib": 4,
+                            }
+                            for request in requests
+                        ],
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            rows = transformers_profile_many_measurements(
+                "full",
+                "tailguardkv-base",
+                requests,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/model", "timeout_s": 180},
+            )
+
+        self.assertEqual(len(rows), 10)
+
+    def test_batch_runtime_timeout_returns_structured_failure_rows(self) -> None:
+        requests = [
+            Request(request_id="r1", task="summary", prompt="a"),
+            Request(request_id="r2", task="summary", prompt="b"),
+        ]
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+
+        def fake_run(command, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=command, timeout=360)
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            rows = transformers_profile_many_measurements(
+                "full",
+                "tailguardkv-base",
+                requests,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/model", "timeout_s": 180},
+                timeout_s=360,
+            )
+
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(not row.ok and not row.measured for row in rows))
+        self.assertTrue(all("profiles.transformers_runtime" in (row.error or "") for row in rows))
+        self.assertTrue(all("360" in (row.error or "") for row in rows))
+        self.assertTrue(all(row.extra["error_type"] == "timeout" for row in rows))
+        self.assertTrue(all(row.extra["failure_stage"] == "worker_startup" for row in rows))
+
+    def test_failed_measurement_summary_keeps_timeout_failures(self) -> None:
+        row = ProfileMeasurement(
+            request_id="r1",
+            profile="full_gpu",
+            adapter="full",
+            ok=False,
+            measured=False,
+            error="profiles.transformers_runtime 启动超时: TimeoutExpired after 360s",
+            extra={"backend": "transformers", "error_type": "timeout", "failure_stage": "worker_startup"},
+        )
+
+        summary = failed_measurement_summary([row])
+
+        self.assertEqual(len(summary), 1)
+        self.assertIn("TimeoutExpired", str(summary[0]["error"]))
 
     def test_full_adapter_measured_profile_many_uses_batch_runtime(self) -> None:
         adapter = FullKVAdapter({"max_new_tokens": 4})
@@ -362,7 +567,19 @@ class TailGuardCoreTest(unittest.TestCase):
         class FakeModel:
             def __init__(self):
                 self.generate_calls = []
-                self.config = SimpleNamespace(num_hidden_layers=3)
+                self.config = SimpleNamespace(
+                    num_hidden_layers=3,
+                    model_type="qwen2",
+                    num_attention_heads=2,
+                    num_key_value_heads=1,
+                )
+                self.model = SimpleNamespace(
+                    layers=[
+                        SimpleNamespace(
+                            self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                        )
+                    ]
+                )
 
             def generate(self, **kwargs):
                 self.generate_calls.append(kwargs)
@@ -560,7 +777,25 @@ class TailGuardCoreTest(unittest.TestCase):
             patch.object(
                 qwen2_kv_runtime,
                 "_load_qwen2_model",
-                return_value=(SimpleNamespace(config=SimpleNamespace(num_hidden_layers=3)), FakeTokenizer(), "cuda:0"),
+                return_value=(
+                    SimpleNamespace(
+                        config=SimpleNamespace(
+                            num_hidden_layers=3,
+                            model_type="qwen2",
+                            num_attention_heads=2,
+                            num_key_value_heads=1,
+                        ),
+                        model=SimpleNamespace(
+                            layers=[
+                                SimpleNamespace(
+                                    self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                                )
+                            ]
+                        ),
+                    ),
+                    FakeTokenizer(),
+                    "cuda:0",
+                ),
             ),
             patch.object(qwen2_kv_runtime, "_install_qwen2_attention", side_effect=fake_install_attention),
             patch.object(qwen2_kv_runtime, "build_kivi_cache", return_value=built_cache) as build_cache_mock,
@@ -605,6 +840,21 @@ class TailGuardCoreTest(unittest.TestCase):
 
             def reshape(self, *shape):
                 return FakeTensor(shape)
+
+            def __getitem__(self, item):
+                if not isinstance(item, tuple):
+                    return self
+                shape = list(self.shape)
+                for dim, selector in enumerate(item):
+                    if isinstance(selector, slice):
+                        start = 0 if selector.start is None else selector.start
+                        stop = shape[dim] if selector.stop is None else selector.stop
+                        if start < 0:
+                            start += shape[dim]
+                        if stop < 0:
+                            stop += shape[dim]
+                        shape[dim] = max(0, stop - start)
+                return FakeTensor(tuple(shape))
 
             def __truediv__(self, other):
                 return self
@@ -684,7 +934,7 @@ class TailGuardCoreTest(unittest.TestCase):
             modules,
         )
         cache = KIVICache(2, residual_length=32, group_size=32, k_bits=4, v_bits=4)
-        cache.update(1, qwen2_kv_runtime.KIVILayerState(None, FakeTensor((1, 1, 1, 4)), None, None, None, FakeTensor((1, 1, 1, 4)), None, None, 1))
+        cache.update_quantized(1, qwen2_kv_runtime.KIVILayerState(None, FakeTensor((1, 1, 1, 4)), None, None, None, FakeTensor((1, 1, 1, 4)), None, None, 1))
 
         attn_output, _, past = attention.forward(
             FakeTensor((1, 1, 8)),
@@ -699,6 +949,317 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertIs(cache[1], past[1])
         self.assertEqual(cache.get_seq_length(1), 2)
         self.assertEqual(attn_output.shape, (1, 1, 8))
+
+    def test_qwen2_kivi_attention_rejects_legacy_tuple_cache(self) -> None:
+        class FakeTensor:
+            def __init__(self, shape):
+                self.shape = shape
+                self.device = "cuda:0"
+                self.dtype = "float16"
+
+            def size(self):
+                return self.shape
+
+            def view(self, *shape):
+                return FakeTensor(shape)
+
+            def transpose(self, dim0, dim1):
+                shape = list(self.shape)
+                shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
+                return FakeTensor(tuple(shape))
+
+            def contiguous(self):
+                return self
+
+        class FakeModule:
+            def __call__(self, value):
+                return FakeTensor(value.shape)
+
+        class FakeNN:
+            class Module:
+                def __init__(self):
+                    pass
+
+            functional = SimpleNamespace(softmax=lambda attn_weights, dim=-1, dtype=None: attn_weights)
+
+        source = SimpleNamespace(
+            q_proj=FakeModule(),
+            k_proj=FakeModule(),
+            v_proj=FakeModule(),
+            o_proj=FakeModule(),
+            head_dim=4,
+            rotary_emb=None,
+        )
+        config = SimpleNamespace(hidden_size=8, num_attention_heads=2, num_key_value_heads=1, num_hidden_layers=1)
+        tracker = {"kivi_kernel_calls": 0, "kivi_quantize_calls": 0, "kivi_quantized_layers": 0, "kivi_quantized_tokens": 0}
+        modules = {
+            "torch": object(),
+            "F": object(),
+            "nn": FakeNN(),
+            "repeat_kv": lambda tensor, groups: tensor,
+            "cuda_bmm_fA_qB_outer": lambda *args, **kwargs: None,
+            "triton_quantize_and_pack_along_last_dim": lambda tensor, group_size, bits: (None, None, None),
+            "apply_rotary_pos_emb": lambda q, k, *args: (q, k),
+        }
+        attention = qwen2_kv_runtime.Qwen2KIVIAttention(
+            source,
+            config,
+            0,
+            tracker,
+            4,
+            {"kivi_group_size": 32, "kivi_residual_length": 32},
+            modules,
+        )
+
+        with self.assertRaisesRegex(TypeError, "KIVICache"):
+            attention.forward(
+                FakeTensor((1, 1, 8)),
+                attention_mask=None,
+                position_ids=None,
+                past_key_value=((None, None),),
+                output_attentions=False,
+                use_cache=True,
+            )
+
+    def test_qwen2_kivi_attention_prefill_quantizes_full_prompt_before_residual_tail(self) -> None:
+        class FakeTensor:
+            def __init__(self, shape):
+                self.shape = shape
+                self.device = "cuda:0"
+                self.dtype = "float16"
+
+            def size(self):
+                return self.shape
+
+            def view(self, *shape):
+                return FakeTensor(shape)
+
+            def transpose(self, dim0, dim1):
+                shape = list(self.shape)
+                shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
+                return FakeTensor(tuple(shape))
+
+            def contiguous(self):
+                return self
+
+            def reshape(self, *shape):
+                return FakeTensor(shape)
+
+            def __getitem__(self, item):
+                if not isinstance(item, tuple):
+                    return self
+                shape = list(self.shape)
+                for dim, selector in enumerate(item):
+                    if isinstance(selector, slice):
+                        start = 0 if selector.start is None else selector.start
+                        stop = shape[dim] if selector.stop is None else selector.stop
+                        if start < 0:
+                            start += shape[dim]
+                        if stop < 0:
+                            stop += shape[dim]
+                        shape[dim] = max(0, stop - start)
+                return FakeTensor(tuple(shape))
+
+            def __truediv__(self, other):
+                return self
+
+            def to(self, _dtype):
+                return self
+
+        class FakeModule:
+            def __call__(self, value):
+                return FakeTensor(value.shape)
+
+        class FakeNN:
+            class Module:
+                def __init__(self):
+                    pass
+
+            functional = SimpleNamespace(softmax=lambda attn_weights, dim=-1, dtype=None: attn_weights)
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def device(_device):
+                    class _Context:
+                        def __enter__(self):
+                            return None
+
+                        def __exit__(self, exc_type, exc, tb):
+                            return False
+
+                    return _Context()
+
+            float32 = "float32"
+
+            @staticmethod
+            def matmul(left, right):
+                return FakeTensor((left.shape[0], left.shape[1], left.shape[2], right.shape[3]))
+
+            @staticmethod
+            def cat(tensors, dim=0):
+                shape = list(tensors[0].shape)
+                shape[dim] = sum(t.shape[dim] for t in tensors)
+                return FakeTensor(tuple(shape))
+
+        quant_inputs = {"shapes": []}
+
+        def fake_quant_pack(tensor, group_size, bits):
+            quant_inputs["shapes"].append(tensor.shape)
+            return (
+                FakeTensor((1, 1, 4, 42)),
+                FakeTensor((1, 1, 1, 42)),
+                FakeTensor((1, 1, 1, 42)),
+            )
+
+        source = SimpleNamespace(
+            q_proj=FakeModule(),
+            k_proj=FakeModule(),
+            v_proj=FakeModule(),
+            o_proj=FakeModule(),
+            head_dim=4,
+            rotary_emb=None,
+        )
+        config = SimpleNamespace(hidden_size=8, num_attention_heads=2, num_key_value_heads=1, num_hidden_layers=2)
+        tracker = {"kivi_kernel_calls": 0, "kivi_quantize_calls": 0, "kivi_quantized_layers": 0, "kivi_quantized_tokens": 0}
+        modules = {
+            "torch": FakeTorch(),
+            "F": object(),
+            "nn": FakeNN(),
+            "repeat_kv": lambda tensor, groups: FakeTensor((tensor.shape[0], 2, tensor.shape[2], tensor.shape[3])),
+            "cuda_bmm_fA_qB_outer": lambda *args, **kwargs: FakeTensor((1, 2, 1, 42)),
+            "triton_quantize_and_pack_along_last_dim": fake_quant_pack,
+            "apply_rotary_pos_emb": lambda q, k, *args: (q, k),
+        }
+        attention = qwen2_kv_runtime.Qwen2KIVIAttention(
+            source,
+            config,
+            0,
+            tracker,
+            4,
+            {"kivi_group_size": 32, "kivi_residual_length": 32},
+            modules,
+        )
+
+        attn_output, _, past = attention.forward(
+            FakeTensor((1, 1353, 8)),
+            attention_mask=None,
+            position_ids=None,
+            past_key_value=None,
+            output_attentions=False,
+            use_cache=True,
+        )
+
+        self.assertEqual(quant_inputs["shapes"][0], (1, 1, 4, 1344))
+        self.assertEqual(past[0].key_full.shape, (1, 1, 9, 4))
+        self.assertEqual(past[0].value_full.shape, (1, 1, 32, 4))
+        self.assertEqual(past[0].kv_seq_len, 1353)
+        self.assertEqual(attn_output.shape, (1, 1353, 8))
+
+    def test_qwen2_runtime_batch_stops_after_fatal_cuda_assert(self) -> None:
+        calls = []
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi"}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            calls.append(request["request_id"])
+            if request["request_id"] == "r1":
+                return {
+                    "ok": False,
+                    "measured": False,
+                    "error": "RuntimeError: CUDA error: device-side assert triggered",
+                    "failure_stage": "generate",
+                    "worker_mode": "batch",
+                }
+            raise AssertionError("later requests must not run after fatal CUDA assert")
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "profile": "kivi_4bit_residual32", "prompt": "a"},
+                {"request_id": "r2", "profile": "kivi_4bit_residual32", "prompt": "b"},
+                {"request_id": "r3", "profile": "kivi_4bit_residual32", "prompt": "c"},
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+        ):
+            result = qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertEqual(calls, ["r1"])
+        self.assertEqual(len(result["results"]), 3)
+        self.assertTrue(all("device-side assert triggered" in row["error"] for row in result["results"]))
+
+    def test_prepare_kivi_runtime_rejects_unverified_attention_layout(self) -> None:
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        bad_model = SimpleNamespace(
+            config=SimpleNamespace(
+                num_hidden_layers=2,
+                model_type="unknown_decoder",
+                num_attention_heads=8,
+                num_key_value_heads=2,
+            ),
+            model=SimpleNamespace(layers=[]),
+        )
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(qwen2_kv_runtime, "_load_qwen2_model", return_value=(bad_model, object(), "cuda:0")),
+        ):
+            with self.assertRaisesRegex(ValueError, "unsupported KIVI runtime model"):
+                qwen2_kv_runtime._prepare_kivi_runtime(
+                    {"profile": "kivi_4bit_residual32", "model_name": "/tmp/model"},
+                    worker_start=0.0,
+                )
+
+    def test_prepare_kivi_runtime_accepts_qwen2_layout(self) -> None:
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        qwen2_model = SimpleNamespace(
+            config=SimpleNamespace(
+                num_hidden_layers=2,
+                model_type="qwen2",
+                num_attention_heads=8,
+                num_key_value_heads=2,
+                use_cache=False,
+            ),
+            model=SimpleNamespace(
+                layers=[
+                    SimpleNamespace(
+                        self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                    ),
+                    SimpleNamespace(
+                        self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                    ),
+                ]
+            ),
+        )
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(qwen2_kv_runtime, "_load_qwen2_model", return_value=(qwen2_model, object(), "cuda:0")),
+            patch.object(qwen2_kv_runtime, "_install_qwen2_attention") as install_attention,
+        ):
+            runtime = qwen2_kv_runtime._prepare_kivi_runtime(
+                {"profile": "kivi_4bit_residual32", "model_name": "/tmp/model"},
+                worker_start=0.0,
+            )
+
+        self.assertIs(runtime["model"], qwen2_model)
+        install_attention.assert_called_once()
 
     def test_kivi_failure_message_reports_prompt_tokens(self) -> None:
         error = (
@@ -963,12 +1524,10 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(action.profile, "kivi_2bit")
         self.assertEqual(action.fallback_reason, "点预测阈值通过")
 
-    def test_utility_dynamic_falls_back_from_calibrated_unsafe_and_records_rejected(self) -> None:
+    def test_utility_dynamic_falls_back_to_full_gpu_when_lossy_is_unsafe(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
             _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
-            _measurement("c1", "full_cpu", 0.0, ttft_ms=9.0),
-            _measurement("c2", "full_cpu", 0.0, ttft_ms=10.0),
             _measurement("c1", "kivi_4bit_residual32", 0.5, ttft_ms=1.0),
             _measurement("c2", "kivi_4bit_residual32", 0.5, ttft_ms=1.0),
         ]
@@ -976,24 +1535,22 @@ class TailGuardCoreTest(unittest.TestCase):
             [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 0.0}],
             rows,
             rows,
-            ["full_gpu", "full_cpu", "kivi_4bit_residual32"],
+            ["full_gpu", "kivi_4bit_residual32"],
             0.2,
             0.05,
-            {"full_gpu", "full_cpu"},
+            {"full_gpu"},
             record_rejected_unsafe=True,
         )
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "full_cpu")
+        self.assertEqual(action.profile, "full_gpu")
         self.assertEqual(action.rejected_profile, "kivi_4bit_residual32")
         self.assertIsNotNone(action.rejected_pred_loss)
         self.assertIsNotNone(action.rejected_risk_upper)
 
-    def test_uncalibrated_dynamic_falls_back_from_calibrated_unsafe_and_records_rejected(self) -> None:
+    def test_uncalibrated_dynamic_falls_back_to_full_gpu_when_lossy_is_unsafe(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
             _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
-            _measurement("c1", "recompute", 0.0, ttft_ms=8.0),
-            _measurement("c2", "recompute", 0.0, ttft_ms=9.0),
             _measurement("c1", "kivi_4bit_residual32", 0.5, ttft_ms=1.0),
             _measurement("c2", "kivi_4bit_residual32", 0.5, ttft_ms=1.0),
         ]
@@ -1001,14 +1558,14 @@ class TailGuardCoreTest(unittest.TestCase):
             ["uncalibrated_dynamic"],
             rows,
             rows,
-            ["full_gpu", "recompute", "kivi_4bit_residual32"],
+            ["full_gpu", "kivi_4bit_residual32"],
             0.2,
             0.05,
-            {"full_gpu", "recompute"},
+            {"full_gpu"},
             record_rejected_unsafe=True,
         )
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "recompute")
+        self.assertEqual(action.profile, "full_gpu")
         self.assertEqual(action.rejected_profile, "kivi_4bit_residual32")
 
     def test_vllm_lru_rank_tuple_orders_by_recency_then_block_id(self) -> None:
@@ -1022,22 +1579,20 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_profile_registry_uses_full_kivi_h2o_adapters(self) -> None:
         adapters = build_profile_adapters(
             ["full", "kivi", "h2o"],
-            {"profile_smoke_model": "/tmp/model"},
+            {"pilot_model": "/tmp/model"},
         )
         self.assertEqual([adapter.name for adapter in adapters], ["full", "kivi", "h2o"])
 
-    def test_profile_registry_exposes_parameterized_profile_grid(self) -> None:
+    def test_profile_registry_exposes_full_gpu_kivi_h2o_grid(self) -> None:
         adapters = build_profile_adapters(
             ["full", "kivi", "h2o"],
-            {"profile_smoke_model": "/tmp/model"},
+            {"pilot_model": "/tmp/model"},
         )
         specs = [spec for adapter in adapters for spec in adapter.profiles()]
         self.assertEqual(
             [spec.name for spec in specs],
             [
                 "full_gpu",
-                "full_cpu",
-                "recompute",
                 "kivi_4bit_residual32",
                 "kivi_4bit_residual64",
                 "kivi_2bit_residual32",
@@ -1055,40 +1610,23 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(by_name["h2o_heavy15_recent15"].metadata["h2o_heavy_ratio"], 0.15)
         self.assertEqual(by_name["h2o_heavy15_recent15"].metadata["h2o_recent_ratio"], 0.15)
 
-    def test_recompute_profile_disables_transformers_kv_cache(self) -> None:
-        captured = {}
+    def test_config_runtime_uses_pilot_model_only(self) -> None:
+        runtime = config_runtime({"model": {"pilot_model": "/tmp/pilot"}})
+        self.assertEqual(runtime["pilot_model"], "/tmp/pilot")
+        self.assertNotIn("profile_smoke_model", runtime)
 
-        def fake_run(command, **kwargs):
-            captured["code"] = command[-1]
-            return SimpleNamespace(
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "ok": True,
-                        "output_text": "ok",
-                        "latency_ms": 1.0,
-                        "ttft_ms": 1.0,
-                        "peak_memory_mib": 1.0,
-                        "resident_memory_mib": 1.0,
-                    }
-                ),
-                stderr="",
-            )
+    def test_exact_profiles_defaults_to_full_gpu_only(self) -> None:
+        self.assertEqual(exact_profiles(["full_gpu", "kivi_4bit"]), {"full_gpu"})
 
-        [adapter] = build_profile_adapters(["full"], {"profile_smoke_model": "/tmp/model"})
-        with patch("profiles.base.subprocess.run", side_effect=fake_run):
-            row = adapter.profile(Request("r1", "qa", "prompt"), "recompute", dry_run=False)
+    def test_conformal_guard_default_exact_profiles_is_full_gpu_only(self) -> None:
+        guard = ConformalGuard(epsilon=0.2, delta=0.05, profiles=["full_gpu", "kivi_4bit"], calibration_rows=[])
+        self.assertEqual(guard.exact_profiles, {"full_gpu"})
 
-        self.assertTrue(row.ok)
-        self.assertIn("'use_cache': False", captured["code"])
-
-    def test_pilot_configs_use_formal_profile_grid_and_two_request_scales(self) -> None:
+    def test_pilot_configs_use_full_gpu_only_formal_grid(self) -> None:
         pilot = load_config(Path("configs/pilot.yaml"))
         pilot_50 = load_config(Path("configs/pilot_50.yaml"))
         expected_profiles = [
             "full_gpu",
-            "full_cpu",
-            "recompute",
             "kivi_4bit_residual32",
             "kivi_4bit_residual64",
             "kivi_2bit_residual32",
@@ -1104,13 +1642,12 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(pilot_50["data"]["max_requests"], 50)
         self.assertEqual(pilot["pilot"]["memory_budgets_mib"], [4900, 5000])
         self.assertEqual(pilot_50["pilot"]["memory_budgets_mib"], [4900, 5000])
+        self.assertNotIn("profile_smoke_model", pilot["model"])
+        self.assertNotIn("profile_smoke_model", pilot_50["model"])
         self.assertTrue(pilot["policies"]["record_rejected_unsafe"])
         self.assertTrue(pilot_50["policies"]["record_rejected_unsafe"])
         self.assertEqual(config_policies(pilot), ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"])
-        self.assertEqual(
-            exact_profiles(expected_profiles, pilot),
-            {"full_gpu", "full_cpu", "recompute"},
-        )
+        self.assertEqual(exact_profiles(expected_profiles, pilot), {"full_gpu"})
 
     def test_registry_rejects_structured_static_policy_config_after_cleanup(self) -> None:
         rows = [_measurement("c1", "full_gpu", 0.0)]
@@ -1266,7 +1803,24 @@ class TailGuardCoreTest(unittest.TestCase):
             quality_loss=0.0,
             extra={"task": "qa", "length_bucket": "short", "split": "eval"},
         )
-        with self.assertRaisesRegex(ValueError, "ok=True"):
+        with self.assertRaisesRegex(ValueError, "profile 运行失败"):
+            validate_profile_measurements([row], require_measured=True)
+
+    def test_validate_profile_measurements_requires_measured_for_replay_failure(self) -> None:
+        row = ProfileMeasurement(
+            request_id="r1",
+            profile="full_gpu",
+            adapter="full",
+            ok=True,
+            measured=False,
+            output_text="x",
+            ttft_ms=None,
+            peak_memory_mib=None,
+            quality_loss=None,
+            error="worker timeout",
+            extra={"task": "qa", "length_bucket": "short", "split": "eval"},
+        )
+        with self.assertRaisesRegex(ValueError, "profile 运行失败"):
             validate_profile_measurements([row], require_measured=True)
 
     def test_validate_profile_measurements_rejects_empty_table(self) -> None:
@@ -1321,24 +1875,21 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(row["rejected_risk_upper"], 0.3)
         self.assertEqual(row["candidate_safe_count"], 1.0)
 
-    def test_stats_policy_fastest_exact_uses_calibration_p95_ttft(self) -> None:
+    def test_stats_policy_fastest_exact_uses_full_gpu_when_it_is_the_only_exact(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
             _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
-            _measurement("c1", "full_cpu", 0.0, ttft_ms=10.0),
-            _measurement("c2", "full_cpu", 0.0, ttft_ms=11.0),
-            _measurement("c1", "recompute", 0.0, ttft_ms=20.0),
         ]
         [policy] = build_policies(
             ["utility_dynamic"],
             rows,
             rows,
-            ["full_gpu", "full_cpu", "recompute"],
+            ["full_gpu"],
             0.2,
             0.05,
-            {"full_gpu", "full_cpu", "recompute"},
+            {"full_gpu"},
         )
-        self.assertEqual(policy._fastest_exact_profile(), "full_cpu")
+        self.assertEqual(policy._fastest_exact_profile(), "full_gpu")
 
     def test_build_policies_accepts_record_rejected_unsafe_flag(self) -> None:
         rows = [_measurement("c1", "full_gpu", 0.0)]
@@ -1354,10 +1905,10 @@ class TailGuardCoreTest(unittest.TestCase):
         )
         self.assertTrue(policy.record_rejected_unsafe)
 
-    def test_e0_config_uses_three_reproducible_profiles(self) -> None:
+    def test_e0_config_uses_pilot_model_only(self) -> None:
         config = load_config(Path("configs/e0_reproduce.yaml"))
         self.assertEqual(config_profiles(config), ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"])
-        self.assertEqual(config["model"]["pilot_model"], config["model"]["profile_smoke_model"])
+        self.assertNotIn("profile_smoke_model", config["model"])
         self.assertEqual(config["data"]["requests"], "data/fixtures/e0_reproduce_requests.jsonl")
 
     def test_config_lists_are_required(self) -> None:
@@ -1590,8 +2141,6 @@ class TailGuardCoreTest(unittest.TestCase):
                 profiles,
                 {
                     "full_gpu",
-                    "full_cpu",
-                    "recompute",
                     "kivi_4bit_residual32",
                     "kivi_4bit_residual64",
                     "kivi_2bit_residual32",
@@ -1831,7 +2380,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 summary_rows = list(csv.DictReader(handle))
             self.assertEqual(summary_rows[0]["section"], "experiment")
             self.assertEqual(summary_rows[0]["ok"], "True")
-            self.assertEqual(summary_rows[0]["profile_rows"], "10")
+            self.assertEqual(summary_rows[0]["profile_rows"], "8")
             self.assertEqual(summary_rows[0]["policy_rows"], "5")
             full_lru = next(row for row in summary_rows if row["section"] == "policy" and row["name"] == "full_lru")
             self.assertEqual(full_lru["p95_ttft_ms"], "1.0")
@@ -2126,7 +2675,8 @@ class TailGuardCoreTest(unittest.TestCase):
             with summary_path.open("r", encoding="utf-8", newline="") as handle:
                 summary_rows = list(csv.DictReader(handle))
             self.assertEqual(summary_rows[0]["ok"], "False")
-            self.assertIn("measured=True", summary_rows[0]["error"])
+            self.assertIn("profile 运行失败", summary_rows[0]["error"])
+            self.assertIn("measured=False", summary_rows[0]["error"])
             self.assertNotIn("step", summary_rows[0])
             policy_mock.assert_not_called()
 
@@ -2207,7 +2757,8 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertEqual(stream.getvalue(), "")
             with summary_path.open("r", encoding="utf-8", newline="") as handle:
                 summary_rows = list(csv.DictReader(handle))
-            self.assertIn("measured=True", summary_rows[0]["error"])
+            self.assertIn("profile 运行失败", summary_rows[0]["error"])
+            self.assertIn("measured=False", summary_rows[0]["error"])
             policies.assert_not_called()
 
     def test_run_policies_rejects_dry_run_replay_by_default(self) -> None:
@@ -2447,24 +2998,22 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_with_quality_uses_full_gpu_baseline_only(self) -> None:
         rows = [
             ProfileMeasurement("r1", "full_gpu", "full", True, True, output_text="alpha beta", extra={"task": "qa", "reference": "alpha beta"}),
-            ProfileMeasurement("r1", "full_cpu", "full", True, True, output_text="different exact", extra={"task": "qa", "reference": "alpha beta"}),
             ProfileMeasurement("r1", "kivi_4bit_residual32", "kivi", True, True, output_text="alpha", extra={"task": "qa", "reference": "alpha beta"}),
         ]
-        updated = with_quality(rows, {"full_gpu", "full_cpu", "recompute"})
+        updated = with_quality(rows, {"full_gpu"})
         by_profile = {row.profile: row for row in updated}
         self.assertEqual(by_profile["full_gpu"].quality_loss, 0.0)
-        self.assertEqual(by_profile["full_cpu"].quality_loss, 0.0)
         self.assertLess(by_profile["kivi_4bit_residual32"].quality_loss, 1.0)
 
     def test_with_quality_requires_full_gpu_for_lossy_quality(self) -> None:
         rows = [
-            ProfileMeasurement("r1", "full_cpu", "full", True, True, output_text="alpha beta", extra={"task": "qa"}),
+            ProfileMeasurement("r1", "full_gpu", "full", True, True, output_text="alpha beta", extra={"task": "qa"}),
             ProfileMeasurement("r1", "kivi_4bit_residual32", "kivi", True, True, output_text="alpha", extra={"task": "qa"}),
         ]
-        updated = with_quality(rows, {"full_gpu", "full_cpu", "recompute"})
+        updated = with_quality(rows, {"full_gpu"})
         by_profile = {row.profile: row for row in updated}
-        self.assertEqual(by_profile["full_cpu"].quality_loss, 0.0)
-        self.assertIsNone(by_profile["kivi_4bit_residual32"].quality_loss)
+        self.assertEqual(by_profile["full_gpu"].quality_loss, 0.0)
+        self.assertIsNotNone(by_profile["kivi_4bit_residual32"].quality_loss)
 
     def test_quality_metrics_tolerate_none_but_compute_missing_as_full_loss(self) -> None:
         self.assertEqual(normalized_exact_match_loss(None, ""), 0.0)

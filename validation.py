@@ -56,14 +56,17 @@ def validate_profile_measurements(
                 missing.append("length_bucket")
             if not measurement.extra.get("split"):
                 missing.append("split")
-        if require_measured and not measurement.measured:
-            missing.append("measured=True")
-        if require_measured and not measurement.ok:
-            missing.append("ok=True")
         if missing:
             raise ValueError(
                 f"profile 表第 {index} 行字段不完整，缺少 {missing}: "
                 f"request={measurement.request_id} profile={measurement.profile} path={path}"
+            )
+        if require_measured and (not measurement.measured or not measurement.ok):
+            raise ValueError(
+                "profile 运行失败: "
+                f"request={measurement.request_id} profile={measurement.profile} "
+                f"measured={measurement.measured} ok={measurement.ok} "
+                f"error={measurement.error or ''} path={path}"
             )
     if required_profiles:
         expected = set(required_profiles)

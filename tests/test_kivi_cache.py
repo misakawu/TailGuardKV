@@ -32,11 +32,29 @@ class KIVICacheTest(unittest.TestCase):
             v_bits=4,
         )
 
-        cache.update(1, KIVILayerState(None, None, None, None, None, None, None, None, 17))
+        cache.update_quantized(1, KIVILayerState(None, None, None, None, None, None, None, None, 17))
 
         self.assertEqual(len(cache), 3)
         self.assertEqual(cache.get_seq_length(1), 17)
         self.assertEqual(cache.get_seq_length(0), 0)
+
+    def test_kivi_cache_exposes_transformers_cache_contract(self) -> None:
+        cache = KIVICache(
+            2,
+            residual_length=32,
+            group_size=32,
+            k_bits=4,
+            v_bits=4,
+        )
+
+        key_states = object()
+        value_states = object()
+        returned = cache.update(key_states, value_states, layer_idx=1)
+
+        self.assertEqual(returned, (key_states, value_states))
+        self.assertEqual(cache.get_seq_length(1), 0)
+        self.assertIsNone(cache.get_max_length())
+        self.assertEqual(cache.get_usable_length(5, layer_idx=1), 0)
 
     def test_kivi_cache_reorder_cache_reorders_tensor_fields(self) -> None:
         cache = KIVICache(
@@ -46,7 +64,7 @@ class KIVICacheTest(unittest.TestCase):
             k_bits=4,
             v_bits=4,
         )
-        cache.update(
+        cache.update_quantized(
             0,
             KIVILayerState(
                 key_q=FakeTensor(["k0", "k1"]),
