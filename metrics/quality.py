@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 
 
@@ -71,11 +73,13 @@ def _has_text(text: str | None) -> bool:
 
 
 def _normalize_text(text: str | None) -> str:
-    return (text or "").strip()
+    return " ".join(_tokenize(text))
 
 
 def _tokenize(text: str | None) -> list[str]:
-    return [token for token in _normalize_text(text).lower().split() if token]
+    normalized = unicodedata.normalize("NFKC", text or "").lower()
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return re.findall(r"\w+", normalized, flags=re.UNICODE)
 
 
 def _overlap_count(candidate_tokens: Iterable[str], reference_tokens: Iterable[str]) -> int:

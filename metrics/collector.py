@@ -65,6 +65,7 @@ class MetricCollector:
             drift_states: Counter[str] = Counter()
             safe_count = 0
             fallback_count = 0
+            exact_fallback_count = 0
             unsafe_action_count = 0
             violation_count = 0
             known_count = 0
@@ -115,6 +116,8 @@ class MetricCollector:
                     fallback_count += 1
                 if row.action_profile in exact_profiles:
                     exact_count += 1
+                    if row.fallback_reason:
+                        exact_fallback_count += 1
                 actions[row.action_profile] += 1
                 group_key = (
                     row.task or "unknown",
@@ -145,7 +148,8 @@ class MetricCollector:
                 "risk_upper_mean": _mean(risk_uppers),
                 "safe_ratio": safe_count / len(rows) if rows else float("nan"),
                 "fallback_ratio": fallback_count / len(rows) if rows else float("nan"),
-                "exact_fallback_ratio": exact_count / len(rows) if rows else float("nan"),
+                "exact_fallback_ratio": exact_fallback_count / len(rows) if rows else float("nan"),
+                "exact_action_ratio": exact_count / len(rows) if rows else float("nan"),
                 "lossy_action_ratio": (len(rows) - exact_count) / len(rows) if rows else float("nan"),
                 "unique_action_count": float(len(actions)),
                 "identical_to_full_lru": bool(rows and all(row.action_profile == "full_gpu" for row in rows)),

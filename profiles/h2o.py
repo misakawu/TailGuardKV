@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Sequence
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, qwen2_kv_profile_measurement, run_conda_probe
-from core_types import ProfileSpec, Request, SmokeResult
+from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from profiles.base import (
+    ProfileAdapter,
+    dry_profile_measurement,
+    qwen2_kv_profile_many_measurements,
+    qwen2_kv_profile_measurement,
+    run_conda_probe,
+)
 
 
 class H2OAdapter(ProfileAdapter):
@@ -74,3 +81,27 @@ class H2OAdapter(ProfileAdapter):
         scale = max(request.prompt_chars, 1)
         heavy_ratio = float(spec.metadata["h2o_heavy_ratio"])
         return dry_profile_measurement(self.name, request, spec, scale * (0.07 + heavy_ratio * 0.05), scale * (0.7 + heavy_ratio) / 1024.0)
+
+    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+        if dry_run:
+            return super().profile_many(requests, profile_name, dry_run=dry_run)
+        spec = self.get_profile(profile_name)
+        rows = qwen2_kv_profile_many_measurements(
+            self.name,
+            self.env,
+            requests,
+            spec,
+            self.runtime_config,
+            extra={
+                "family": spec.family,
+                "h2o_heavy_ratio": spec.metadata.get("h2o_heavy_ratio", ""),
+                "h2o_recent_ratio": spec.metadata.get("h2o_recent_ratio", ""),
+            },
+        )
+        repaired = []
+        for row in rows:
+            if not row.ok:
+                repaired.append(replace(row, error=f"H2O proof/runtime failed ({profile_name}): {row.error or ''}"))
+            else:
+                repaired.append(row)
+        return repaired

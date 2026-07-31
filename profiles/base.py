@@ -7,6 +7,7 @@ import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 
@@ -129,6 +130,110 @@ def dry_profile_measurement(
     )
 
 
+def transformers_profile_many_measurements(
+    adapter: str,
+    env_name: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    *,
+    timeout_s: int | None = None,
+    pythonpath: Sequence[str] = (),
+    extra: dict[str, object] | None = None,
+) -> list[ProfileMeasurement]:
+    request_list = list(requests)
+    if not request_list:
+        return []
+    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    if not model_name:
+        return _missing_model_measurements(
+            adapter,
+            request_list,
+            spec,
+            "未配置 model.profile_smoke_model 或 model.pilot_model，无法执行真实 transformers profile。",
+            {"backend": "transformers", **(extra or {})},
+        )
+    payload = {
+        "requests": [_transformers_payload(request, spec, runtime_config, model_name) for request in request_list],
+    }
+    proc, result, error = _run_runtime_batch(
+        env_name,
+        "profiles.transformers_runtime",
+        "TRANSFORMERS_PROFILE_PAYLOAD",
+        payload,
+        timeout_s=timeout_s or int(runtime_config.get("timeout_s", 180)),
+        pythonpath=pythonpath,
+    )
+    if error is not None:
+        return _worker_failure_measurements(
+            adapter,
+            request_list,
+            spec,
+            error,
+            {"backend": "transformers", "model": model_name, **(extra or {})},
+        )
+    return _measurements_from_batch_result(
+        adapter,
+        request_list,
+        spec,
+        proc,
+        result,
+        default_extra={"backend": "transformers", "model": model_name, **(extra or {})},
+    )
+
+
+def qwen2_kv_profile_many_measurements(
+    adapter: str,
+    env_name: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    *,
+    timeout_s: int | None = None,
+    pythonpath: Sequence[str] = (),
+    extra: dict[str, object] | None = None,
+) -> list[ProfileMeasurement]:
+    request_list = list(requests)
+    if not request_list:
+        return []
+    model_name = str(runtime_config.get("pilot_model") or runtime_config.get("profile_smoke_model") or "")
+    if not model_name:
+        return _missing_model_measurements(
+            adapter,
+            request_list,
+            spec,
+            "未配置 model.profile_smoke_model 或 model.pilot_model，无法执行 Qwen2 KV runtime。",
+            {"backend": "qwen2_kv_runtime", "env": env_name, **(extra or {})},
+        )
+    payload = {
+        "requests": [_qwen2_payload(request, spec, runtime_config, model_name) for request in request_list],
+    }
+    proc, result, error = _run_runtime_batch(
+        env_name,
+        "profiles.qwen2_kv_runtime",
+        "QWEN2_KV_PAYLOAD",
+        payload,
+        timeout_s=timeout_s or int(runtime_config.get("timeout_s", 180)),
+        pythonpath=pythonpath,
+    )
+    if error is not None:
+        return _worker_failure_measurements(
+            adapter,
+            request_list,
+            spec,
+            error,
+            {"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
+        )
+    return _measurements_from_batch_result(
+        adapter,
+        request_list,
+        spec,
+        proc,
+        result,
+        default_extra={"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
+    )
+
+
 def transformers_profile_measurement(
     adapter: str,
     env_name: str,
@@ -151,15 +256,7 @@ def transformers_profile_measurement(
             extra={"backend": "transformers", "unsupported": "true", **(extra or {})},
         )
 
-    payload = {
-        "model_name": model_name,
-        "prompt": request.prompt,
-        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
-        "cache_dir": runtime_config.get("model_cache_dir"),
-        "local_files_only": bool(runtime_config.get("local_files_only", True)),
-        "device_mode": spec.metadata.get("device_mode", "auto"),
-        "use_cache": bool(spec.metadata.get("use_cache", True)),
-    }
+    payload = _transformers_payload(request, spec, runtime_config, model_name)
     code = _transformers_profile_code(payload)
     env = os.environ.copy()
     if pythonpath:
@@ -257,19 +354,7 @@ def qwen2_kv_profile_measurement(
             extra={"backend": "qwen2_kv_runtime", "env": env_name, "unsupported": "true", **(extra or {})},
         )
 
-    payload = {
-        "profile": spec.name,
-        "model_name": model_name,
-        "prompt": request.prompt,
-        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
-        "cache_dir": runtime_config.get("model_cache_dir"),
-        "local_files_only": bool(runtime_config.get("local_files_only", True)),
-        "bits": spec.metadata.get("bits"),
-        "kivi_group_size": int(spec.metadata.get("kivi_group_size", runtime_config.get("kivi_group_size", 32))),
-        "kivi_residual_length": int(spec.metadata.get("kivi_residual_length", runtime_config.get("kivi_residual_length", 32))),
-        "h2o_heavy_ratio": float(spec.metadata.get("h2o_heavy_ratio", runtime_config.get("h2o_heavy_ratio", 0.1))),
-        "h2o_recent_ratio": float(spec.metadata.get("h2o_recent_ratio", runtime_config.get("h2o_recent_ratio", 0.1))),
-    }
+    payload = _qwen2_payload(request, spec, runtime_config, model_name)
     env = os.environ.copy()
     repo_root = str(Path(__file__).resolve().parents[1])
     python_paths = [repo_root]
@@ -354,6 +439,239 @@ def qwen2_kv_profile_measurement(
         resident_memory_mib=_optional_float(result.get("resident_memory_mib")),
         extra=result_extra,
     )
+
+
+def _transformers_payload(
+    request: Request,
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    model_name: str,
+) -> dict[str, object]:
+    return {
+        "profile": spec.name,
+        "model_name": model_name,
+        "prompt": request.prompt,
+        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
+        "cache_dir": runtime_config.get("model_cache_dir"),
+        "local_files_only": bool(runtime_config.get("local_files_only", True)),
+        "device_mode": spec.metadata.get("device_mode", "auto"),
+        "use_cache": bool(spec.metadata.get("use_cache", True)),
+    }
+
+
+def _qwen2_payload(
+    request: Request,
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    model_name: str,
+) -> dict[str, object]:
+    return {
+        "profile": spec.name,
+        "model_name": model_name,
+        "prompt": request.prompt,
+        "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
+        "cache_dir": runtime_config.get("model_cache_dir"),
+        "local_files_only": bool(runtime_config.get("local_files_only", True)),
+        "bits": spec.metadata.get("bits"),
+        "kivi_group_size": int(spec.metadata.get("kivi_group_size", runtime_config.get("kivi_group_size", 32))),
+        "kivi_residual_length": int(spec.metadata.get("kivi_residual_length", runtime_config.get("kivi_residual_length", 32))),
+        "h2o_heavy_ratio": float(spec.metadata.get("h2o_heavy_ratio", runtime_config.get("h2o_heavy_ratio", 0.1))),
+        "h2o_recent_ratio": float(spec.metadata.get("h2o_recent_ratio", runtime_config.get("h2o_recent_ratio", 0.1))),
+    }
+
+
+def _run_runtime_batch(
+    env_name: str,
+    module_name: str,
+    payload_env_key: str,
+    payload: dict[str, object],
+    *,
+    timeout_s: int,
+    pythonpath: Sequence[str] = (),
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, object] | None, str | None]:
+    env = os.environ.copy()
+    repo_root = str(Path(__file__).resolve().parents[1])
+    path_parts = [repo_root, *[os.path.abspath(path) for path in pythonpath]]
+    if env.get("PYTHONPATH"):
+        path_parts.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(path_parts)
+    env[payload_env_key] = json.dumps(payload, ensure_ascii=False)
+    command = ["conda", "run", "-n", env_name, "python", "-m", module_name]
+    try:
+        proc = subprocess.run(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except Exception as exc:
+        return None, None, f"{module_name} 启动失败: {type(exc).__name__}: {exc}"
+    output = proc.stdout.strip()
+    if not output:
+        if proc.returncode == 0:
+            return proc, None, f"{module_name} 未输出 JSON 结果"
+        return proc, None, (proc.stderr or proc.stdout).strip()[-1200:]
+    try:
+        return proc, json.loads(output.splitlines()[-1]), None
+    except Exception as exc:
+        return proc, None, f"无法解析 {module_name} 输出: {exc}; stderr={(proc.stderr or '')[-800:]}; stdout={proc.stdout[-800:]}"
+
+
+def _measurements_from_batch_result(
+    adapter: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    proc: subprocess.CompletedProcess[str] | None,
+    result: dict[str, object] | None,
+    *,
+    default_extra: dict[str, object],
+) -> list[ProfileMeasurement]:
+    if proc is None or result is None:
+        return _worker_failure_measurements(adapter, requests, spec, "worker did not return a JSON result", default_extra)
+    items = result.get("results")
+    if items is None and len(requests) == 1:
+        items = [result]
+    if not isinstance(items, list) or len(items) != len(requests):
+        detail = (proc.stderr or proc.stdout).strip()[-1200:] if proc.returncode != 0 else ""
+        error = f"worker result count mismatch: expected {len(requests)}, got {0 if not isinstance(items, list) else len(items)}"
+        if detail:
+            error = f"{error}; {detail}"
+        return _worker_failure_measurements(adapter, requests, spec, error, default_extra)
+    worker = result.get("worker") if isinstance(result, dict) else None
+    worker_mode = str(worker.get("mode") or "") if isinstance(worker, dict) else ""
+    rows = []
+    for request, item in zip(requests, items, strict=True):
+        if not isinstance(item, dict):
+            rows.append(
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    profile=spec.name,
+                    adapter=adapter,
+                    ok=False,
+                    measured=False,
+                    error=f"worker returned invalid item: {item!r}",
+                    extra={**default_extra, "worker_mode": worker_mode, "unsupported": "true"},
+                )
+            )
+            continue
+        row = _measurement_from_result(
+            adapter,
+            request,
+            spec,
+            item,
+            default_extra=default_extra,
+            worker_mode=worker_mode,
+        )
+        if proc.returncode != 0 and row.ok:
+            row = ProfileMeasurement(
+                request_id=row.request_id,
+                profile=row.profile,
+                adapter=row.adapter,
+                ok=False,
+                measured=False,
+                output_text=row.output_text,
+                error=(proc.stderr or proc.stdout).strip()[-1200:] or row.error or "worker returned non-zero status",
+                latency_ms=row.latency_ms,
+                ttft_ms=row.ttft_ms,
+                peak_memory_mib=row.peak_memory_mib,
+                resident_memory_mib=row.resident_memory_mib,
+                quality_score=row.quality_score,
+                quality_loss=row.quality_loss,
+                extra={**row.extra, "returncode": proc.returncode, "unsupported": "true"},
+            )
+        rows.append(row)
+    return rows
+
+
+def _measurement_from_result(
+    adapter: str,
+    request: Request,
+    spec: ProfileSpec,
+    item: dict[str, object],
+    *,
+    default_extra: dict[str, object],
+    worker_mode: str,
+) -> ProfileMeasurement:
+    ok = bool(item.get("ok"))
+    measured = ok and bool(item.get("measured", ok))
+    result_extra = dict(default_extra)
+    standard_keys = {
+        "ok",
+        "measured",
+        "output_text",
+        "error",
+        "latency_ms",
+        "ttft_ms",
+        "peak_memory_mib",
+        "resident_memory_mib",
+    }
+    for key, value in item.items():
+        if key in standard_keys:
+            continue
+        result_extra[key] = value
+    if worker_mode and "worker_mode" not in result_extra:
+        result_extra["worker_mode"] = worker_mode
+    if not measured:
+        result_extra.setdefault("unsupported", "true")
+    return ProfileMeasurement(
+        request_id=request.request_id,
+        profile=spec.name,
+        adapter=adapter,
+        ok=ok,
+        measured=measured,
+        output_text=str(item.get("output_text") or ""),
+        error=None if ok else str(item.get("error") or ""),
+        latency_ms=_optional_float(item.get("latency_ms")),
+        ttft_ms=_optional_float(item.get("ttft_ms")),
+        peak_memory_mib=_optional_float(item.get("peak_memory_mib")),
+        resident_memory_mib=_optional_float(item.get("resident_memory_mib")),
+        extra=result_extra,
+    )
+
+
+def _missing_model_measurements(
+    adapter: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    error: str,
+    extra: dict[str, object],
+) -> list[ProfileMeasurement]:
+    return [
+        ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=error,
+            extra={**extra, "unsupported": "true"},
+        )
+        for request in requests
+    ]
+
+
+def _worker_failure_measurements(
+    adapter: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    error: str,
+    extra: dict[str, object],
+) -> list[ProfileMeasurement]:
+    return [
+        ProfileMeasurement(
+            request_id=request.request_id,
+            profile=spec.name,
+            adapter=adapter,
+            ok=False,
+            measured=False,
+            error=error,
+            extra={**extra, "unsupported": "true"},
+        )
+        for request in requests
+    ]
 
 
 def _transformers_profile_code(payload: dict[str, object]) -> str:
