@@ -29,7 +29,10 @@ class KIVICache(Cache):
         self.group_size = int(group_size)
         self.k_bits = int(k_bits)
         self.v_bits = int(v_bits)
-        self.layers: list[KIVILayerState | None] = [None] * int(num_hidden_layers)
+        layer_count = int(num_hidden_layers)
+        self.layers: list[KIVILayerState | None] = [None] * layer_count
+        self.key_cache: list[Any | None] = [None] * layer_count
+        self.value_cache: list[Any | None] = [None] * layer_count
 
     def __len__(self) -> int:
         return len(self.layers)
@@ -41,12 +44,29 @@ class KIVICache(Cache):
         state = self.layers[layer_idx]
         return int(state.kv_seq_len) if state is not None else 0
 
-    def update(self, layer_idx: int, state: KIVILayerState, *args: Any, **kwargs: Any) -> KIVICache:
+    def get_max_length(self) -> None:
+        return None
+
+    def get_usable_length(self, new_seq_length: int, layer_idx: int = 0) -> int:
+        del new_seq_length
+        return self.get_seq_length(layer_idx)
+
+    def update(self, key_states: Any, value_states: Any, layer_idx: int, cache_kwargs: dict[str, Any] | None = None) -> tuple[Any, Any]:
+        del cache_kwargs
+        self.key_cache[layer_idx] = key_states
+        self.value_cache[layer_idx] = value_states
+        return key_states, value_states
+
+    def update_quantized(self, layer_idx: int, state: KIVILayerState) -> KIVICache:
         self.layers[layer_idx] = state
+        self.key_cache[layer_idx] = state.key_full
+        self.value_cache[layer_idx] = state.value_full
         return self
 
     def reorder_cache(self, beam_idx: Any) -> KIVICache:
         for layer_idx, state in enumerate(self.layers):
+            self.key_cache[layer_idx] = _reorder_tensor_like(self.key_cache[layer_idx], beam_idx)
+            self.value_cache[layer_idx] = _reorder_tensor_like(self.value_cache[layer_idx], beam_idx)
             if state is None:
                 continue
             self.layers[layer_idx] = KIVILayerState(

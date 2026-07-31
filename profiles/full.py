@@ -20,8 +20,6 @@ class FullKVAdapter(ProfileAdapter):
     def profiles(self) -> tuple[ProfileSpec, ...]:
         return (
             ProfileSpec("full_gpu", self.name, self.env, lossy=False, exact=True),
-            ProfileSpec("full_cpu", self.name, self.env, lossy=False, exact=True, metadata={"device_mode": "cpu"}),
-            ProfileSpec("recompute", self.name, self.env, lossy=False, exact=True, metadata={"use_cache": False}),
         )
 
     def smoke(self, timeout_s: int = 120) -> SmokeResult:

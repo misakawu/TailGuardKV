@@ -25,11 +25,11 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 conda run -n tailguardkv-base python run_profile_test.py --config configs/pilot_50.yaml
 ```
 
-`configs/pilot_50.yaml` 是快速 measured gate，使用与 `configs/pilot.yaml` 相同的 10-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
+`configs/pilot_50.yaml` 是快速 measured gate，使用与 `configs/pilot.yaml` 相同的 8-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
 
 正式 profile grid 为：
 
-- exact: `full_gpu`, `full_cpu`, `recompute`
+- exact: `full_gpu`
 - KIVI: `kivi_4bit_residual32`, `kivi_4bit_residual64`, `kivi_2bit_residual32`, `kivi_2bit_residual64`
 - H2O: `h2o_heavy10_recent10`, `h2o_heavy15_recent15`, `h2o_heavy20_recent20`
 
@@ -78,8 +78,6 @@ policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`u
 
 Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile CSV 只保留此前成功 chunk，失败 chunk 会写入同目录 sidecar 诊断表 `<profile_stem>_failed_chunks.csv`，并在 summary 的 `diagnostic_output`、`failures` 列暴露失败位置和 error，便于复跑定位。
 
-当前 `full_cpu` 内存口径不在本轮修复内；RSS/GPU/CPU resident memory 的一致口径需要后续单独确认。
-
 `policies.record_rejected_unsafe: true` 会让 `utility_dynamic` 和 `uncalibrated_dynamic` 在 calibrated unsafe lossy 动作上强制回退到校准集 p95 TTFT 最低的 exact profile，并在 policy CSV 写入 `rejected_profile`、`rejected_pred_loss`、`rejected_risk_upper`。关闭该记录开关时仍会强制回退，但 rejected 字段保持为空。配套 summary 中：
 
 - `fallback_ratio` 统计所有带 `fallback_reason` 的动作比例
@@ -115,8 +113,7 @@ conda run -n tailguardkv-base python run_run_policies.py --config configs/e0_rep
 
 ## Pilot 资产准备
 
-Pilot 默认使用 `/DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct`，profile
-smoke 使用 `/DATACENTER3/zhenxiang.wang/resource/TinyLlama-1.1B-Chat-v1.0`。请求数据由
+Pilot measured profiles 默认使用 `/DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct`。请求数据由
 LongBench QA/长上下文任务和 XSum 摘要任务组成：LongBench `qasper` 当前取到 200 条，
 XSum validation 取到 300 条，均按原始顺序取有效样本：
 
