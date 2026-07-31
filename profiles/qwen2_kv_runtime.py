@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from profiles.kivi_cache import KIVICache, KIVILayerState, build_kivi_cache
+
 
 def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
     """Run a Qwen2 KV-cache profile in a subprocess with heavyweight imports delayed."""
@@ -25,10 +27,38 @@ def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
         return _failure(payload, f"{type(exc).__name__}: {str(exc)[:1200]}\n{traceback.format_exc()[-3000:]}")
 
 
+def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    requests = list(payload.get("requests") or [])
+    if not requests:
+        return {"ok": True, "results": [], "worker": {"mode": "batch"}}
+
+    profiles = {str(request.get("profile") or "") for request in requests}
+    if len(requests) == 1 or len(profiles) != 1:
+        results = [run_profile(request) for request in requests]
+        return {"ok": all(item.get("ok") for item in results), "results": results, "worker": {"mode": "batch"}}
+
+    worker_start = time.perf_counter()
+    profile = next(iter(profiles))
+    try:
+        if profile.startswith("kivi_"):
+            results = _run_kivi_profile_batch(requests, worker_start)
+        elif profile.startswith("h2o_heavy"):
+            results = _run_h2o_profile_batch(requests, worker_start)
+        else:
+            results = [_failure(request, f"unsupported Qwen2 KV profile: {profile}") for request in requests]
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {str(exc)[:1200]}\n{traceback.format_exc()[-3000:]}"
+        results = [_failure(request, error) for request in requests]
+    return {"ok": all(item.get("ok") for item in results), "results": results, "worker": {"mode": "batch"}}
+
+
 def main() -> int:
     payload_text = sys.stdin.read().strip() or os.environ.get("QWEN2_KV_PAYLOAD", "")
     payload = json.loads(payload_text)
-    result = run_profile(payload)
+    if isinstance(payload, dict) and "requests" in payload:
+        result = run_profile_batch(payload)
+    else:
+        result = run_profile(payload)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result.get("ok") else 1
 
@@ -49,15 +79,50 @@ def _kivi_proof_error(
 
 
 def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    runtime = _prepare_kivi_runtime(payload, worker_start=time.perf_counter())
+    return _run_kivi_request(runtime, payload, worker_mode="single")
+
+
+def _run_h2o_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    runtime = _prepare_h2o_runtime(payload, worker_start=time.perf_counter())
+    return _run_h2o_request(runtime, payload, worker_mode="single")
+
+
+def _run_kivi_profile_batch(requests: list[dict[str, Any]], worker_start: float) -> list[dict[str, Any]]:
+    runtime = _prepare_kivi_runtime(requests[0], worker_start=worker_start)
+    results = []
+    for index, request in enumerate(requests):
+        result = _run_kivi_request(runtime, request, worker_mode="batch")
+        results.append(result)
+        if _is_oom_result(result):
+            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+            break
+    return results
+
+
+def _run_h2o_profile_batch(requests: list[dict[str, Any]], worker_start: float) -> list[dict[str, Any]]:
+    runtime = _prepare_h2o_runtime(requests[0], worker_start=worker_start)
+    results = []
+    for index, request in enumerate(requests):
+        result = _run_h2o_request(runtime, request, worker_mode="batch")
+        results.append(result)
+        if _is_oom_result(result):
+            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+            break
+    return results
+
+
+def _prepare_kivi_runtime(payload: dict[str, Any], *, worker_start: float) -> dict[str, Any]:
     modules = _import_runtime_modules(use_kivi=True)
     torch = modules["torch"]
     _require_cuda(torch)
 
+    startup_ms = (time.perf_counter() - worker_start) * 1000
+    load_start = time.perf_counter()
     model, tokenizer, device = _load_qwen2_model(payload, torch, modules["AutoModelForCausalLM"], modules["AutoTokenizer"])
-    prompt_tokens = int(tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")["input_ids"].shape[-1])
-    max_new_tokens = int(payload.get("max_new_tokens") or 16)
-    residual_length = int(payload.get("kivi_residual_length") or 32)
+    model_load_ms = (time.perf_counter() - load_start) * 1000
     bits = int(payload.get("bits") or (2 if str(payload.get("profile")) == "kivi_2bit" else 4))
+    residual_length = int(payload.get("kivi_residual_length") or 32)
     tracker = {
         "kivi_kernel_calls": 0,
         "kivi_quantize_calls": 0,
@@ -65,7 +130,90 @@ def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
         "kivi_quantized_tokens": 0,
     }
     _install_qwen2_attention(model, Qwen2KIVIAttention, tracker, bits=bits, payload=payload, modules=modules)
-    result = _greedy_decode(model, tokenizer, device, payload, torch)
+    return {
+        "modules": modules,
+        "torch": torch,
+        "model": model,
+        "tokenizer": tokenizer,
+        "device": device,
+        "startup_ms": startup_ms,
+        "model_load_ms": model_load_ms,
+        "bits": bits,
+        "residual_length": residual_length,
+        "tracker": tracker,
+    }
+
+
+def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dict[str, Any]:
+    modules = _import_runtime_modules(use_kivi=False)
+    torch = modules["torch"]
+    _require_cuda(torch)
+
+    startup_ms = (time.perf_counter() - worker_start) * 1000
+    load_start = time.perf_counter()
+    model, tokenizer, device = _load_qwen2_model(payload, torch, modules["AutoModelForCausalLM"], modules["AutoTokenizer"])
+    model_load_ms = (time.perf_counter() - load_start) * 1000
+    tracker = {
+        "h2o_prune_events": 0,
+        "h2o_mask_events": 0,
+        "h2o_cache_budget": 0,
+        "h2o_kept_tokens": 0,
+        "h2o_prompt_tokens": 0,
+    }
+    initial_sizes = _h2o_sizes(tokenizer, payload)
+    _install_qwen2_attention(
+        model,
+        Qwen2H2OAttention,
+        tracker,
+        bits=0,
+        payload={**payload, "h2o_heavy_size": initial_sizes["heavy_size"], "h2o_recent_size": initial_sizes["recent_size"]},
+        modules=modules,
+    )
+    return {
+        "modules": modules,
+        "torch": torch,
+        "model": model,
+        "tokenizer": tokenizer,
+        "device": device,
+        "startup_ms": startup_ms,
+        "model_load_ms": model_load_ms,
+        "tracker": tracker,
+    }
+
+
+def _run_kivi_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
+    tracker = runtime["tracker"]
+    if worker_mode == "batch":
+        tracker.update({
+            "kivi_kernel_calls": 0,
+            "kivi_quantize_calls": 0,
+            "kivi_quantized_layers": 0,
+            "kivi_quantized_tokens": 0,
+        })
+    tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
+    prompt_tokens = int(tokenized["input_ids"].shape[-1])
+    max_new_tokens = int(payload.get("max_new_tokens") or 16)
+    residual_length = int(runtime["residual_length"])
+    bits = int(runtime["bits"])
+    cache = build_kivi_cache(
+        runtime["model"].config,
+        residual_length=residual_length,
+        group_size=int(payload.get("kivi_group_size") or 32),
+        k_bits=bits,
+        v_bits=bits,
+    )
+    result = _invoke_generate_decode(
+        runtime["model"],
+        runtime["tokenizer"],
+        runtime["device"],
+        payload,
+        runtime["torch"],
+        past_key_values=cache,
+        tokenized_inputs=tokenized,
+        stage_startup_ms=float(runtime["startup_ms"]),
+        stage_model_load_ms=float(runtime["model_load_ms"]),
+        worker_mode=worker_mode,
+    )
     result.update(tracker)
     result.update(
         {
@@ -77,7 +225,7 @@ def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
             "max_new_tokens": max_new_tokens,
         }
     )
-    if tracker["kivi_quantized_layers"] <= 0 or tracker["kivi_kernel_calls"] <= 0:
+    if result.get("ok") and (tracker["kivi_quantized_layers"] <= 0 or tracker["kivi_kernel_calls"] <= 0):
         result["ok"] = False
         result["measured"] = False
         result["error"] = _kivi_proof_error(
@@ -87,55 +235,96 @@ def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
             quantized_layers=tracker["kivi_quantized_layers"],
             kernel_calls=tracker["kivi_kernel_calls"],
         )
+        result["failure_stage"] = "generate"
     return result
 
 
-def _run_h2o_profile(payload: dict[str, Any]) -> dict[str, Any]:
-    modules = _import_runtime_modules(use_kivi=False)
-    torch = modules["torch"]
-    _require_cuda(torch)
-
-    model, tokenizer, device = _load_qwen2_model(payload, torch, modules["AutoModelForCausalLM"], modules["AutoTokenizer"])
-    prompt_tokens = int(tokenizer(payload["prompt"], return_tensors="pt")["input_ids"].shape[-1])
-    heavy_ratio = float(payload.get("h2o_heavy_ratio") or 0.1)
-    recent_ratio = float(payload.get("h2o_recent_ratio") or 0.1)
-    heavy_size = max(1, int(prompt_tokens * heavy_ratio))
-    recent_size = max(1, int(prompt_tokens * recent_ratio))
-    tracker = {
-        "h2o_prune_events": 0,
-        "h2o_mask_events": 0,
-        "h2o_cache_budget": heavy_size + recent_size,
-        "h2o_kept_tokens": 0,
-        "h2o_prompt_tokens": prompt_tokens,
-    }
-    _install_qwen2_attention(
-        model,
-        Qwen2H2OAttention,
-        tracker,
-        bits=0,
-        payload={**payload, "h2o_heavy_size": heavy_size, "h2o_recent_size": recent_size},
-        modules=modules,
+def _run_h2o_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
+    tracker = runtime["tracker"]
+    sizes = _h2o_sizes(runtime["tokenizer"], payload)
+    if worker_mode == "batch":
+        tracker.update(
+            {
+                "h2o_prune_events": 0,
+                "h2o_mask_events": 0,
+                "h2o_cache_budget": sizes["heavy_size"] + sizes["recent_size"],
+                "h2o_kept_tokens": 0,
+                "h2o_prompt_tokens": sizes["prompt_tokens"],
+            }
+        )
+    _reset_h2o_attention(runtime["model"], tracker, sizes["heavy_size"], sizes["recent_size"])
+    result = _invoke_generate_decode(
+        runtime["model"],
+        runtime["tokenizer"],
+        runtime["device"],
+        payload,
+        runtime["torch"],
+        stage_startup_ms=float(runtime["startup_ms"]),
+        stage_model_load_ms=float(runtime["model_load_ms"]),
+        worker_mode=worker_mode,
     )
-    result = _greedy_decode(model, tokenizer, device, payload, torch)
     result.update(tracker)
     result.update(
         {
             "backend": "qwen2_h2o",
-            "h2o_heavy_ratio": heavy_ratio,
-            "h2o_recent_ratio": recent_ratio,
-            "h2o_heavy_size": heavy_size,
-            "h2o_recent_size": recent_size,
+            "h2o_heavy_ratio": float(payload.get("h2o_heavy_ratio") or 0.1),
+            "h2o_recent_ratio": float(payload.get("h2o_recent_ratio") or 0.1),
+            "h2o_heavy_size": sizes["heavy_size"],
+            "h2o_recent_size": sizes["recent_size"],
         }
     )
-    if prompt_tokens <= tracker["h2o_cache_budget"] or tracker["h2o_prune_events"] <= 0:
+    if result.get("ok") and (sizes["prompt_tokens"] <= tracker["h2o_cache_budget"] or tracker["h2o_prune_events"] <= 0):
         result["ok"] = False
         result["measured"] = False
         result["error"] = (
             "H2O proof missing: request did not exceed heavy-hitter cache budget or no prune event ran. "
-            f"prompt_tokens={prompt_tokens} budget={tracker['h2o_cache_budget']} "
+            f"prompt_tokens={sizes['prompt_tokens']} budget={tracker['h2o_cache_budget']} "
             f"prune_events={tracker['h2o_prune_events']}"
         )
+        result["failure_stage"] = "generate"
     return result
+
+
+def _h2o_sizes(tokenizer: Any, payload: dict[str, Any]) -> dict[str, int]:
+    prompt_tokens = int(tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")["input_ids"].shape[-1])
+    heavy_ratio = float(payload.get("h2o_heavy_ratio") or 0.1)
+    recent_ratio = float(payload.get("h2o_recent_ratio") or 0.1)
+    heavy_size = max(1, int(prompt_tokens * heavy_ratio))
+    recent_size = max(1, int(prompt_tokens * recent_ratio))
+    return {"prompt_tokens": prompt_tokens, "heavy_size": heavy_size, "recent_size": recent_size}
+
+
+def _reset_h2o_attention(model: Any, tracker: dict[str, int], heavy_size: int, recent_size: int) -> None:
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if layers is None:
+        return
+    for layer in layers:
+        attention = layer.self_attn
+        attention.tracker = tracker
+        attention.hh_size = heavy_size
+        attention.recent_size = recent_size
+        attention.cache_budget = heavy_size + recent_size
+        attention.hh_score = None
+
+
+def _invoke_generate_decode(model: Any, tokenizer: Any, device: Any, payload: dict[str, Any], torch: Any, **kwargs: Any) -> dict[str, Any]:
+    try:
+        return _generate_decode(model, tokenizer, device, payload, torch, **kwargs)
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        fallback_kwargs = {}
+        if "past_key_values" in kwargs:
+            fallback_kwargs["past_key_values"] = kwargs["past_key_values"]
+        return _generate_decode(model, tokenizer, device, payload, torch, **fallback_kwargs)
+
+
+def _clone_failure_result(result: dict[str, Any]) -> dict[str, Any]:
+    return dict(result)
+
+
+def _is_oom_result(result: dict[str, Any]) -> bool:
+    return not bool(result.get("ok")) and "out of memory" in str(result.get("error") or "").lower()
 
 
 def _import_runtime_modules(use_kivi: bool) -> dict[str, Any]:
@@ -251,6 +440,152 @@ def _greedy_decode(model: Any, tokenizer: Any, device: Any, payload: dict[str, A
     }
 
 
+def _generate_decode(
+    model: Any,
+    tokenizer: Any,
+    device: Any,
+    payload: dict[str, Any],
+    torch: Any,
+    past_key_values: Any = None,
+    tokenized_inputs: Any = None,
+    stage_startup_ms: float = 0.0,
+    stage_model_load_ms: float = 0.0,
+    worker_mode: str = "single",
+) -> dict[str, Any]:
+    stage_tokenize_ms = 0.0
+    stage_transfer_ms = 0.0
+    stage_generate_ms = 0.0
+    stage_decode_ms = 0.0
+    request_start = time.perf_counter()
+
+    try:
+        tokenize_start = time.perf_counter()
+        inputs = tokenized_inputs or tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")
+        prompt_len = int(inputs["input_ids"].shape[-1])
+        if tokenized_inputs is None:
+            stage_tokenize_ms = (time.perf_counter() - tokenize_start) * 1000
+        max_new_tokens = int(payload.get("max_new_tokens") or 16)
+    except Exception as exc:
+        return _failure(
+            payload,
+            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            failure_stage="tokenize",
+            stage_startup_ms=stage_startup_ms,
+            stage_model_load_ms=stage_model_load_ms,
+            stage_tokenize_ms=stage_tokenize_ms,
+            stage_total_ms=(time.perf_counter() - request_start) * 1000,
+            worker_mode=worker_mode,
+        )
+
+    try:
+        transfer_start = time.perf_counter()
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize(device)
+        stage_transfer_ms = (time.perf_counter() - transfer_start) * 1000
+    except Exception as exc:
+        return _failure(
+            payload,
+            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            failure_stage="transfer",
+            stage_startup_ms=stage_startup_ms,
+            stage_model_load_ms=stage_model_load_ms,
+            stage_tokenize_ms=stage_tokenize_ms,
+            stage_transfer_ms=stage_transfer_ms,
+            stage_total_ms=(time.perf_counter() - request_start) * 1000,
+            worker_mode=worker_mode,
+        )
+
+    try:
+        generate_start = time.perf_counter()
+        with torch.inference_mode():
+            generate_kwargs = {
+                **inputs,
+                "max_new_tokens": max_new_tokens,
+                "do_sample": False,
+                "use_cache": True,
+                "return_dict_in_generate": True,
+            }
+            if past_key_values is not None:
+                generate_kwargs["past_key_values"] = past_key_values
+            generated = model.generate(**generate_kwargs)
+        torch.cuda.synchronize(device)
+        stage_generate_ms = (time.perf_counter() - generate_start) * 1000
+    except Exception as exc:
+        return _failure(
+            payload,
+            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            failure_stage="generate",
+            stage_startup_ms=stage_startup_ms,
+            stage_model_load_ms=stage_model_load_ms,
+            stage_tokenize_ms=stage_tokenize_ms,
+            stage_transfer_ms=stage_transfer_ms,
+            stage_generate_ms=(time.perf_counter() - generate_start) * 1000,
+            stage_total_ms=(time.perf_counter() - request_start) * 1000,
+            worker_mode=worker_mode,
+        )
+
+    try:
+        decode_start = time.perf_counter()
+        sequences = generated.sequences if hasattr(generated, "sequences") else generated
+        output_ids = _sequence_suffix(sequences, prompt_len)
+        output_text = tokenizer.decode(output_ids, skip_special_tokens=True)
+        if not output_text:
+            output_text = " ".join(str(token) for token in output_ids)
+        stage_decode_ms = (time.perf_counter() - decode_start) * 1000
+    except Exception as exc:
+        return _failure(
+            payload,
+            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            failure_stage="decode",
+            stage_startup_ms=stage_startup_ms,
+            stage_model_load_ms=stage_model_load_ms,
+            stage_tokenize_ms=stage_tokenize_ms,
+            stage_transfer_ms=stage_transfer_ms,
+            stage_generate_ms=stage_generate_ms,
+            stage_decode_ms=stage_decode_ms,
+            stage_total_ms=(time.perf_counter() - request_start) * 1000,
+            worker_mode=worker_mode,
+        )
+
+    total_ms = (time.perf_counter() - request_start) * 1000
+    return {
+        "ok": True,
+        "measured": True,
+        "output_text": output_text,
+        "latency_ms": total_ms,
+        "ttft_ms": total_ms,
+        "peak_memory_mib": torch.cuda.max_memory_allocated(device) / 1024 / 1024,
+        "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        "stage_startup_ms": stage_startup_ms,
+        "stage_model_load_ms": stage_model_load_ms,
+        "stage_tokenize_ms": stage_tokenize_ms,
+        "stage_transfer_ms": stage_transfer_ms,
+        "stage_generate_ms": stage_generate_ms,
+        "stage_decode_ms": stage_decode_ms,
+        "stage_total_ms": total_ms,
+        "worker_mode": worker_mode,
+    }
+
+
+def _sequence_suffix(sequences: Any, prompt_len: int) -> list[int]:
+    first = sequences[0] if hasattr(sequences, "__getitem__") else sequences
+    tokens = _token_list(first)
+    return tokens[prompt_len:]
+
+
+def _token_list(values: Any) -> list[int]:
+    if hasattr(values, "detach"):
+        values = values.detach()
+    if hasattr(values, "cpu"):
+        values = values.cpu()
+    if hasattr(values, "tolist"):
+        values = values.tolist()
+    if isinstance(values, tuple):
+        values = list(values)
+    return [int(token) for token in values]
+
+
 def _manual_qwen2_forward(
     model: Any,
     input_ids: Any,
@@ -310,9 +645,11 @@ def _manual_causal_mask(hidden_states: Any, attention_mask: Any, past_len: int, 
     return causal_mask
 
 
-def _past_length(past_key_values: tuple[Any, ...] | None) -> int:
+def _past_length(past_key_values: Any) -> int:
     if not past_key_values:
         return 0
+    if hasattr(past_key_values, "get_seq_length"):
+        return int(past_key_values.get_seq_length())
     first = past_key_values[0]
     if first is None:
         return 0
@@ -361,12 +698,25 @@ class Qwen2KIVIAttention:
                 query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
                 key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
                 value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-                past_key_value = _cache_to_legacy(past_key_value, self.layer_idx)
-                kv_seq_len = key_states.shape[-2] + (past_key_value[-1] if past_key_value is not None else 0)
+                layer_state = None
+                if isinstance(past_key_value, KIVICache):
+                    layer_state = past_key_value[self.layer_idx]
+                elif past_key_value is not None:
+                    legacy = _cache_to_legacy(past_key_value, self.layer_idx)
+                    if legacy is not None:
+                        layer_state = KIVILayerState(*legacy)
+                kv_seq_len = key_states.shape[-2] + (int(layer_state.kv_seq_len) if layer_state is not None else 0)
                 query_states, key_states = _apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, modules)
 
-                if past_key_value is not None:
-                    key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, _ = past_key_value
+                if layer_state is not None:
+                    key_q = layer_state.key_q
+                    key_full = layer_state.key_full
+                    key_scale = layer_state.key_scale
+                    key_mn = layer_state.key_mn
+                    value_q = layer_state.value_q
+                    value_full = layer_state.value_full
+                    value_scale = layer_state.value_scale
+                    value_mn = layer_state.value_mn
                     if key_q is not None:
                         with torch.cuda.device(query_states.device):
                             attn_q = cuda_bmm(self.group_size, query_states, key_q, key_scale, key_mn, self.k_bits)
@@ -433,7 +783,30 @@ class Qwen2KIVIAttention:
                     attn_weights = _mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
                     attn_output = torch.matmul(attn_weights, repeat_kv(value_states, self.num_key_value_groups))
 
-                past = (key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn, kv_seq_len) if use_cache else None
+                past = None
+                if use_cache:
+                    state = KIVILayerState(
+                        key_q=key_q,
+                        key_full=key_full,
+                        key_scale=key_scale,
+                        key_mn=key_mn,
+                        value_q=value_q,
+                        value_full=value_full,
+                        value_scale=value_scale,
+                        value_mn=value_mn,
+                        kv_seq_len=int(kv_seq_len),
+                    )
+                    if isinstance(past_key_value, KIVICache):
+                        past = past_key_value.update(self.layer_idx, state)
+                    else:
+                        cache = KIVICache(
+                            self.config.num_hidden_layers,
+                            residual_length=self.residual_length,
+                            group_size=self.group_size,
+                            k_bits=self.k_bits,
+                            v_bits=self.v_bits,
+                        )
+                        past = cache.update(self.layer_idx, state)
                 attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
                 attn_output = self.o_proj(attn_output)
                 return attn_output, (attn_weights if output_attentions else None), past
@@ -584,13 +957,35 @@ def _require_cuda(torch: Any) -> None:
         raise RuntimeError("CUDA is required for true Qwen2 KIVI/H2O profile execution")
 
 
-def _failure(payload: dict[str, Any], error: str) -> dict[str, Any]:
+def _failure(
+    payload: dict[str, Any],
+    error: str,
+    *,
+    failure_stage: str = "worker",
+    stage_startup_ms: float = 0.0,
+    stage_model_load_ms: float = 0.0,
+    stage_tokenize_ms: float = 0.0,
+    stage_transfer_ms: float = 0.0,
+    stage_generate_ms: float = 0.0,
+    stage_decode_ms: float = 0.0,
+    stage_total_ms: float = 0.0,
+    worker_mode: str = "single",
+) -> dict[str, Any]:
     return {
         "ok": False,
         "measured": False,
         "error": error,
         "backend": "qwen2_kv_runtime",
         "profile": payload.get("profile", ""),
+        "failure_stage": failure_stage,
+        "stage_startup_ms": stage_startup_ms,
+        "stage_model_load_ms": stage_model_load_ms,
+        "stage_tokenize_ms": stage_tokenize_ms,
+        "stage_transfer_ms": stage_transfer_ms,
+        "stage_generate_ms": stage_generate_ms,
+        "stage_decode_ms": stage_decode_ms,
+        "stage_total_ms": stage_total_ms,
+        "worker_mode": worker_mode,
     }
 
 

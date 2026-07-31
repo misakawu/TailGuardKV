@@ -43,7 +43,7 @@ policies:
 pilot:
   epsilons: [0.05, 0.10]
   deltas: [0.05, 0.10]
-  memory_budgets_mib: [6144, 8192]
+  memory_budgets_mib: [4900, 5000]
 
 data:
   requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl

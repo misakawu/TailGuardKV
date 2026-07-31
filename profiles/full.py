@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Sequence
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe, transformers_profile_measurement
 from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from profiles.base import (
+    ProfileAdapter,
+    dry_profile_measurement,
+    run_conda_probe,
+    transformers_profile_many_measurements,
+    transformers_profile_measurement,
+)
 
 
 class FullKVAdapter(ProfileAdapter):
@@ -49,3 +56,23 @@ class FullKVAdapter(ProfileAdapter):
             return row
         scale = max(request.prompt_chars, 1)
         return dry_profile_measurement(self.name, request, spec, scale * 0.08, scale * 2.0 / 1024.0)
+
+    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+        if dry_run:
+            return super().profile_many(requests, profile_name, dry_run=dry_run)
+        spec = self.get_profile(profile_name)
+        rows = transformers_profile_many_measurements(
+            self.name,
+            self.env,
+            requests,
+            spec,
+            self.runtime_config,
+            extra={"family": spec.family, "profile_note": "full/exact transformers smoke"},
+        )
+        repaired = []
+        for row in rows:
+            if not row.ok:
+                repaired.append(replace(row, error=f"full transformers profile failed ({profile_name}): {row.error or ''}"))
+            else:
+                repaired.append(row)
+        return repaired

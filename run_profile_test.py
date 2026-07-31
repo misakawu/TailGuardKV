@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import argparse
+import io
+import json
+from contextlib import redirect_stdout
+from pathlib import Path
+from typing import Any, Callable
+
+from experiment_common import config_profiles, load_config, read_measurements, validate_profile_measurements
+from experiment_summary import summary_rows, write_summary
+from run_build_profile_table import build_profile_table
+from run_cli_common import run_command
+from run_run_policies import run_policies
+
+
+DEFAULT_PROFILE_OUTPUT = "out/profile_tables/smoke_profiles.csv"
+
+
+def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        code = int(func(args))
+    raw_output = stream.getvalue().strip()
+    if not raw_output:
+        return code, {}
+    try:
+        return code, json.loads(raw_output)
+    except json.JSONDecodeError:
+        return code, {"raw_stdout": raw_output}
+
+
+def _derive_summary_output(profile_output: str) -> str:
+    path = Path(profile_output)
+    return str(path.with_name(f"{path.stem}_summary.csv"))
+
+
+def _resolve_outputs(args: argparse.Namespace, config: dict[str, Any]) -> tuple[str, str]:
+    outputs = config.get("outputs", {})
+    outputs = outputs if isinstance(outputs, dict) else {}
+    profile_output = str(args.output or outputs.get("smoke_profiles") or DEFAULT_PROFILE_OUTPUT)
+    summary_output = str(
+        args.summary_output
+        or outputs.get("smoke_profile_summary")
+        or _derive_summary_output(profile_output)
+    )
+    return profile_output, summary_output
+
+
+def _write_payload(payload: dict[str, Any], summary_output: str) -> None:
+    write_summary(payload, summary_output)
+
+
+def run_profile_test(args: argparse.Namespace) -> int:
+    config_path = getattr(args, "config", "configs/pilot.yaml")
+    fallback_profile_output = str(getattr(args, "output", "") or DEFAULT_PROFILE_OUTPUT)
+    fallback_summary_output = str(getattr(args, "summary_output", "") or _derive_summary_output(fallback_profile_output))
+    try:
+        config = load_config(Path(config_path))
+        profiles = config_profiles(config)
+        profile_output, summary_output = _resolve_outputs(args, config)
+    except (FileNotFoundError, ValueError) as exc:
+        payload = {
+            "ok": False,
+            "return_code": 2,
+            "step": "load_config",
+            "error": str(exc),
+            "config": config_path,
+        }
+        _write_payload(payload, fallback_summary_output)
+        return 2
+
+    profile_args = argparse.Namespace(
+        config=config_path,
+        adapters=args.adapters,
+        output=profile_output,
+        import_measurements="",
+        dry_run=args.dry_run,
+    )
+    profile_code, profile_payload = _run_stage(build_profile_table, profile_args)
+    if profile_code != 0:
+        payload = {
+            "ok": False,
+            "return_code": profile_code,
+            "step": "build_profile_table",
+            "config": config_path,
+            "diagnostic_output": profile_payload.get("diagnostic_output"),
+            "failures": profile_payload.get("failures"),
+            "profile": profile_payload,
+        }
+        _write_payload(payload, summary_output)
+        return profile_code
+
+    try:
+        measurements = read_measurements(Path(profile_output))
+        validate_profile_measurements(
+            measurements,
+            profile_output,
+            required_profiles=profiles,
+            require_measured=not args.dry_run,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        payload = {
+            "ok": False,
+            "return_code": 2,
+            "step": "validate_profile_table",
+            "error": str(exc),
+            "config": config_path,
+            "diagnostic_output": profile_payload.get("diagnostic_output"),
+            "failures": profile_payload.get("failures"),
+            "profile": profile_payload,
+        }
+        _write_payload(payload, summary_output)
+        return 2
+
+    payload = {
+        "ok": True,
+        "return_code": 0,
+        "step": "complete",
+        "config": config_path,
+        "rows": {
+            "profiles": profile_payload.get("rows", len(measurements)),
+        },
+        "profile": profile_payload,
+    }
+    _write_payload(payload, summary_output)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="TailGuardKV profile-only measured runner.")
+    parser.add_argument("--config", default="configs/pilot.yaml")
+    parser.add_argument("--adapters", nargs="+")
+    parser.add_argument("--output", default="")
+    parser.add_argument("--summary-output", default="")
+    parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=False)
+    return parser
+
+
+def main() -> int:
+    return run_command(run_profile_test, build_parser().parse_args())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

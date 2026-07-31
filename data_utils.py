@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections import deque
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -103,7 +104,34 @@ def limit_requests_by_split(requests: list[Request], max_requests: int) -> list[
         return requests[:max_requests]
     calibration_limit = max_requests // 2
     evaluation_limit = max_requests - calibration_limit
-    return calibration[:calibration_limit] + evaluation[:evaluation_limit]
+    return _limit_requests_for_split(calibration, calibration_limit) + _limit_requests_for_split(evaluation, evaluation_limit)
+
+
+def _limit_requests_for_split(requests: list[Request], limit: int) -> list[Request]:
+    if limit <= 0 or len(requests) <= limit:
+        return requests[:limit] if limit > 0 else []
+    groups: dict[tuple[str, str], list[Request]] = {}
+    for request in requests:
+        key = (request.task, str(request.metadata.get("length_bucket", length_bucket(request.prompt_chars))))
+        groups.setdefault(key, []).append(request)
+    if len(groups) < 2:
+        return requests[:limit]
+    queues = [deque(group) for group in groups.values()]
+    selected: list[Request] = []
+    while len(selected) < limit and any(queue for queue in queues):
+        progressed = False
+        for queue in queues:
+            if not queue:
+                continue
+            selected.append(queue.popleft())
+            progressed = True
+            if len(selected) >= limit:
+                break
+        if not progressed:
+            break
+    if len(selected) < limit:
+        return requests[:limit]
+    return selected
 
 
 def requests_from_measurements(measurements: list[ProfileMeasurement]) -> list[Request]:
@@ -152,6 +180,7 @@ def annotate_measurement(measurement: ProfileMeasurement, request: Request, fall
             "task": request.task,
             "length_bucket": request.metadata.get("length_bucket", length_bucket(request.prompt_chars)),
             "builtin_request_fallback": str(fallback_requests).lower(),
+            "reference": request.reference or "",
         },
     )
 
@@ -201,9 +230,14 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
         if baseline is None:
             updated.append(replace(row, quality_loss=None, quality_score=None))
             continue
-        reference = baseline.output_text
         task = str(row.extra.get("task") or baseline.extra.get("task") or "unknown")
-        loss, metrics = compute_quality_loss(task, row.output_text, None if reference is None else str(reference))
+        reference = str(row.extra.get("reference") or baseline.extra.get("reference") or "").strip()
+        if reference:
+            baseline_loss, _ = compute_quality_loss(task, baseline.output_text, reference)
+            candidate_loss, metrics = compute_quality_loss(task, row.output_text, reference)
+            loss = max(0.0, min(1.0, candidate_loss - baseline_loss))
+        else:
+            loss, metrics = compute_quality_loss(task, row.output_text, baseline.output_text)
         updated.append(
             replace(
                 row,

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Sequence
 
-from profiles.base import ProfileAdapter, dry_profile_measurement, qwen2_kv_profile_measurement, run_conda_probe
-from core_types import ProfileSpec, Request, SmokeResult
+from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from profiles.base import (
+    ProfileAdapter,
+    dry_profile_measurement,
+    qwen2_kv_profile_many_measurements,
+    qwen2_kv_profile_measurement,
+    run_conda_probe,
+)
 
 
 class KIVIAdapter(ProfileAdapter):
@@ -64,3 +71,27 @@ class KIVIAdapter(ProfileAdapter):
             scale * latency_factor,
             scale * memory_factor / 1024.0,
         )
+
+    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+        if dry_run:
+            return super().profile_many(requests, profile_name, dry_run=dry_run)
+        spec = self.get_profile(profile_name)
+        rows = qwen2_kv_profile_many_measurements(
+            self.name,
+            self.env,
+            requests,
+            spec,
+            self.runtime_config,
+            extra={
+                "family": spec.family,
+                "bits": spec.metadata.get("bits", ""),
+                "kivi_residual_length": spec.metadata.get("kivi_residual_length", ""),
+            },
+        )
+        repaired = []
+        for row in rows:
+            if not row.ok:
+                repaired.append(replace(row, error=f"KIVI proof/runtime failed ({profile_name}): {row.error or ''}"))
+            else:
+                repaired.append(row)
+        return repaired

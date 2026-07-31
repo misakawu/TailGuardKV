@@ -13,10 +13,15 @@ from __future__ import annotations
 #    python3 run_build_profile_table.py --config configs/pilot.yaml --dry-run --output /tmp/tailguardkv_profiles.csv
 #    python3 run_run_policies.py --config configs/pilot.yaml --measurements /tmp/tailguardkv_profiles.csv --output /tmp/tailguardkv_policy.csv --allow-dry-run-replay
 # 6. 单个 policy 组合复跑:
-#    python3 run_run_policies.py --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output /tmp/tailguardkv_policy_eps0p05_delta0p05_mem6144.csv --epsilon 0.05 --delta 0.05 --memory-budget-mib 6144
+#    python3 run_run_policies.py --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output /tmp/tailguardkv_policy_eps0p05_delta0p05_mem4900.csv --epsilon 0.05 --delta 0.05 --memory-budget-mib 4900
+# 7. nohup + conda 后台跑完整实验:
+#    mkdir -p out/logs && nohup conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml > out/logs/pilot_measured.nohup.log 2>&1 < /dev/null & echo $! > out/logs/pilot_measured.pid
+# 8. 查看后台实验状态和日志:
+#    cat out/logs/pilot_measured.pid && ps -fp "$(cat out/logs/pilot_measured.pid)" && tail -n 120 out/logs/pilot_measured.nohup.log
+# 9. 停止后台实验:
+#    kill "$(cat out/logs/pilot_measured.pid)"
 
 import argparse
-import csv
 import io
 import json
 from contextlib import redirect_stdout
@@ -25,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from experiment_common import config_policies, config_profiles, json_ready, load_config, read_measurements, validate_profile_measurements
+from experiment_summary import summary_rows, write_summary
 from run_build_profile_table import build_profile_table
 from run_cli_common import first_number
 from run_run_policies import run_policies
@@ -34,46 +40,6 @@ PILOT_CONFIG = "configs/pilot.yaml"
 PILOT_PROFILE_OUTPUT = "out/profile_tables/pilot_smoke_measured_profiles.csv"
 PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
 PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
-
-SUMMARY_KEY_COLUMNS = [
-    "section",
-    "name",
-    "ok",
-    "error",
-    "diagnostic_output",
-    "failures",
-    "config",
-    "profile_rows",
-    "policy_rows",
-    "epsilon",
-    "delta",
-    "memory_budget_mib",
-    "count",
-    "ok_count",
-    "measured_count",
-    "mean_ttft_ms",
-    "p95_ttft_ms",
-    "p99_ttft_ms",
-    "mean_peak_memory_mib",
-    "p95_peak_memory_mib",
-    "mean_quality_loss",
-    "p95_quality_loss",
-    "p99_quality_loss",
-    "cvar_quality_loss",
-    "violation_rate",
-    "delta_slack",
-    "worst_group_violation",
-    "safe_ratio",
-    "fallback_ratio",
-    "exact_fallback_ratio",
-    "lossy_action_ratio",
-    "unique_action_count",
-    "identical_to_full_lru",
-    "unsafe_action_count",
-    "candidate_safe_count",
-    "action_distribution",
-]
-
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     stream = io.StringIO()
@@ -86,33 +52,6 @@ def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespa
         return code, json.loads(raw_output)
     except json.JSONDecodeError:
         return code, {"raw_stdout": raw_output}
-
-
-def _csv_value(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
-        return json.dumps(json_ready(value), ensure_ascii=False, sort_keys=True)
-    return json_ready(value)
-
-
-def _summary_error(payload: dict[str, Any]) -> Any:
-    if payload.get("error"):
-        return payload.get("error")
-    policy_runs = payload.get("policy_runs")
-    sections = ("profile",) if isinstance(policy_runs, list) else ("profile", "policy")
-    for section in sections:
-        nested = payload.get(section)
-        if isinstance(nested, dict) and nested.get("error"):
-            return nested.get("error")
-    if isinstance(policy_runs, list):
-        for policy_run in policy_runs:
-            if not isinstance(policy_run, dict):
-                continue
-            run_payload = policy_run.get("payload")
-            if isinstance(run_payload, dict) and run_payload.get("error"):
-                return run_payload.get("error")
-    return ""
-
-
 def _number_list(value: Any, *, default: float, name: str) -> list[float]:
     if value is None:
         return [default]
@@ -157,86 +96,12 @@ def _policy_output_for_sweep(base_output: str, sweep: dict[str, float], sweep_co
         f"_mem{_slug_number(sweep['memory_budget_mib'])}"
     )
     return str(path.with_name(f"{path.stem}_{suffix}{path.suffix}"))
+def _print_and_write(payload: dict[str, Any]) -> None:
+    write_summary(payload, str(payload.get("summary_output") or PILOT_SUMMARY_OUTPUT))
 
 
 def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = [
-        {
-            "section": "experiment",
-            "name": "pilot-smoke-measured",
-            "ok": payload.get("ok"),
-            "error": _summary_error(payload),
-            "diagnostic_output": payload.get("diagnostic_output", ""),
-            "failures": payload.get("failures", ""),
-            "config": payload.get("config"),
-            "profile_rows": (payload.get("rows") or {}).get("profiles") if isinstance(payload.get("rows"), dict) else "",
-            "policy_rows": (payload.get("rows") or {}).get("policy") if isinstance(payload.get("rows"), dict) else "",
-            "epsilon": payload.get("epsilon"),
-            "delta": payload.get("delta"),
-            "memory_budget_mib": payload.get("memory_budget_mib"),
-        }
-    ]
-    policy_runs = payload.get("policy_runs")
-    sections = ("profile",) if isinstance(policy_runs, list) else ("profile", "policy")
-    for section in sections:
-        section_payload = payload.get(section)
-        if not isinstance(section_payload, dict):
-            continue
-        summary = section_payload.get("summary")
-        if not isinstance(summary, dict):
-            continue
-        for name, metrics in summary.items():
-            row = {
-                "section": section,
-                "name": name,
-                "ok": payload.get("ok"),
-                "config": payload.get("config"),
-                "epsilon": payload.get("epsilon"),
-                "delta": payload.get("delta"),
-                "memory_budget_mib": payload.get("memory_budget_mib"),
-            }
-            if isinstance(metrics, dict):
-                row.update(metrics)
-            rows.append(row)
-    if isinstance(policy_runs, list):
-        for policy_run in policy_runs:
-            if not isinstance(policy_run, dict):
-                continue
-            run_payload = policy_run.get("payload")
-            if not isinstance(run_payload, dict):
-                continue
-            summary = run_payload.get("summary")
-            if not isinstance(summary, dict):
-                continue
-            for name, metrics in summary.items():
-                row = {
-                    "section": "policy",
-                    "name": name,
-                    "ok": policy_run.get("ok"),
-                    "config": payload.get("config"),
-                    "epsilon": policy_run.get("epsilon"),
-                    "delta": policy_run.get("delta"),
-                    "memory_budget_mib": policy_run.get("memory_budget_mib"),
-                }
-                if isinstance(metrics, dict):
-                    row.update(metrics)
-                rows.append(row)
-    return rows
-
-
-def _write_summary(payload: dict[str, Any]) -> None:
-    path = Path(str(payload.get("summary_output") or PILOT_SUMMARY_OUTPUT))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rows = _summary_rows(payload)
-    fieldnames = SUMMARY_KEY_COLUMNS + sorted({key for row in rows for key in row}.difference(SUMMARY_KEY_COLUMNS))
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows({key: _csv_value(value) for key, value in row.items()} for row in rows)
-
-
-def _print_and_write(payload: dict[str, Any]) -> None:
-    _write_summary(payload)
+    return summary_rows(payload)
 
 
 def pilot_smoke_measured(args: argparse.Namespace) -> int:
