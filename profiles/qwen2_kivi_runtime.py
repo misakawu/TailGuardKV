@@ -120,17 +120,13 @@ def run_kivi_request(
             "max_new_tokens": max_new_tokens,
         }
     )
-    if result.get("ok") and (tracker["kivi_quantized_layers"] <= 0 or tracker["kivi_kernel_calls"] <= 0):
-        result["ok"] = False
-        result["measured"] = False
-        result["error"] = kivi_proof_error(
-            prompt_tokens=prompt_tokens,
-            max_new_tokens=max_new_tokens,
-            residual_length=residual_length,
-            quantized_layers=tracker["kivi_quantized_layers"],
-            kernel_calls=tracker["kivi_kernel_calls"],
-        )
-        result["failure_stage"] = "generate"
+    quantization_triggered = tracker["kivi_quantized_layers"] > 0 and tracker["kivi_kernel_calls"] > 0
+    result.update(
+        {
+            "kivi_quantization_triggered": quantization_triggered,
+            "kivi_effective_mode": "quantized" if quantization_triggered else "unquantized_short_request",
+        }
+    )
     return result
 
 

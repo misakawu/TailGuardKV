@@ -535,6 +535,63 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertIn("extra_stage_total_ms", text)
 
+    def test_measurement_from_result_preserves_kivi_quantization_flags(self) -> None:
+        request = Request("r1", "summary", "prompt", metadata={"split": "calibration"})
+        spec = ProfileSpec("kivi_4bit_residual64", "kivi", "edgekv-kivi", lossy=True)
+
+        row = profiles_base._measurement_from_result(
+            "kivi",
+            request,
+            spec,
+            {
+                "ok": True,
+                "measured": True,
+                "output_text": "ok",
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "resident_memory_mib": 3.0,
+                "kivi_quantization_triggered": False,
+                "kivi_effective_mode": "unquantized_short_request",
+            },
+            default_extra={"env": "edgekv-kivi"},
+            worker_mode="batch",
+        )
+
+        self.assertEqual(row.extra["kivi_quantization_triggered"], False)
+        self.assertEqual(row.extra["kivi_effective_mode"], "unquantized_short_request")
+
+    def test_append_profile_rows_keeps_kivi_quantization_columns(self) -> None:
+        row = ProfileMeasurement(
+            request_id="r1",
+            profile="kivi_4bit_residual64",
+            adapter="kivi",
+            ok=True,
+            measured=True,
+            output_text="ok",
+            latency_ms=1.0,
+            ttft_ms=1.0,
+            peak_memory_mib=2.0,
+            resident_memory_mib=3.0,
+            quality_score=1.0,
+            quality_loss=0.0,
+            extra={
+                "task": "summary",
+                "length_bucket": "short",
+                "split": "calibration",
+                "kivi_quantization_triggered": False,
+                "kivi_effective_mode": "unquantized_short_request",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "profiles.csv"
+            profile_table_module._append_profile_rows(path, [row.to_row()])
+            rows = list(csv.DictReader(path.open("r", encoding="utf-8", newline="")))
+
+        self.assertEqual(rows[0]["extra_kivi_quantization_triggered"], "False")
+        self.assertEqual(rows[0]["extra_kivi_effective_mode"], "unquantized_short_request")
+
     def test_qwen2_runtime_profiles_use_generate_instead_of_manual_decode(self) -> None:
         class FakeTensor:
             def __init__(self, values):
@@ -816,6 +873,155 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         build_cache_mock.assert_called_once()
         self.assertIs(captured["past_key_values"], built_cache)
+
+    def test_run_kivi_profile_keeps_short_unquantized_request_as_success(self) -> None:
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                class _Shape:
+                    shape = (1, 8)
+
+                return {"input_ids": _Shape()}
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        def fake_generate_decode(model, tokenizer, device, payload, torch, past_key_values=None, **kwargs):
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": "short result",
+                "latency_ms": 2.0,
+                "ttft_ms": 2.0,
+                "peak_memory_mib": 3.0,
+                "resident_memory_mib": 4.0,
+            }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(
+                qwen2_kv_runtime,
+                "_load_qwen2_model",
+                return_value=(
+                    SimpleNamespace(
+                        config=SimpleNamespace(
+                            num_hidden_layers=2,
+                            model_type="qwen2",
+                            num_attention_heads=2,
+                            num_key_value_heads=1,
+                        ),
+                        model=SimpleNamespace(
+                            layers=[
+                                SimpleNamespace(
+                                    self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                                )
+                            ]
+                        ),
+                    ),
+                    FakeTokenizer(),
+                    "cuda:0",
+                ),
+            ),
+            patch.object(qwen2_kv_runtime, "_install_qwen2_attention"),
+            patch.object(qwen2_kv_runtime, "build_kivi_cache", return_value=KIVICache(2, residual_length=64, group_size=32, k_bits=4, v_bits=4)),
+            patch.object(qwen2_kv_runtime, "_generate_decode", side_effect=fake_generate_decode),
+        ):
+            result = qwen2_kv_runtime._run_kivi_profile(
+                {
+                    "profile": "kivi_4bit_residual64",
+                    "prompt": "short prompt",
+                    "model_name": "/tmp/model",
+                    "max_new_tokens": 16,
+                    "kivi_residual_length": 64,
+                    "bits": 4,
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["measured"])
+        self.assertFalse(result["kivi_quantization_triggered"])
+        self.assertEqual(result["kivi_effective_mode"], "unquantized_short_request")
+        self.assertEqual(result["kivi_quantized_layers"], 0)
+        self.assertEqual(result["kivi_kernel_calls"], 0)
+
+    def test_run_kivi_profile_marks_quantized_requests_explicitly(self) -> None:
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                class _Shape:
+                    shape = (1, 80)
+
+                return {"input_ids": _Shape()}
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        def fake_install_attention(model, wrapper_cls, tracker, bits, payload, modules):
+            tracker["kivi_quantized_layers"] = 2
+            tracker["kivi_kernel_calls"] = 5
+            tracker["kivi_quantize_calls"] = 2
+            tracker["kivi_quantized_tokens"] = 64
+
+        def fake_generate_decode(model, tokenizer, device, payload, torch, past_key_values=None, **kwargs):
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": "quantized result",
+                "latency_ms": 2.0,
+                "ttft_ms": 2.0,
+                "peak_memory_mib": 3.0,
+                "resident_memory_mib": 4.0,
+            }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(
+                qwen2_kv_runtime,
+                "_load_qwen2_model",
+                return_value=(
+                    SimpleNamespace(
+                        config=SimpleNamespace(
+                            num_hidden_layers=2,
+                            model_type="qwen2",
+                            num_attention_heads=2,
+                            num_key_value_heads=1,
+                        ),
+                        model=SimpleNamespace(
+                            layers=[
+                                SimpleNamespace(
+                                    self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                                )
+                            ]
+                        ),
+                    ),
+                    FakeTokenizer(),
+                    "cuda:0",
+                ),
+            ),
+            patch.object(qwen2_kv_runtime, "_install_qwen2_attention", side_effect=fake_install_attention),
+            patch.object(qwen2_kv_runtime, "build_kivi_cache", return_value=KIVICache(2, residual_length=32, group_size=32, k_bits=4, v_bits=4)),
+            patch.object(qwen2_kv_runtime, "_generate_decode", side_effect=fake_generate_decode),
+        ):
+            result = qwen2_kv_runtime._run_kivi_profile(
+                {
+                    "profile": "kivi_4bit_residual32",
+                    "prompt": "long prompt",
+                    "model_name": "/tmp/model",
+                    "max_new_tokens": 16,
+                    "kivi_residual_length": 32,
+                    "bits": 4,
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["kivi_quantization_triggered"])
+        self.assertEqual(result["kivi_effective_mode"], "quantized")
 
     def test_qwen2_kivi_attention_reads_and_updates_kivi_cache(self) -> None:
         class FakeTensor:
@@ -3053,6 +3259,133 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertAlmostEqual(updated["kivi_4bit"].quality_loss, 0.5)
         self.assertAlmostEqual(updated["kivi_4bit"].quality_score, 0.5)
+
+    def test_with_quality_scores_short_unquantized_kivi_rows_when_measured(self) -> None:
+        rows = [
+            ProfileMeasurement(
+                request_id="r1",
+                profile="full_gpu",
+                adapter="full",
+                ok=True,
+                measured=True,
+                output_text="reference answer",
+                latency_ms=1.0,
+                ttft_ms=1.0,
+                peak_memory_mib=1.0,
+                resident_memory_mib=1.0,
+                extra={"task": "summary", "length_bucket": "short", "split": "calibration", "reference": "reference answer"},
+            ),
+            ProfileMeasurement(
+                request_id="r1",
+                profile="kivi_4bit_residual64",
+                adapter="kivi",
+                ok=True,
+                measured=True,
+                output_text="reference answer",
+                latency_ms=2.0,
+                ttft_ms=2.0,
+                peak_memory_mib=2.0,
+                resident_memory_mib=2.0,
+                extra={
+                    "task": "summary",
+                    "length_bucket": "short",
+                    "split": "calibration",
+                    "reference": "reference answer",
+                    "kivi_quantization_triggered": False,
+                    "kivi_effective_mode": "unquantized_short_request",
+                },
+            ),
+        ]
+
+        updated = {row.profile: row for row in with_quality(rows, {"full_gpu"})}
+
+        self.assertEqual(updated["kivi_4bit_residual64"].quality_loss, 0.0)
+        self.assertEqual(updated["kivi_4bit_residual64"].quality_score, 1.0)
+
+    def test_build_profile_table_accepts_measured_unquantized_kivi_chunk(self) -> None:
+        requests = [Request("r1", "summary", "prompt", reference="answer", metadata={"split": "calibration"})]
+
+        class StubAdapter:
+            def __init__(self, name):
+                self.name = name
+
+            def profiles(self):
+                if self.name == "full":
+                    return (ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True),)
+                return (ProfileSpec("kivi_4bit_residual64", "kivi", "edgekv-kivi", lossy=True),)
+
+            def profile_many(self, request_chunk, profile_name, dry_run=True):
+                if profile_name == "full_gpu":
+                    return [
+                        ProfileMeasurement(
+                            request_id="r1",
+                            profile="full_gpu",
+                            adapter="full",
+                            ok=True,
+                            measured=True,
+                            output_text="answer",
+                            latency_ms=1.0,
+                            ttft_ms=1.0,
+                            peak_memory_mib=1.0,
+                            resident_memory_mib=1.0,
+                            extra={
+                                "task": "summary",
+                                "length_bucket": "short",
+                                "split": "calibration",
+                                "reference": "answer",
+                            },
+                        )
+                    ]
+                return [
+                    ProfileMeasurement(
+                        request_id="r1",
+                        profile="kivi_4bit_residual64",
+                        adapter="kivi",
+                        ok=True,
+                        measured=True,
+                        output_text="answer",
+                        latency_ms=2.0,
+                        ttft_ms=2.0,
+                        peak_memory_mib=2.0,
+                        resident_memory_mib=2.0,
+                        extra={
+                            "task": "summary",
+                            "length_bucket": "short",
+                            "split": "calibration",
+                            "reference": "answer",
+                            "kivi_quantization_triggered": False,
+                            "kivi_effective_mode": "unquantized_short_request",
+                        },
+                    )
+                ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            with (
+                patch("run_build_profile_table.load_config", return_value={"profiles": {"adapters": ["full", "kivi"], "names": ["full_gpu", "kivi_4bit_residual64"]}}),
+                patch("run_build_profile_table.config_adapters", return_value=["full", "kivi"]),
+                patch("run_build_profile_table.config_profiles", return_value=["full_gpu", "kivi_4bit_residual64"]),
+                patch("run_build_profile_table.config_runtime", return_value={"repeat": 1}),
+                patch("run_build_profile_table.build_profile_adapters", return_value=[StubAdapter("full"), StubAdapter("kivi")]),
+                patch("run_build_profile_table.load_requests", return_value=(requests, False)),
+                patch("run_build_profile_table.exact_profiles", return_value={"full_gpu"}),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            rows = list(csv.DictReader(output_path.open("r", encoding="utf-8", newline="")))
+
+        by_profile = {row["profile"]: row for row in rows}
+        self.assertEqual(by_profile["kivi_4bit_residual64"]["measured"], "True")
+        self.assertEqual(by_profile["kivi_4bit_residual64"]["extra_kivi_effective_mode"], "unquantized_short_request")
 
     def test_with_quality_falls_back_to_text_similarity_when_reference_missing(self) -> None:
         rows = [
