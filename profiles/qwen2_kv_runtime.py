@@ -7,6 +7,7 @@ import time
 import traceback
 from typing import Any
 
+from profiles.h2o_cache import H2OCache, H2OLayerState, build_h2o_cache
 from profiles.kivi_cache import KIVICache, KIVILayerState, build_kivi_cache
 from profiles.qwen2_h2o_runtime import Qwen2H2OAttention, h2o_sizes as _h2o_sizes_impl, prepare_h2o_runtime as _prepare_h2o_runtime_impl, reset_h2o_attention as _reset_h2o_attention_impl, run_h2o_request as _run_h2o_request_impl
 from profiles.qwen2_kivi_runtime import Qwen2KIVIAttention, kivi_proof_error as _kivi_proof_error_impl, prepare_kivi_runtime as _prepare_kivi_runtime_impl, run_kivi_request as _run_kivi_request_impl, split_prefill_kivi_states as _split_prefill_kivi_states_impl
@@ -182,6 +183,7 @@ def _run_h2o_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker
         runtime,
         payload,
         worker_mode=worker_mode,
+        build_h2o_cache=build_h2o_cache,
         invoke_generate_decode=_invoke_generate_decode,
     )
 

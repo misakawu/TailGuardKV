@@ -4,6 +4,8 @@ import math
 import time
 from typing import Any, Callable
 
+from profiles.h2o_cache import H2OCache, H2OLayerState
+
 
 def h2o_sizes(tokenizer: Any, payload: dict[str, Any]) -> dict[str, int]:
     prompt_tokens = int(tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")["input_ids"].shape[-1])
@@ -78,27 +80,33 @@ def run_h2o_request(
     payload: dict[str, Any],
     *,
     worker_mode: str,
+    build_h2o_cache: Callable[..., H2OCache],
     invoke_generate_decode: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
     tracker = runtime["tracker"]
     sizes = h2o_sizes(runtime["tokenizer"], payload)
-    if worker_mode == "batch":
-        tracker.update(
-            {
-                "h2o_prune_events": 0,
-                "h2o_mask_events": 0,
-                "h2o_cache_budget": sizes["heavy_size"] + sizes["recent_size"],
-                "h2o_kept_tokens": 0,
-                "h2o_prompt_tokens": sizes["prompt_tokens"],
-            }
-        )
+    tracker.update(
+        {
+            "h2o_prune_events": 0,
+            "h2o_mask_events": 0,
+            "h2o_cache_budget": sizes["heavy_size"] + sizes["recent_size"],
+            "h2o_kept_tokens": 0,
+            "h2o_prompt_tokens": sizes["prompt_tokens"],
+        }
+    )
     reset_h2o_attention(runtime["model"], tracker, sizes["heavy_size"], sizes["recent_size"])
+    cache = build_h2o_cache(
+        runtime["model"].config,
+        heavy_size=sizes["heavy_size"],
+        recent_size=sizes["recent_size"],
+    )
     result = invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
         runtime["device"],
         payload,
         runtime["torch"],
+        past_key_values=cache,
         stage_startup_ms=float(runtime["startup_ms"]),
         stage_model_load_ms=float(runtime["model_load_ms"]),
         worker_mode=worker_mode,
@@ -127,7 +135,7 @@ def run_h2o_request(
 
 class Qwen2H2OAttention:
     def __new__(cls, source: Any, config: Any, layer_idx: int, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> Any:
-        del bits, layer_idx
+        del bits
         nn = modules["nn"]
 
         class _Attention(nn.Module):
@@ -135,6 +143,7 @@ class Qwen2H2OAttention:
                 super().__init__()
                 self.source = source
                 self.config = config
+                self.layer_idx = layer_idx
                 self.tracker = tracker
                 self.q_proj = source.q_proj
                 self.k_proj = source.k_proj
@@ -161,23 +170,44 @@ class Qwen2H2OAttention:
                 query_states = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
                 key_states = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
                 value_states = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+                if past_key_value is not None and not isinstance(past_key_value, H2OCache):
+                    raise TypeError("Qwen2 H2O attention requires H2OCache past_key_value")
+                layer_state = past_key_value[self.layer_idx] if isinstance(past_key_value, H2OCache) else None
+                logical_seq_len = key_states.shape[-2] + (int(layer_state.logical_seq_len) if layer_state is not None else 0)
                 query_states, key_states = apply_rope(self, query_states, key_states, value_states, position_ids, position_embeddings, modules)
-                if past_key_value is not None:
-                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
-                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
+                if layer_state is not None:
+                    key_states = torch.cat([layer_state.key_states, key_states], dim=2)
+                    value_states = torch.cat([layer_state.value_states, value_states], dim=2)
+                    self.hh_score = layer_state.hh_score
                 kv_seq_len = key_states.shape[-2]
                 key_for_attn = repeat_kv(key_states, self.num_key_value_groups)
                 value_for_attn = repeat_kv(value_states, self.num_key_value_groups)
                 attn_weights = torch.matmul(query_states, key_for_attn.transpose(2, 3)) / math.sqrt(self.head_dim)
                 attn_weights = mask_softmax(attn_weights, attention_mask, bsz, self.num_heads, q_len, kv_seq_len, torch, nn)
                 attn_output = torch.matmul(attn_weights, value_for_attn)
-                past = (key_states, value_states) if use_cache else None
-                if past is not None:
-                    past = self._prune(past, attn_weights.detach())
+                past = None
+                if use_cache:
+                    cache = past_key_value
+                    if cache is None:
+                        cache = H2OCache(
+                            self.config.num_hidden_layers,
+                            heavy_size=self.hh_size,
+                            recent_size=self.recent_size,
+                        )
+                    key_states, value_states, hh_score = self._prune(key_states, value_states, attn_weights.detach())
+                    past = cache.update_pruned(
+                        self.layer_idx,
+                        H2OLayerState(
+                            key_states=key_states,
+                            value_states=value_states,
+                            hh_score=hh_score,
+                            logical_seq_len=int(logical_seq_len),
+                        ),
+                    )
                 attn_output = attn_output.transpose(1, 2).contiguous().reshape(bsz, q_len, self.hidden_size)
                 return self.o_proj(attn_output), (attn_weights if output_attentions else None), past
 
-            def _prune(self, past: tuple[Any, Any], attn_weights: Any) -> tuple[Any, Any]:
+            def _prune(self, key_states: Any, value_states: Any, attn_weights: Any) -> tuple[Any, Any, Any]:
                 torch = modules["torch"]
                 num_new_tokens = int(attn_weights.shape[2])
                 scores = attn_weights.sum(dim=2)
@@ -191,10 +221,10 @@ class Qwen2H2OAttention:
                     if old_len > 0:
                         updated[:, :old_len] += self.hh_score[:, :old_len]
                     self.hh_score = updated
-                seq_len = past[0].shape[2]
+                seq_len = key_states.shape[2]
                 if seq_len <= self.cache_budget:
                     self.tracker["h2o_kept_tokens"] = max(self.tracker["h2o_kept_tokens"], int(seq_len))
-                    return past
+                    return key_states, value_states, self.hh_score
                 select_len = max(1, seq_len - self.recent_size)
                 hh_size = min(self.hh_size, select_len)
                 _, keep_topk = torch.topk(self.hh_score[:, :select_len], hh_size, dim=-1)
@@ -203,13 +233,13 @@ class Qwen2H2OAttention:
                 keep_idx = torch.cat([keep_topk, recent], dim=-1)
                 pruned_k = []
                 pruned_v = []
-                for batch_idx in range(past[0].shape[0]):
+                for batch_idx in range(key_states.shape[0]):
                     head_k = []
                     head_v = []
                     for head_idx in range(self.num_key_value_heads):
                         idx = keep_idx[head_idx]
-                        head_k.append(past[0][batch_idx, head_idx].index_select(0, idx))
-                        head_v.append(past[1][batch_idx, head_idx].index_select(0, idx))
+                        head_k.append(key_states[batch_idx, head_idx].index_select(0, idx))
+                        head_v.append(value_states[batch_idx, head_idx].index_select(0, idx))
                     pruned_k.append(torch.stack(head_k, dim=0))
                     pruned_v.append(torch.stack(head_v, dim=0))
                 mask = torch.zeros_like(self.hh_score, dtype=torch.bool)
@@ -218,6 +248,6 @@ class Qwen2H2OAttention:
                 self.tracker["h2o_prune_events"] += 1
                 self.tracker["h2o_mask_events"] += 1
                 self.tracker["h2o_kept_tokens"] = int(keep_idx.shape[-1])
-                return torch.stack(pruned_k, dim=0).contiguous(), torch.stack(pruned_v, dim=0).contiguous()
+                return torch.stack(pruned_k, dim=0).contiguous(), torch.stack(pruned_v, dim=0).contiguous(), self.hh_score
 
         return _Attention()

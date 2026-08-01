@@ -29,6 +29,7 @@ from profiles.base import qwen2_kv_profile_many_measurements, qwen2_kv_profile_m
 from profiles.full import FullKVAdapter
 from profiles.h2o import H2OAdapter
 from profiles.kivi import KIVIAdapter
+from profiles.h2o_cache import H2OCache
 from profiles.kivi_cache import KIVICache
 from profiles import qwen2_kv_runtime
 from profiles.registry import build_profile_adapters
@@ -624,6 +625,7 @@ class TailGuardCoreTest(unittest.TestCase):
         class FakeModel:
             def __init__(self):
                 self.generate_calls = []
+                self.h2o_tracker = None
                 self.config = SimpleNamespace(
                     num_hidden_layers=3,
                     model_type="qwen2",
@@ -640,6 +642,9 @@ class TailGuardCoreTest(unittest.TestCase):
 
             def generate(self, **kwargs):
                 self.generate_calls.append(kwargs)
+                if self.h2o_tracker is not None:
+                    self.h2o_tracker["h2o_prune_events"] = 1
+                    self.h2o_tracker["h2o_kept_tokens"] = self.h2o_tracker["h2o_cache_budget"]
                 return FakeGenerateOutput(FakeTensor([[11, 12, 13, 14, 15, 16, 99, 100]]))
 
         class FakeCuda:
@@ -685,7 +690,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 tracker["kivi_quantized_layers"] = 1
                 tracker["kivi_kernel_calls"] = 1
             else:
-                tracker["h2o_prune_events"] = 1
+                model.h2o_tracker = tracker
 
         with (
             patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
@@ -724,7 +729,8 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(h2o_model.generate_calls[0]["max_new_tokens"], 2)
         self.assertIn("past_key_values", kivi_model.generate_calls[0])
         self.assertNotIsInstance(kivi_model.generate_calls[0]["past_key_values"], tuple)
-        self.assertNotIn("past_key_values", h2o_model.generate_calls[0])
+        self.assertIn("past_key_values", h2o_model.generate_calls[0])
+        self.assertIsInstance(h2o_model.generate_calls[0]["past_key_values"], H2OCache)
 
     def test_generate_decode_accepts_explicit_past_key_values(self) -> None:
         class FakeTensor:
@@ -873,6 +879,80 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         build_cache_mock.assert_called_once()
         self.assertIs(captured["past_key_values"], built_cache)
+
+    def test_run_h2o_profile_seeds_generate_with_h2o_cache(self) -> None:
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                class _Shape:
+                    shape = (1, 20)
+
+                return {"input_ids": _Shape()}
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        captured = {}
+        tracker_ref = {}
+
+        def fake_install_attention(model, wrapper_cls, tracker, bits, payload, modules):
+            tracker_ref["tracker"] = tracker
+
+        def fake_generate_decode(model, tokenizer, device, payload, torch, past_key_values=None, **kwargs):
+            captured["past_key_values"] = past_key_values
+            tracker_ref["tracker"]["h2o_prune_events"] = 1
+            tracker_ref["tracker"]["h2o_kept_tokens"] = 4
+            return {"ok": True, "measured": True, "output_text": "ok", "latency_ms": 1.0, "ttft_ms": 1.0, "peak_memory_mib": 1.0, "resident_memory_mib": 1.0}
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(
+                qwen2_kv_runtime,
+                "_load_qwen2_model",
+                return_value=(
+                    SimpleNamespace(
+                        config=SimpleNamespace(
+                            num_hidden_layers=3,
+                            model_type="qwen2",
+                            num_attention_heads=2,
+                            num_key_value_heads=1,
+                        ),
+                        model=SimpleNamespace(
+                            layers=[
+                                SimpleNamespace(
+                                    self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                                )
+                            ]
+                        ),
+                    ),
+                    FakeTokenizer(),
+                    "cuda:0",
+                ),
+            ),
+            patch.object(qwen2_kv_runtime, "_install_qwen2_attention", side_effect=fake_install_attention),
+            patch.object(qwen2_kv_runtime, "_generate_decode", side_effect=fake_generate_decode),
+        ):
+            result = qwen2_kv_runtime._run_h2o_profile(
+                {
+                    "profile": "h2o_heavy10_recent10",
+                    "prompt": "prompt",
+                    "model_name": "/tmp/model",
+                    "max_new_tokens": 2,
+                    "h2o_heavy_ratio": 0.1,
+                    "h2o_recent_ratio": 0.1,
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIsInstance(captured["past_key_values"], H2OCache)
+        self.assertEqual(captured["past_key_values"].cache_budget, 4)
+        self.assertEqual(result["h2o_prune_events"], 1)
+        self.assertEqual(result["h2o_cache_budget"], 4)
+        self.assertEqual(result["h2o_kept_tokens"], 4)
+        self.assertEqual(result["h2o_prompt_tokens"], 20)
 
     def test_run_kivi_profile_keeps_short_unquantized_request_as_success(self) -> None:
         class FakeTokenizer:
@@ -1218,6 +1298,72 @@ class TailGuardCoreTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(TypeError, "KIVICache"):
+            attention.forward(
+                FakeTensor((1, 1, 8)),
+                attention_mask=None,
+                position_ids=None,
+                past_key_value=((None, None),),
+                output_attentions=False,
+                use_cache=True,
+            )
+
+    def test_qwen2_h2o_attention_rejects_legacy_tuple_cache(self) -> None:
+        class FakeTensor:
+            def __init__(self, shape):
+                self.shape = shape
+                self.device = "cuda:0"
+                self.dtype = "float16"
+
+            def size(self):
+                return self.shape
+
+            def view(self, *shape):
+                return FakeTensor(shape)
+
+            def transpose(self, dim0, dim1):
+                shape = list(self.shape)
+                shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
+                return FakeTensor(tuple(shape))
+
+        class FakeModule:
+            def __call__(self, value):
+                return FakeTensor(value.shape)
+
+        class FakeNN:
+            class Module:
+                def __init__(self):
+                    pass
+
+            functional = SimpleNamespace(softmax=lambda attn_weights, dim=-1, dtype=None: attn_weights)
+
+        source = SimpleNamespace(
+            q_proj=FakeModule(),
+            k_proj=FakeModule(),
+            v_proj=FakeModule(),
+            o_proj=FakeModule(),
+            head_dim=4,
+            rotary_emb=None,
+        )
+        config = SimpleNamespace(hidden_size=8, num_attention_heads=2, num_key_value_heads=1, num_hidden_layers=1)
+        tracker = {"h2o_prune_events": 0, "h2o_mask_events": 0, "h2o_cache_budget": 0, "h2o_kept_tokens": 0, "h2o_prompt_tokens": 0}
+        modules = {
+            "torch": object(),
+            "F": object(),
+            "nn": FakeNN(),
+            "repeat_kv": lambda tensor, groups: tensor,
+            "apply_rotary_pos_emb": lambda q, k, *args: (q, k),
+        }
+        attention = qwen2_kv_runtime.Qwen2H2OAttention(
+            source,
+            config,
+            0,
+            tracker,
+            0,
+            {"h2o_heavy_size": 2, "h2o_recent_size": 1},
+            modules,
+        )
+
+        with self.assertRaisesRegex(TypeError, "H2OCache"):
             attention.forward(
                 FakeTensor((1, 1, 8)),
                 attention_mask=None,
