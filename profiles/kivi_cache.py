@@ -3,11 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from transformers.cache_utils import Cache
-except ModuleNotFoundError:
-    class Cache:
-        pass
+from profiles.cache_common import Cache, init_cache_list, reorder_tensor_like
 
 
 @dataclass(slots=True)
@@ -30,9 +26,9 @@ class KIVICache(Cache):
         self.k_bits = int(k_bits)
         self.v_bits = int(v_bits)
         layer_count = int(num_hidden_layers)
-        self.layers: list[KIVILayerState | None] = [None] * layer_count
-        self.key_cache: list[Any | None] = [None] * layer_count
-        self.value_cache: list[Any | None] = [None] * layer_count
+        self.layers: list[KIVILayerState | None] = init_cache_list(layer_count)
+        self.key_cache: list[Any | None] = init_cache_list(layer_count)
+        self.value_cache: list[Any | None] = init_cache_list(layer_count)
 
     def __len__(self) -> int:
         return len(self.layers)
@@ -65,19 +61,19 @@ class KIVICache(Cache):
 
     def reorder_cache(self, beam_idx: Any) -> KIVICache:
         for layer_idx, state in enumerate(self.layers):
-            self.key_cache[layer_idx] = _reorder_tensor_like(self.key_cache[layer_idx], beam_idx)
-            self.value_cache[layer_idx] = _reorder_tensor_like(self.value_cache[layer_idx], beam_idx)
+            self.key_cache[layer_idx] = reorder_tensor_like(self.key_cache[layer_idx], beam_idx)
+            self.value_cache[layer_idx] = reorder_tensor_like(self.value_cache[layer_idx], beam_idx)
             if state is None:
                 continue
             self.layers[layer_idx] = KIVILayerState(
-                key_q=_reorder_tensor_like(state.key_q, beam_idx),
-                key_full=_reorder_tensor_like(state.key_full, beam_idx),
-                key_scale=_reorder_tensor_like(state.key_scale, beam_idx),
-                key_mn=_reorder_tensor_like(state.key_mn, beam_idx),
-                value_q=_reorder_tensor_like(state.value_q, beam_idx),
-                value_full=_reorder_tensor_like(state.value_full, beam_idx),
-                value_scale=_reorder_tensor_like(state.value_scale, beam_idx),
-                value_mn=_reorder_tensor_like(state.value_mn, beam_idx),
+                key_q=reorder_tensor_like(state.key_q, beam_idx),
+                key_full=reorder_tensor_like(state.key_full, beam_idx),
+                key_scale=reorder_tensor_like(state.key_scale, beam_idx),
+                key_mn=reorder_tensor_like(state.key_mn, beam_idx),
+                value_q=reorder_tensor_like(state.value_q, beam_idx),
+                value_full=reorder_tensor_like(state.value_full, beam_idx),
+                value_scale=reorder_tensor_like(state.value_scale, beam_idx),
+                value_mn=reorder_tensor_like(state.value_mn, beam_idx),
                 kv_seq_len=state.kv_seq_len,
             )
         return self
@@ -113,11 +109,3 @@ def build_kivi_cache(model_config: Any, *, residual_length: int, group_size: int
         k_bits=k_bits,
         v_bits=v_bits,
     )
-
-
-def _reorder_tensor_like(value: Any, beam_idx: Any) -> Any:
-    if value is None or isinstance(value, (int, float, bool)):
-        return value
-    if hasattr(value, "index_select"):
-        return value.index_select(0, beam_idx)
-    return value
