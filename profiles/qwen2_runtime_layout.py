@@ -35,6 +35,7 @@ def iterate_qwen2_layers(model: Any) -> Any:
 
 
 def install_qwen2_attention(model: Any, wrapper_cls: type, tracker: dict[str, int], bits: int, payload: dict[str, Any], modules: dict[str, Any]) -> None:
+    # TODO: Extract a generic model adapter so non-Qwen2 attention installers can share this runtime boundary.
     for layer_idx, layer in enumerate(iterate_qwen2_layers(model)):
         layer.self_attn = wrapper_cls(layer.self_attn, model.config, layer_idx, tracker, bits, payload, modules)
     model.config.use_cache = True
