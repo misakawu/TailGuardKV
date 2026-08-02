@@ -14,13 +14,14 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+import run_experiment
 from calibration.conformal import ConformalGuard
 from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
 from core_types import Action
 from core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
 from experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, failed_measurement_summary, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
-from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, token_f1_loss
+from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, select_primary_loss, token_f1_loss
 from metrics import MetricCollector
 from profile_summary import profile_summary_rows
 from policies.base import Policy
@@ -41,6 +42,7 @@ import run_util.build_profile_table as profile_table_module
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import run_command
 from run_experiment import _policy_output_for_sweep, _policy_sweep_points, _summary_rows, build_parser as build_experiment_parser, pilot_smoke_measured
+from experiment_summary import total_policy_summary_rows
 from run_profile_test import build_parser as build_profile_test_parser, main as run_profile_test_main
 from run_util.run_policies import run_policies
 
@@ -106,7 +108,7 @@ def _write_pilot_test_config(
                 specs,
                 "policies:",
                 "  record_rejected_unsafe: true",
-                "  names: [full_lru, static_best, static_safe, utility_dynamic, uncalibrated_dynamic]",
+                "  names: [full_lru, static_best, static_safe, tailguard, quality_oracle, utility_dynamic, uncalibrated_dynamic]",
                 "pilot:",
                 "  epsilons: [0.05]",
                 "  deltas: [0.05]",
@@ -2422,6 +2424,19 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertIn("p95_kv_cache_memory_mib", summary)
         self.assertEqual(summary["mean_kv_cache_memory_mib"], 15.0)
 
+    def test_metric_collector_profile_summary_uses_configured_epsilons(self) -> None:
+        rows = [
+            _measurement("r1", "full_gpu", 0.0),
+            _measurement("r2", "full_gpu", 0.08),
+            _measurement("r3", "full_gpu", 0.2),
+        ]
+
+        summary = MetricCollector().summarize_profiles(rows, epsilons=[0.05, 0.10])["full_gpu"]
+
+        self.assertNotIn("violation_rate", summary)
+        self.assertEqual(summary["violation_rate_eps0p05"], 2.0 / 3.0)
+        self.assertEqual(summary["violation_rate_eps0p1"], 1.0 / 3.0)
+
     def test_profile_summary_rows_exclude_policy_columns_and_report_profile_metrics(self) -> None:
         rows = [
             ProfileMeasurement(
@@ -2564,6 +2579,18 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(summary["p"]["target_delta"], 0.05)
         self.assertEqual(summary["p"]["violation_rate"], 0.5)
         self.assertEqual(summary["p"]["delta_slack"], -0.45)
+
+    def test_metrics_policy_summary_reports_p50_ttft_and_quality_loss(self) -> None:
+        records = [
+            PolicyRunRecord("p", "r1", "full_gpu", True, True, ttft_ms=10.0, quality_loss=0.0),
+            PolicyRunRecord("p", "r2", "full_gpu", True, True, ttft_ms=20.0, quality_loss=0.1),
+            PolicyRunRecord("p", "r3", "full_gpu", True, True, ttft_ms=30.0, quality_loss=0.2),
+        ]
+
+        summary = MetricCollector().summarize_policy_runs(records, epsilon=0.15, delta=0.05, exact_profiles={"full_gpu"})["p"]
+
+        self.assertEqual(summary["p50_ttft_ms"], 20.0)
+        self.assertEqual(summary["p50_quality_loss"], 0.1)
 
     def test_metrics_reports_controller_oracle_and_aal_fields(self) -> None:
         records = [
@@ -3296,7 +3323,7 @@ class TailGuardCoreTest(unittest.TestCase):
                     json.dumps(
                         {
                             "output": args.output,
-                            "rows": 5,
+                            "rows": 7,
                             "epsilon": 0.05,
                             "delta": 0.05,
                             "memory_budget_mib": 6144.0,
@@ -3329,7 +3356,7 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertEqual(summary_rows[0]["section"], "experiment")
             self.assertEqual(summary_rows[0]["ok"], "True")
             self.assertEqual(summary_rows[0]["profile_rows"], "8")
-            self.assertEqual(summary_rows[0]["policy_rows"], "5")
+            self.assertEqual(summary_rows[0]["policy_rows"], "7")
             full_lru = next(row for row in summary_rows if row["section"] == "policy" and row["name"] == "full_lru")
             self.assertEqual(full_lru["p95_ttft_ms"], "1.0")
             self.assertLess(
@@ -3342,6 +3369,21 @@ class TailGuardCoreTest(unittest.TestCase):
             )
             for deleted in ("return_code", "step", "profile_output", "policy_output", "summary_output"):
                 self.assertNotIn(deleted, summary_rows[0])
+
+    def test_pilot_test_config_includes_tailguard_and_oracle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "pilot.yaml"
+            _write_pilot_test_config(
+                config_path,
+                Path(tmpdir) / "profiles.csv",
+                Path(tmpdir) / "policy.csv",
+                Path(tmpdir) / "summary.csv",
+            )
+
+            self.assertEqual(
+                config_policies(load_config(config_path)),
+                ["full_lru", "static_best", "static_safe", "tailguard", "quality_oracle", "utility_dynamic", "uncalibrated_dynamic"],
+            )
 
     def test_policy_sweep_points_expand_cartesian_product(self) -> None:
         config = {
@@ -3477,6 +3519,137 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual([row["epsilon"] for row in policy_rows], [0.05, 0.1])
         self.assertEqual([row["p95_ttft_ms"] for row in policy_rows], [1.0, 2.0])
 
+    def test_total_policy_summary_rows_flatten_policy_sweeps_only(self) -> None:
+        rows = total_policy_summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "run_dir": "out/manual",
+                "profile": {"summary": {"full_gpu": {"count": 3.0}}},
+                "policy_runs": [
+                    {
+                        "ok": True,
+                        "epsilon": 0.05,
+                        "delta": 0.05,
+                        "memory_budget_mib": 4900.0,
+                        "payload": {
+                            "summary": {
+                                "full_lru": {
+                                    "mean_ttft_ms": 100.0,
+                                    "p50_ttft_ms": 90.0,
+                                    "p95_ttft_ms": 120.0,
+                                    "mean_quality_loss": 0.0,
+                                    "p50_quality_loss": 0.0,
+                                    "p95_quality_loss": 0.0,
+                                    "violation_rate": 0.0,
+                                    "worst_group_violation": 0.0,
+                                    "mean_kv_cache_memory_mib": 4000.0,
+                                    "p95_kv_cache_memory_mib": 4100.0,
+                                    "controller_overhead_ms": 0.2,
+                                    "action_distribution": {"full_gpu": 3},
+                                },
+                                "tailguard": {
+                                    "mean_ttft_ms": 80.0,
+                                    "p50_ttft_ms": 70.0,
+                                    "p95_ttft_ms": 95.0,
+                                    "mean_quality_loss": 0.02,
+                                    "p50_quality_loss": 0.01,
+                                    "p95_quality_loss": 0.04,
+                                    "violation_rate": 0.0,
+                                    "worst_group_violation": 0.0,
+                                    "mean_kv_cache_memory_mib": 3000.0,
+                                    "p95_kv_cache_memory_mib": 3100.0,
+                                    "controller_overhead_ms": 0.4,
+                                    "action_distribution": {"kivi": 2, "full_gpu": 1},
+                                },
+                            }
+                        },
+                    },
+                    {
+                        "ok": True,
+                        "epsilon": 0.1,
+                        "delta": 0.05,
+                        "memory_budget_mib": 5000.0,
+                        "payload": {"summary": {"full_lru": {"p95_ttft_ms": 110.0}, "tailguard": {"p95_ttft_ms": 85.0}}},
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({row["policy"] for row in rows}, {"full_lru", "tailguard"})
+        self.assertNotIn("section", rows[0])
+        self.assertNotIn("name", rows[0])
+        first = rows[0]
+        self.assertEqual(first["config"], "pilot.yaml")
+        self.assertEqual(first["run_dir"], "out/manual")
+        self.assertEqual(first["policy"], "full_lru")
+        self.assertEqual(first["memory_budget_mib"], 4900.0)
+        self.assertEqual(first["epsilon"], 0.05)
+        self.assertEqual(first["delta"], 0.05)
+        for field in (
+            "mean_ttft_ms",
+            "p50_ttft_ms",
+            "p95_ttft_ms",
+            "mean_quality_loss",
+            "p50_quality_loss",
+            "p95_quality_loss",
+            "violation_rate",
+            "worst_group_violation",
+            "mean_kv_cache_memory_mib",
+            "p95_kv_cache_memory_mib",
+            "controller_overhead_ms",
+            "action_distribution",
+        ):
+            self.assertIn(field, first)
+
+    def test_summary_reports_h0_h1_h2_lite_evidence_fields(self) -> None:
+        rows = _summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "profiles": FORMAL_PROFILES,
+                "policies": ["full_lru", "static_best", "static_safe", "tailguard", "quality_oracle", "utility_dynamic", "uncalibrated_dynamic"],
+                "rows": {"profiles": 8, "policy": 7},
+                "profile": {"summary": {"full_gpu": {"p95_ttft_ms": 1.0, "p99_quality_loss": 0.0, "cvar_quality_loss": 0.0}}},
+                "policy_runs": [
+                    {
+                        "ok": True,
+                        "epsilon": 0.05,
+                        "delta": 0.05,
+                        "memory_budget_mib": 4900.0,
+                        "payload": {
+                            "summary": {
+                                "full_lru": {"p95_ttft_ms": 1.0, "mean_kv_cache_memory_mib": 100.0, "fallback_ratio": 0.0, "oracle": False},
+                                "tailguard": {"p95_ttft_ms": 0.8, "mean_kv_cache_memory_mib": 80.0, "fallback_ratio": 0.1, "oracle": False},
+                                "quality_oracle": {"oracle": True},
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+
+        experiment = rows[0]
+        self.assertTrue(experiment["has_h0_tail_metrics"])
+        self.assertTrue(experiment["has_h1_coverage_metrics"])
+        self.assertTrue(experiment["has_h2_lite_benefit_metrics"])
+        self.assertEqual(experiment["deployable_baseline_names"], ["full_lru", "static_best", "static_safe", "tailguard", "utility_dynamic", "uncalibrated_dynamic"])
+
+    def test_pilot_summary_experiment_row_includes_run_dir_and_visual_outputs(self) -> None:
+        rows = _summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "run_dir": "out/manual",
+                "visual_outputs": ["out/manual/policy_tables/summary_policy_p95_ttft.png"],
+                "rows": {"profiles": 1, "policy": 1},
+            }
+        )
+
+        self.assertEqual(rows[0]["run_dir"], "out/manual")
+        self.assertEqual(rows[0]["visual_outputs"], ["out/manual/policy_tables/summary_policy_p95_ttft.png"])
+
     def test_pilot_summary_experiment_error_uses_failed_policy_sweep_payload(self) -> None:
         rows = _summary_rows(
             {
@@ -3501,6 +3674,46 @@ class TailGuardCoreTest(unittest.TestCase):
         parser = build_experiment_parser()
         args = parser.parse_args(["pilot-smoke-measured", "--config", "configs/pilot_50.yaml"])
         self.assertEqual(args.config, "configs/pilot_50.yaml")
+
+    def test_run_experiment_pilot_accepts_run_dir_argument(self) -> None:
+        parser = build_experiment_parser()
+        args = parser.parse_args(["pilot-smoke-measured", "--config", "configs/pilot_50.yaml", "--run-dir", "out/manual"])
+
+        self.assertEqual(args.run_dir, "out/manual")
+
+    def test_run_experiment_pilot_accepts_total_summary_output_argument(self) -> None:
+        parser = build_experiment_parser()
+        args = parser.parse_args(["pilot-smoke-measured", "--config", "configs/pilot_50.yaml", "--total-summary-output", "custom.csv"])
+
+        self.assertEqual(args.total_summary_output, "custom.csv")
+
+    def test_default_run_dir_uses_timestamp_and_config_stem(self) -> None:
+        fixed_time = SimpleNamespace(strftime=lambda fmt: "20260802_123456")
+
+        with patch("run_experiment.datetime") as datetime_mock:
+            datetime_mock.now.return_value = fixed_time
+            run_dir = run_experiment._resolve_run_dir(None, "configs/pilot_50.yaml")
+
+        self.assertEqual(run_dir, Path("out/20260802_123456_pilot_50"))
+
+    def test_explicit_run_dir_is_honored(self) -> None:
+        self.assertEqual(
+            run_experiment._resolve_run_dir("out/manual_pilot_50_visual", "configs/pilot_50.yaml"),
+            Path("out/manual_pilot_50_visual"),
+        )
+
+    def test_relative_output_paths_are_relocated_under_run_dir(self) -> None:
+        run_dir = Path("out/manual")
+
+        self.assertEqual(
+            run_experiment._resolve_run_output("out/policy_tables/pilot_50_summary.csv", run_dir),
+            Path("out/manual/policy_tables/pilot_50_summary.csv"),
+        )
+
+    def test_absolute_output_paths_are_not_relocated(self) -> None:
+        output = Path(tempfile.gettempdir()) / "tailguardkv_summary.csv"
+
+        self.assertEqual(run_experiment._resolve_run_output(str(output), Path("out/manual")), output)
 
     def test_pilot_smoke_measured_writes_configured_summary_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3547,6 +3760,330 @@ class TailGuardCoreTest(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue(summary_path.exists())
+
+    def test_pilot_smoke_measured_writes_explicit_total_summary_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+            total_summary_path = Path(tmpdir) / "custom_total.csv"
+            config_path = Path(tmpdir) / "pilot_custom.yaml"
+            _write_pilot_test_config(config_path, profile_path, policy_path, summary_path)
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", profile, 0.0).to_row() for profile in FORMAL_PROFILES])
+                print(json.dumps({"output": args.output, "rows": len(FORMAL_PROFILES), "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                print(
+                    json.dumps(
+                        {
+                            "output": args.output,
+                            "rows": 1,
+                            "epsilon": args.epsilon,
+                            "delta": args.delta,
+                            "memory_budget_mib": args.memory_budget_mib,
+                            "summary": {"full_lru": {"p95_ttft_ms": 1.0, "violation_rate": 0.0}},
+                        }
+                    )
+                )
+                return 0
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", return_value=[]),
+            ):
+                code = pilot_smoke_measured(
+                    argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=str(total_summary_path))
+                )
+
+            self.assertEqual(code, 0)
+            with total_summary_path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["policy"], "full_lru")
+            self.assertEqual(rows[0]["p95_ttft_ms"], "1.0")
+            self.assertEqual(rows[0]["violation_rate"], "0.0")
+
+    def test_pilot_smoke_measured_derives_default_total_summary_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "pilot_50_measured_summary.csv"
+            total_summary_path = Path(tmpdir) / "pilot_50_measured_total_summary.csv"
+            config_path = Path(tmpdir) / "pilot_custom.yaml"
+            _write_pilot_test_config(config_path, profile_path, policy_path, summary_path)
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", profile, 0.0).to_row() for profile in FORMAL_PROFILES])
+                print(json.dumps({"output": args.output, "rows": len(FORMAL_PROFILES), "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_lru": {"p95_ttft_ms": 1.0}}}))
+                return 0
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", return_value=[]),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None))
+
+            self.assertEqual(code, 0)
+            self.assertTrue(total_summary_path.exists())
+
+    def test_pilot_smoke_measured_relocates_relative_outputs_under_run_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "manual_run"
+            config_path = root / "pilot_custom.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  names: [full_lru]",
+                        "pilot:",
+                        "  epsilons: [0.2]",
+                        "  deltas: [0.05]",
+                        "outputs:",
+                        "  smoke_profiles: out/profile_tables/configured_profiles.csv",
+                        "  smoke_policy: out/policy_tables/configured_policy.csv",
+                        "  smoke_summary: out/policy_tables/configured_summary.csv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            calls = {}
+
+            def fake_build(args: argparse.Namespace) -> int:
+                calls["profile_output"] = args.output
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                calls["policy_measurements"] = args.measurements
+                calls["policy_output"] = args.output
+                print(json.dumps({"output": args.output, "rows": 1, "epsilon": 0.2, "delta": 0.05, "summary": {"full_lru": {"count": 1.0}}}))
+                return 0
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", return_value=[]),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(calls["profile_output"], str(run_dir / "profile_tables/configured_profiles.csv"))
+            self.assertEqual(calls["policy_measurements"], str(run_dir / "profile_tables/configured_profiles.csv"))
+            self.assertEqual(calls["policy_output"], str(run_dir / "policy_tables/configured_policy.csv"))
+            self.assertTrue((run_dir / "policy_tables/configured_summary.csv").exists())
+
+    def test_pilot_smoke_measured_relocates_configured_total_summary_under_run_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "manual_run"
+            config_path = root / "pilot_custom.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  names: [full_lru]",
+                        "pilot:",
+                        "  epsilons: [0.2]",
+                        "  deltas: [0.05]",
+                        "outputs:",
+                        "  smoke_profiles: out/profile_tables/profiles.csv",
+                        "  smoke_policy: out/policy_tables/policy.csv",
+                        "  smoke_summary: out/policy_tables/summary.csv",
+                        "  smoke_total_summary: out/policy_tables/configured_total.csv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payloads = []
+            plot_inputs = []
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_lru": {"p95_ttft_ms": 1.0}}}))
+                return 0
+
+            def record_payload(payload: dict[str, object]) -> None:
+                payloads.append(payload)
+                run_experiment.write_summary(payload, str(payload.get("summary_output")))
+                run_experiment.write_total_policy_summary(payload, str(payload.get("total_summary_output")))
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", return_value=[]),
+                patch("run_experiment._print_and_write", side_effect=record_payload),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
+
+            self.assertEqual(code, 0)
+            self.assertTrue((run_dir / "policy_tables/configured_total.csv").exists())
+            self.assertEqual(payloads[-1]["total_summary_output"], str(run_dir / "policy_tables/configured_total.csv"))
+
+    def test_policy_sweep_suffixes_apply_inside_run_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "manual_run"
+            config_path = root / "pilot_custom.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  names: [full_lru]",
+                        "pilot:",
+                        "  epsilons: [0.05, 0.10]",
+                        "  deltas: [0.05]",
+                        "  memory_budgets_mib: [4900]",
+                        "outputs:",
+                        "  smoke_profiles: out/profile_tables/profiles.csv",
+                        "  smoke_policy: out/policy_tables/policy.csv",
+                        "  smoke_summary: out/policy_tables/summary.csv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            policy_outputs = []
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1.0}}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                policy_outputs.append(args.output)
+                print(json.dumps({"output": args.output, "rows": 1, "epsilon": args.epsilon, "delta": args.delta, "summary": {"full_lru": {"count": 1.0}}}))
+                return 0
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", return_value=[]),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                policy_outputs,
+                [
+                    str(run_dir / "policy_tables/policy_eps0p05_delta0p05_mem4900.csv"),
+                    str(run_dir / "policy_tables/policy_eps0p1_delta0p05_mem4900.csv"),
+                ],
+            )
+
+    def test_pilot_smoke_measured_records_generated_visual_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "summary.csv"
+            chart_path = Path(tmpdir) / "summary_policy_p95_ttft.png"
+            config_path = Path(tmpdir) / "pilot.yaml"
+            _write_pilot_test_config(config_path, profile_path, policy_path, summary_path)
+            payloads = []
+            plot_inputs = []
+
+            def fake_build(args: argparse.Namespace) -> int:
+                write_csv(Path(args.output), [_measurement("e1", profile, 0.0).to_row() for profile in FORMAL_PROFILES])
+                print(json.dumps({"output": args.output, "rows": len(FORMAL_PROFILES), "summary": {"profiles": len(FORMAL_PROFILES)}}))
+                return 0
+
+            def fake_policies(args: argparse.Namespace) -> int:
+                print(json.dumps({"output": args.output, "rows": 1, "epsilon": 0.05, "delta": 0.05, "summary": {"full_lru": {"p95_ttft_ms": 1.0}}}))
+                return 0
+
+            def record_payload(payload: dict[str, object]) -> None:
+                payloads.append(payload)
+
+            with (
+                patch("run_experiment.build_profile_table", side_effect=fake_build),
+                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_experiment.plot_summary", side_effect=lambda path: plot_inputs.append(path) or [chart_path]),
+                patch("run_experiment._print_and_write", side_effect=record_payload),
+            ):
+                code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(payloads[-1]["visual_outputs"], [str(chart_path)])
+            self.assertEqual(plot_inputs, [str(summary_path.with_name("summary_total_summary.csv"))])
+
+    def test_visual_plot_summary_creates_policy_line_charts_by_budget_constraint_cell(self) -> None:
+        from visual.plot_summary import plot_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "total_summary.csv"
+            summary_path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,p95_ttft_ms,mean_kv_cache_memory_mib,p95_quality_loss,violation_rate",
+                        "full_lru,4900,0.05,0.05,120,800,0.01,0.0",
+                        "tailguard,4900,0.05,0.05,90,600,0.03,0.02",
+                        "full_lru,5000,0.05,0.05,130,850,0.01,0.0",
+                        "tailguard,5000,0.05,0.05,95,610,0.02,0.01",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outputs = plot_summary(summary_path)
+
+            self.assertEqual(
+                {path.name for path in outputs},
+                {
+                    "summary_policy_p95_ttft.png",
+                    "summary_policy_kv_memory.png",
+                    "summary_policy_quality_loss.png",
+                    "summary_policy_violation_rate.png",
+                },
+            )
+            self.assertTrue(all(path.exists() and path.stat().st_size > 0 for path in outputs))
+
+    def test_visual_plot_summary_skips_missing_numeric_data_without_raising(self) -> None:
+        from visual.plot_summary import plot_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.csv"
+            summary_path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,p95_ttft_ms",
+                        "full_lru,4900,0.05,0.05,120",
+                        "tailguard,4900,0.05,0.05,90",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            outputs = plot_summary(summary_path)
+
+            self.assertEqual({path.name for path in outputs}, {"summary_policy_p95_ttft.png"})
 
     def test_pilot_smoke_measured_stops_when_profile_stage_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4039,6 +4576,9 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(loss, 0.0)
         self.assertEqual(metrics["em"], 0.0)
 
+    def test_select_primary_loss_uses_f1_for_qa_long_context(self) -> None:
+        self.assertEqual(select_primary_loss("qa_long_context"), "f1")
+
     def test_quality_metrics_normalize_case_whitespace_and_punctuation_noise(self) -> None:
         loss, metrics = compute_quality_loss("summary", " The baselines!!!! ", "the baselines")
         self.assertEqual(loss, 0.0)
@@ -4052,6 +4592,32 @@ class TailGuardCoreTest(unittest.TestCase):
         annotated = annotate_measurement(measurement, request, False)
 
         self.assertEqual(annotated.extra["reference"], "gold answer")
+
+    def test_with_quality_writes_primary_metric_for_exact_and_lossy_rows(self) -> None:
+        rows = [
+            ProfileMeasurement("r1", "full_gpu", "full", True, True, output_text="alpha beta", extra={"task": "qa_long_context", "reference": "alpha beta"}),
+            ProfileMeasurement("r1", "kivi_4bit", "kivi", True, True, output_text="alpha", extra={"task": "qa_long_context", "reference": "alpha beta"}),
+        ]
+
+        updated = {row.profile: row for row in with_quality(rows, {"full_gpu"})}
+
+        self.assertEqual(updated["full_gpu"].extra["primary_metric"], "f1")
+        self.assertEqual(updated["kivi_4bit"].extra["primary_metric"], "f1")
+        self.assertAlmostEqual(updated["kivi_4bit"].extra["metric_f1"], 1.0 / 3.0)
+
+    def test_dry_profile_measurement_marks_synthetic_source(self) -> None:
+        row = profiles_base.dry_profile_measurement(
+            "full",
+            Request("r1", "qa", "prompt"),
+            ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True),
+            latency_ms=1.0,
+            peak_memory_mib=2.0,
+        )
+
+        self.assertEqual(row.extra["dry_run"], "true")
+        self.assertEqual(row.extra["source"], "synthetic_schema_check")
+        self.assertEqual(row.extra["backend"], "synthetic")
+        self.assertEqual(row.extra["ttft_semantics"], "unavailable")
 
     def test_with_quality_uses_full_gpu_and_candidate_scores_against_same_reference(self) -> None:
         rows = [

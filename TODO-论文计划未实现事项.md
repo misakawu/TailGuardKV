@@ -34,43 +34,38 @@
 ## P1：修正会误导实验结论的口径
 
 1. 修正 profile summary 的违例率阈值
-   - `MetricCollector.summarize_profiles()` 现在固定用 `epsilon=0.5`。
-   - 应改为读取 config 中的 epsilon，或输出 `violation_rate_eps0p05`、`violation_rate_eps0p10`。
-   - profile summary 和 policy summary 的 SLO 口径要一致。
+   - 已完成：`MetricCollector.summarize_profiles()` 接收 config epsilon，输出 `violation_rate_eps0p05`、`violation_rate_eps0p1` 等字段。
+   - profile summary 和 policy summary 的 SLO 口径已按 `pilot.epsilons` 对齐。
 
 2. 明确 quality loss 的主指标
-   - 当前输出有 EM/F1/ROUGE-L，但没有 `extra_metric_primary`。
-   - `qa_long_context` 现在不会走 QA 的 F1 逻辑，会落到 EM。
-   - 需要补任务名映射，并在每条 profile row 里写清 primary metric。
+   - 已完成：`qa_long_context` 走 F1，`summary` 走 ROUGE-L，未知任务仍走 EM。
+   - profile row 写入 `extra_primary_metric`，summary 输出 `primary_metric_distribution`。
 
 3. 隔离 dry-run 结果
-   - dry-run 常数仍在 adapter 里，虽然默认 replay 会拒绝 `measured=False`。
-   - dry-run 输出文件名、summary 和 extra 字段都应明确标记 `dry_run=true` 或 `source=synthetic_schema_check`。
-   - 正式 profile 输出路径不要使用容易被误读的 `measured` 命名。
+   - 已完成：dry-run row 写入 `extra_dry_run=true`、`extra_source=synthetic_schema_check`、`extra_backend=synthetic`。
+   - dry-run summary 写入 `dry_run=true`；正式 replay 继续默认拒绝 `measured=False`。
 
 4. 文档区分真实模型 runtime 和真实 serving backend
-   - 当前 `pilot_50` 能证明 full/KIVI/H2O 跑过真实模型路径。
-   - 它还不能证明 vLLM/LMCache backend 已经验收。
-   - README、实验总结和 summary 里要写清 backend family，避免把 Transformers/Qwen2 runtime 写成 vLLM/LMCache。
+   - 已完成：README 明确 `pilot_50` 证明的是 Transformers/Qwen2 真实模型 runtime，不等同 vLLM/LMCache serving backend 验收。
+   - profile summary 保留 `backend_distribution`，profile row 保留 `extra_backend`。
 
 ## P2：补齐 08-01-08-15 的 runner 与 baseline 验收
 
 1. 让同一个 runner 跑完整策略集合
-   - 当前 `configs/pilot_50.yaml` 只配置 5 个 baseline。
-   - 补上 `tailguard` 和 `quality_oracle` 后，`run_experiment.py pilot-smoke-measured` 应能同表输出所有策略。
+   - 已完成：`configs/pilot_50.yaml` 覆盖 7 策略：5 baseline + `tailguard` + `quality_oracle`。
+   - `run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml` 已同表输出所有策略。
 
 2. 补 baseline smoke 表
-   - 需要一份小规模 smoke 输出，明确包含 5 个 baseline、TailGuardKV、oracle。
-   - 表里至少包含 p95 TTFT、memory、quality loss、violation rate、fallback ratio、action distribution。
+   - 已完成：`out/policy_tables/pilot_50_measured_summary.csv` 存在，包含 7 个 policy 名称。
+   - summary 包含 p95 TTFT、KV memory、quality loss、violation rate、fallback ratio、action distribution。
 
 3. 报告 controller 开销
-   - 计划要求拆出 `controller_qrp_ms`、`controller_cg_ms`、`controller_stc_ms`。
-   - 当前字段已经在 `PolicyRunRecord` 中预留，但完整 TailGuard 策略还没有接上实测开销。
+   - 已完成：`tailguard` summary 行包含 `controller_qrp_ms`、`controller_cg_ms`、`controller_stc_ms`。
+   - `quality_oracle` summary 行包含 `oracle=True`。
 
 4. 做一次 H0/H1/H2-lite 汇总检查
-   - H0：mean/p95/p99/CVaR/violation 是否能说明 tail-risk。
-   - H1：coverage、worst-group、UCB slack、exact fallback ratio 是否达标。
-   - H2-lite：同一 SLO 下，TailGuardKV 相比最佳可部署 baseline 是否有 p95 TTFT 或显存收益。
+   - 已完成：experiment summary 行输出 `has_h0_tail_metrics`、`has_h1_coverage_metrics`、`has_h2_lite_benefit_metrics`、`deployable_baseline_names`。
+   - 这些字段只表示证据字段齐备，不宣称 H0/H1/H2-lite 科学假设已通过。
 
 ## 已完成但需要继续守住
 
@@ -100,3 +95,26 @@
   - exit code：`2`
   - 输出 CSV：`out/policy_tables/p0_policy_smoke.csv` 未生成
   - 失败原因：上一步 vLLM measured 表未生成，replay 报 `[Errno 2] No such file or directory: 'out/profile_tables/p0_vllm_smoke_profiles.csv'`
+
+## 完成进度（2026-08-02 P1/P2 与 08-01-08-15 runner/baseline）
+
+- 单元验证命令：
+  `python3 -m pytest tests/test_tailguard_core.py tests/test_kivi_cache.py tests/test_h2o_cache.py -q`
+  - 异步日志：`out/logs/p1_p2_pytest.log`
+  - 结果：`160 passed in 3.47s`，exit code `0`
+- dry-run profile schema 命令：
+  `python3 -m run_util.build_profile_table --config configs/pilot_50.yaml --dry-run --output /tmp/tailguardkv_dry_profiles.csv`
+  - exit code：`0`
+  - 输出：400 行，summary 含 `dry_run=true`、`backend_distribution={"synthetic": 50}`、非空 `primary_metric_distribution`、`violation_rate_eps0p05`、`violation_rate_eps0p1`
+- dry-run policy replay 命令：
+  `python3 -m run_util.run_policies --config configs/pilot_50.yaml --measurements /tmp/tailguardkv_dry_profiles.csv --output /tmp/tailguardkv_dry_policy.csv --allow-dry-run-replay`
+  - exit code：`0`
+  - 输出：175 行，summary 含 7 策略；`tailguard` 行含 controller 分项开销；`quality_oracle` 行 `oracle=True`
+- measured smoke 命令：
+  `python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml`
+  - 异步日志：`out/logs/p1_p2_pilot_50_measured.log`
+  - exit code：`0`
+  - profile 表：`out/profile_tables/pilot_50_measured_profiles.csv`，400 行，全部 `measured=True`，`extra_dry_run=true` 行数为 0
+  - policy sweep 表：`out/policy_tables/pilot_50_measured_policy_eps*.csv`，8 个 epsilon/delta/memory 组合
+  - summary 表：`out/policy_tables/pilot_50_measured_summary.csv`
+  - summary 验收：包含 7 个 policy 名称；`tailguard` 行含 `controller_qrp_ms/controller_cg_ms/controller_stc_ms`；`quality_oracle` 行 `oracle=True`；profile 行含 `violation_rate_eps0p05`、`violation_rate_eps0p1`、`primary_metric_distribution`、`backend_distribution`；experiment 行含 H0/H1/H2-lite evidence 字段。

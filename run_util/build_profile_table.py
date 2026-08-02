@@ -52,6 +52,7 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_backend",
     "extra_bits",
     "extra_builtin_request_fallback",
+    "extra_dry_run",
     "extra_env",
     "extra_error_type",
     "extra_failure_stage",
@@ -70,6 +71,7 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_metric_f1",
     "extra_metric_rouge_l",
     "extra_model",
+    "extra_primary_metric",
     "extra_stage_startup_ms",
     "extra_stage_model_load_ms",
     "extra_stage_tokenize_ms",
@@ -86,6 +88,7 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_request_source",
     "extra_returncode",
     "extra_note",
+    "extra_source",
     "extra_strategy",
     "extra_ttft_semantics",
     "extra_unsupported",
@@ -97,6 +100,20 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_vllm_policy_time_ms",
     "extra_vllm_eviction_decision_time_ms",
 ]
+
+
+def _pilot_epsilons(config: dict) -> list[float]:
+    pilot = config.get("pilot", {})
+    values = pilot.get("epsilons") if isinstance(pilot, dict) else None
+    if values is None:
+        return [0.05, 0.10]
+    if isinstance(values, str):
+        values = [values]
+    try:
+        items = list(values)
+    except TypeError:
+        items = [values]
+    return [float(item) for item in items] or [0.05, 0.10]
 
 
 def _request_chunks(requests: list, chunk_size: int = PROFILE_CHUNK_SIZE):
@@ -172,11 +189,12 @@ def build_profile_table(args: argparse.Namespace) -> int:
             print_error(exc, output=output)
             return 2
         write_csv(Path(output), [measurement.to_row() for measurement in measurements])
-        summary = MetricCollector().summarize_profiles(measurements)
+        summary = MetricCollector().summarize_profiles(measurements, epsilons=_pilot_epsilons(config))
         print(json.dumps(json_ready({
             "output": output,
             "rows": len(measurements),
             "imported_from": args.import_measurements,
+            "dry_run": bool(args.dry_run),
             "summary": summary,
         }), indent=2))
         return 0 if all(measurement.ok and measurement.measured for measurement in measurements) else 1
@@ -275,11 +293,12 @@ def build_profile_table(args: argparse.Namespace) -> int:
         }, ensure_ascii=False, indent=2))
         return 2
     write_csv(Path(output), [measurement.to_row() for measurement in measurements])
-    summary = MetricCollector().summarize_profiles(measurements)
+    summary = MetricCollector().summarize_profiles(measurements, epsilons=_pilot_epsilons(config))
     print(json.dumps(json_ready({
         "output": output,
         "rows": len(measurements),
         "builtin_request_fallback": fallback_requests,
+        "dry_run": bool(args.dry_run),
         "summary": summary,
     }), indent=2))
     return 0 if all(measurement.ok for measurement in measurements) else 1

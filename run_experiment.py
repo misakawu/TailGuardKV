@@ -25,15 +25,17 @@ import argparse
 import io
 import json
 from contextlib import redirect_stdout
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable
 
 from experiment_common import config_policies, config_profiles, json_ready, load_config, read_measurements, validate_profile_measurements
-from experiment_summary import summary_rows, write_summary
+from experiment_summary import summary_rows, write_summary, write_total_policy_summary
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
 from run_util.run_policies import run_policies
+from visual.plot_summary import plot_summary
 
 
 PILOT_CONFIG = "configs/pilot.yaml"
@@ -96,8 +98,40 @@ def _policy_output_for_sweep(base_output: str, sweep: dict[str, float], sweep_co
         f"_mem{_slug_number(sweep['memory_budget_mib'])}"
     )
     return str(path.with_name(f"{path.stem}_{suffix}{path.suffix}"))
+
+
+def _resolve_run_dir(run_dir: str | None, config_path: str) -> Path:
+    if run_dir:
+        return Path(run_dir)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path("out") / f"{timestamp}_{Path(config_path).stem}"
+
+
+def _resolve_run_output(output: str, run_dir: Path) -> Path:
+    path = Path(output)
+    if path.is_absolute():
+        return path
+    parts = path.parts
+    if parts and parts[0] == "out":
+        parts = parts[1:]
+    return run_dir.joinpath(*parts)
+
+
+def _derive_total_summary_output(summary_output: str) -> str:
+    path = Path(summary_output)
+    stem = path.stem
+    if stem.endswith("_summary"):
+        stem = f"{stem.removesuffix('_summary')}_total_summary"
+    else:
+        stem = f"{stem}_total_summary"
+    return str(path.with_name(f"{stem}{path.suffix}"))
+
+
 def _print_and_write(payload: dict[str, Any]) -> None:
     write_summary(payload, str(payload.get("summary_output") or PILOT_SUMMARY_OUTPUT))
+    total_summary_output = payload.get("total_summary_output")
+    if total_summary_output:
+        write_total_policy_summary(payload, str(total_summary_output))
 
 
 def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -106,15 +140,30 @@ def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def pilot_smoke_measured(args: argparse.Namespace) -> int:
     config_path = getattr(args, "config", PILOT_CONFIG)
+    run_dir = _resolve_run_dir(getattr(args, "run_dir", None), config_path)
+    fallback_summary_output = str(_resolve_run_output(PILOT_SUMMARY_OUTPUT, run_dir))
+    explicit_total_summary_output = str(getattr(args, "total_summary_output", "") or "")
+    fallback_total_summary_output = str(
+        _resolve_run_output(explicit_total_summary_output, run_dir)
+        if explicit_total_summary_output
+        else _derive_total_summary_output(fallback_summary_output)
+    )
     try:
         config = load_config(Path(config_path))
         profiles = config_profiles(config)
         policies = config_policies(config)
         outputs = config.get("outputs", {})
         outputs = outputs if isinstance(outputs, dict) else {}
-        profile_output = str(outputs.get("smoke_profiles", PILOT_PROFILE_OUTPUT))
-        policy_output = str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT))
-        summary_output = str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT))
+        profile_output = str(_resolve_run_output(str(outputs.get("smoke_profiles", PILOT_PROFILE_OUTPUT)), run_dir))
+        policy_output = str(_resolve_run_output(str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT)), run_dir))
+        summary_output = str(_resolve_run_output(str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT)), run_dir))
+        configured_total_summary_output = outputs.get("smoke_total_summary")
+        if explicit_total_summary_output:
+            total_summary_output = str(_resolve_run_output(explicit_total_summary_output, run_dir))
+        elif configured_total_summary_output:
+            total_summary_output = str(_resolve_run_output(str(configured_total_summary_output), run_dir))
+        else:
+            total_summary_output = _derive_total_summary_output(summary_output)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
             "ok": False,
@@ -122,7 +171,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "step": "load_config",
             "error": str(exc),
             "config": config_path,
-            "summary_output": PILOT_SUMMARY_OUTPUT,
+            "run_dir": str(run_dir),
+            "summary_output": fallback_summary_output,
+            "total_summary_output": fallback_total_summary_output,
         }
         _print_and_write(payload)
         return 2
@@ -141,7 +192,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "return_code": profile_code,
             "step": "build_profile_table",
             "config": config_path,
+            "run_dir": str(run_dir),
             "summary_output": summary_output,
+            "total_summary_output": total_summary_output,
             "diagnostic_output": profile_payload.get("diagnostic_output"),
             "failures": profile_payload.get("failures"),
             "profile": profile_payload,
@@ -164,7 +217,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "step": "validate_profile_table",
             "error": str(exc),
             "config": config_path,
+            "run_dir": str(run_dir),
             "summary_output": summary_output,
+            "total_summary_output": total_summary_output,
             "diagnostic_output": profile_payload.get("diagnostic_output"),
             "failures": profile_payload.get("failures"),
             "profile": profile_payload,
@@ -211,7 +266,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "return_code": policy_code,
         "step": "complete" if policy_code == 0 else "run_policies",
         "config": config_path,
+        "run_dir": str(run_dir),
         "summary_output": summary_output,
+        "total_summary_output": total_summary_output,
         "profiles": profiles,
         "policies": policies,
         "rows": {
@@ -226,6 +283,14 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "policy_runs": policy_runs,
     }
     _print_and_write(payload)
+    visual_outputs: list[Path] = []
+    if policy_code == 0:
+        try:
+            visual_outputs = plot_summary(total_summary_output)
+        except Exception as exc:  # pragma: no cover - visualization must not fail the experiment.
+            payload["visual_error"] = str(exc)
+    payload["visual_outputs"] = [str(path) for path in visual_outputs]
+    _print_and_write(payload)
     return policy_code
 
 
@@ -234,6 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     pilot = subparsers.add_parser("pilot-smoke-measured", help="运行真实 pilot measured smoke 实验。")
     pilot.add_argument("--config", default=PILOT_CONFIG)
+    pilot.add_argument("--run-dir")
+    pilot.add_argument("--total-summary-output", default="")
     pilot.set_defaults(func=pilot_smoke_measured)
     return parser
 

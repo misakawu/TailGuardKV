@@ -126,6 +126,9 @@ def dry_profile_measurement(
         quality_loss=None,
         extra={
             "family": spec.family,
+            "dry_run": "true",
+            "source": "synthetic_schema_check",
+            "backend": "synthetic",
             "ttft_semantics": "unavailable",
             "note": "dry_run仅验证统一表结构，尚未执行真实模型和profile kernel",
         },

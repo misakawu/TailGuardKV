@@ -46,7 +46,7 @@ def _rouge_l_loss(candidate_tokens: Sequence[str], reference_tokens: Sequence[st
 
 
 def select_primary_loss(task: str) -> str:
-    if task == "qa":
+    if task in {"qa", "qa_long_context"}:
         return "f1"
     if task == "summary":
         return "rouge_l"

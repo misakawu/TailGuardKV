@@ -10,18 +10,23 @@ from core_types import PolicyRunRecord, ProfileMeasurement
 class MetricCollector:
     """汇总 profile / policy 结果，覆盖 H0/H1/H2-lite 指标。"""
 
-    def summarize_profiles(self, measurements: list[ProfileMeasurement]) -> dict[str, dict[str, float]]:
+    def summarize_profiles(
+        self,
+        measurements: list[ProfileMeasurement],
+        epsilons: list[float] | tuple[float, ...] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        epsilons = list(epsilons or [0.05, 0.10])
         grouped: dict[str, list[ProfileMeasurement]] = defaultdict(list)
         for measurement in measurements:
             grouped[measurement.profile].append(measurement)
 
-        summary: dict[str, dict[str, float]] = {}
+        summary: dict[str, dict[str, Any]] = {}
         for profile, rows in grouped.items():
             losses = [row.quality_loss for row in rows if row.quality_loss is not None]
             ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
             memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
             kv_memories = [row.kv_cache_memory_mib for row in rows if row.kv_cache_memory_mib is not None]
-            summary[profile] = {
+            metrics: dict[str, Any] = {
                 "count": float(len(rows)),
                 "ok_count": float(sum(1 for row in rows if row.ok)),
                 "measured_count": float(sum(1 for row in rows if row.measured)),
@@ -29,7 +34,6 @@ class MetricCollector:
                 "p95_quality_loss": _percentile(losses, 0.95),
                 "p99_quality_loss": _percentile(losses, 0.99),
                 "cvar_quality_loss": _cvar(losses, 0.95),
-                "violation_rate": _violation_rate(losses, 0.5),
                 "mean_ttft_ms": _mean(ttfts),
                 "p95_ttft_ms": _percentile(ttfts, 0.95),
                 "p99_ttft_ms": _percentile(ttfts, 0.99),
@@ -37,7 +41,12 @@ class MetricCollector:
                 "p95_peak_memory_mib": _percentile(memories, 0.95),
                 "mean_kv_cache_memory_mib": _mean(kv_memories),
                 "p95_kv_cache_memory_mib": _percentile(kv_memories, 0.95),
+                "backend_distribution": _extra_distribution(rows, "backend"),
+                "primary_metric_distribution": _extra_distribution(rows, "primary_metric"),
             }
+            for epsilon in epsilons:
+                metrics[f"violation_rate_eps{_slug_number(epsilon)}"] = _violation_rate(losses, epsilon)
+            summary[profile] = metrics
         return summary
 
     def summarize_policy_runs(
@@ -142,6 +151,7 @@ class MetricCollector:
                 "count": float(len(rows)),
                 "ok_count": float(ok_count),
                 "mean_ttft_ms": _mean(ttfts),
+                "p50_ttft_ms": _percentile(ttfts, 0.50),
                 "p95_ttft_ms": _percentile(ttfts, 0.95),
                 "p99_ttft_ms": _percentile(ttfts, 0.99),
                 "mean_peak_memory_mib": _mean(memories),
@@ -149,6 +159,7 @@ class MetricCollector:
                 "mean_kv_cache_memory_mib": _mean(kv_memories),
                 "p95_kv_cache_memory_mib": _percentile(kv_memories, 0.95),
                 "mean_quality_loss": _mean(losses),
+                "p50_quality_loss": _percentile(losses, 0.50),
                 "p95_quality_loss": _percentile(losses, 0.95),
                 "p99_quality_loss": _percentile(losses, 0.99),
                 "cvar_quality_loss": _cvar(losses, 0.95),
@@ -207,6 +218,18 @@ def _cvar(values: list[float], quantile: float) -> float:
 def _violation_rate(losses: list[float], epsilon: float) -> float:
     finite_values = [value for value in losses if value is not None and not isnan(value)]
     return sum(1 for value in finite_values if value > epsilon) / len(finite_values) if finite_values else float("nan")
+
+
+def _slug_number(value: float) -> str:
+    if value == float("inf"):
+        return "inf"
+    text = f"{value:g}"
+    return text.replace("-", "m").replace(".", "p")
+
+
+def _extra_distribution(rows: list[ProfileMeasurement], key: str) -> dict[str, int]:
+    counts = Counter(str(row.extra.get(key)) for row in rows if row.extra.get(key) not in {None, ""})
+    return dict(sorted(counts.items()))
 
 
 def _delta_slack(rows: list[PolicyRunRecord], epsilon: float, delta: float) -> float:

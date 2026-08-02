@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core_types import ProfileMeasurement, Request
-from metrics.quality import compute_quality_loss
+from metrics.quality import compute_quality_loss, select_primary_loss
 
 
 def default_requests() -> list[Request]:
@@ -171,6 +171,7 @@ def split_measurements(measurements: list[ProfileMeasurement]) -> tuple[list[Pro
 
 
 def annotate_measurement(measurement: ProfileMeasurement, request: Request, fallback_requests: bool) -> ProfileMeasurement:
+    primary_metric = select_primary_loss(request.task)
     return replace(
         measurement,
         extra={
@@ -181,6 +182,7 @@ def annotate_measurement(measurement: ProfileMeasurement, request: Request, fall
             "length_bucket": request.metadata.get("length_bucket", length_bucket(request.prompt_chars)),
             "builtin_request_fallback": str(fallback_requests).lower(),
             "reference": request.reference or "",
+            "primary_metric": primary_metric,
         },
     )
 
@@ -213,24 +215,33 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
     }
     updated: list[ProfileMeasurement] = []
     for row in measurements:
+        task = str(row.extra.get("task") or "unknown")
+        primary_metric = select_primary_loss(task)
         if row.profile in exact and row.ok and row.measured:
             updated.append(
                 replace(
                     row,
                     quality_loss=0.0,
                     quality_score=1.0,
-                    extra={**row.extra, "metric_em": 0.0, "metric_f1": 0.0, "metric_rouge_l": 0.0},
+                    extra={
+                        **row.extra,
+                        "primary_metric": primary_metric,
+                        "metric_em": 0.0,
+                        "metric_f1": 0.0,
+                        "metric_rouge_l": 0.0,
+                    },
                 )
             )
             continue
         if not row.ok or not row.measured:
-            updated.append(row)
+            updated.append(replace(row, extra={**row.extra, "primary_metric": primary_metric}))
             continue
         baseline = full_gpu_by_request.get(row.request_id)
         if baseline is None:
-            updated.append(replace(row, quality_loss=None, quality_score=None))
+            updated.append(replace(row, quality_loss=None, quality_score=None, extra={**row.extra, "primary_metric": primary_metric}))
             continue
         task = str(row.extra.get("task") or baseline.extra.get("task") or "unknown")
+        primary_metric = select_primary_loss(task)
         reference = str(row.extra.get("reference") or baseline.extra.get("reference") or "").strip()
         if reference:
             baseline_loss, _ = compute_quality_loss(task, baseline.output_text, reference)
@@ -243,7 +254,11 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
                 row,
                 quality_loss=loss,
                 quality_score=1.0 - loss,
-                extra={**row.extra, **{f"metric_{key}": value for key, value in metrics.items()}},
+                extra={
+                    **row.extra,
+                    "primary_metric": primary_metric,
+                    **{f"metric_{key}": value for key, value in metrics.items()},
+                },
             )
         )
     return updated

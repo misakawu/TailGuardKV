@@ -24,7 +24,7 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 conda run -n tailguardkv-base python run_profile_test.py --config configs/pilot_50.yaml
 ```
 
-`configs/pilot_50.yaml` 是快速 measured gate，使用与 `configs/pilot.yaml` 相同的 8-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
+`configs/pilot_50.yaml` 是 7 策略快速 measured smoke gate：同一张 measured profile 表会回放 `full_lru`、`static_best`、`static_safe`、`tailguard`、`quality_oracle`、`utility_dynamic`、`uncalibrated_dynamic`。它使用与 `configs/pilot.yaml` 相同的 8-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
 
 正式 profile grid 为：
 
@@ -62,8 +62,7 @@ out/policy_tables/pilot_50_measured_policy_eps0p05_delta0p1_mem5000.csv
 summary 使用宽表 CSV，一行对应 `experiment`、单个 `profile` 或单个 `policy` 汇总对象。
 左侧列优先放置 `section`、`name`、`ok`、`count`、`ok_count`、
 `mean_ttft_ms`、`p95_ttft_ms`、`mean_peak_memory_mib`、`p95_peak_memory_mib`、
-`mean_quality_loss`、`p95_quality_loss`、`violation_rate`、`delta_slack` 等关键对比指标。
-policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`unsafe_action_count` 和逐请求均值 `candidate_safe_count`。summary 宽表不再输出 `return_code`、`step`、`profile_output`、`policy_output`、`summary_output`。
+`mean_quality_loss`、`p95_quality_loss`、`violation_rate`、`delta_slack` 等关键对比指标。profile summary 使用配置里的 `pilot.epsilons` 输出 `violation_rate_eps0p05`、`violation_rate_eps0p1` 等字段，并包含 `backend_distribution`、`primary_metric_distribution`。policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`unsafe_action_count`、逐请求均值 `candidate_safe_count`、`controller_qrp_ms`、`controller_cg_ms`、`controller_stc_ms` 和 `oracle` 标记。experiment 行还会输出 `has_h0_tail_metrics`、`has_h1_coverage_metrics`、`has_h2_lite_benefit_metrics` 与 `deployable_baseline_names`；这些字段只表示验收证据字段齐备，不表示论文假设已经成立。summary 宽表不再输出 `return_code`、`step`、`profile_output`、`policy_output`、`summary_output`。
 配置加载或 profile 表校验错误返回 `2`；profile 或 policy 阶段运行失败时返回对应阶段的非零返回码。
 
 自 2026-07-30 起，measured pilot 还满足以下实验前提：
@@ -71,6 +70,7 @@ policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`u
 - KIVI/H2O 与 exact profile 共用 `transformers.generate()` 主链；差异只体现在 attention/cache 策略与 proof 计数上。
 - `annotate_measurement()` 会把请求自带 `reference` 写入 measurement，后续 quality 计算统一复用。
 - `quality_loss` 优先定义为同一 `reference` 下的任务分数差：`clamp(full_gpu_score - candidate_score, 0, 1)`；只有缺少 `reference` 时才回退到稳健文本比较。
+- QA 与长上下文 QA 的主指标是 F1，摘要主指标是 ROUGE-L；profile row 会用 `extra_primary_metric` 写清当前任务主指标。
 - 稳健文本比较会做 Unicode、大小写、空白与标点归一化，`The` / `The!` / `baselines!!!!` 不再被当成完全不同的词。
 - pilot 预算固定为 `[4900, 5000] MiB`，用来逼出 exact/lossy 的预算边界。
 - `exact_fallback_ratio` 表示“被迫 fallback 到 exact 的比例”；`exact_action_ratio` 表示“最终 exact 动作占比”。
@@ -92,9 +92,11 @@ python3 -m run_util.run_policies --config configs/pilot_50.yaml --measurements o
 ```
 
 `run_util.build_profile_table` 默认是 dry-run；正式 measured profile 需要显式传入
-`--no-dry-run`。`run_util.run_policies` 默认拒绝 dry-run replay，只接受
+`--no-dry-run`。dry-run 行会标记 `extra_dry_run=true`、`extra_source=synthetic_schema_check`、`extra_backend=synthetic`，只用于 schema/debug。`run_util.run_policies` 默认拒绝 dry-run replay，只接受
 `ok=True, measured=True` 且覆盖配置中全部 profile 的测量表；`--allow-dry-run-replay`
 仅用于 smoke/debug。
+
+当前 `full`、`kivi`、`h2o` measured profile 证明的是 Transformers/Qwen2 真实模型 runtime 路径，不等同于 vLLM 或 LMCache serving backend 验收。vLLM/LMCache 需要单独通过对应 adapter/backend 的 smoke 表，并在输出中以 `extra_backend=vllm` 或 `extra_backend=lmcache` 区分。
 
 ## E0 三策略复现
 
