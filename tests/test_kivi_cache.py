@@ -7,14 +7,28 @@ from profiles.kivi_cache import KIVILayerState, KIVICache, build_kivi_cache
 
 
 class FakeTensor:
-    def __init__(self, values):
+    def __init__(self, values, *, shape=None, element_size=2, dtype="float16"):
         self.values = values
+        self.shape = shape
+        self._element_size = element_size
+        self.dtype = dtype
 
     def index_select(self, dim: int, index):
         if dim != 0:
             raise AssertionError(f"unexpected dim {dim}")
         selected = [self.values[int(i)] for i in index.values]
         return FakeTensor(selected)
+
+    def numel(self):
+        if self.shape is not None:
+            total = 1
+            for dim in self.shape:
+                total *= int(dim)
+            return total
+        return len(self.values)
+
+    def element_size(self):
+        return self._element_size
 
 
 class FakeIndex:
@@ -86,6 +100,13 @@ class KIVICacheTest(unittest.TestCase):
         self.assertEqual(state.key_q.values, ["k1", "k0"])
         self.assertEqual(state.value_full.values, ["vf1", "vf0"])
         self.assertEqual(state.kv_seq_len, 9)
+
+    def test_kivi_cache_memory_sums_quantized_residual_and_scale_tensors(self) -> None:
+        cache = KIVICache(1, residual_length=32, group_size=32, k_bits=4, v_bits=4)
+        tensors = [FakeTensor([], shape=(2,), element_size=1) for _ in range(8)]
+        cache.update_quantized(0, KIVILayerState(*tensors, kv_seq_len=4))
+
+        self.assertEqual(cache.kv_cache_memory_mib(), 16 / 1024 / 1024)
 
 
 if __name__ == "__main__":

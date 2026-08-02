@@ -27,7 +27,7 @@ from experiment_common import (
 )
 from metrics import MetricCollector
 from profiles.registry import build_profile_adapters
-from run_cli_common import add_profile_table_arguments, print_error, run_command
+from run_util.cli_common import add_profile_table_arguments, print_error, run_command
 
 
 PROFILE_CHUNK_SIZE = 10
@@ -39,6 +39,7 @@ PROFILE_TABLE_FIELDNAMES = [
     "ok",
     "output_text",
     "peak_memory_mib",
+    "kv_cache_memory_mib",
     "profile",
     "quality_loss",
     "quality_score",
@@ -57,6 +58,9 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_family",
     "extra_h2o_recent_size",
     "extra_h2o_selected_size",
+    "extra_h2o_kept_tokens",
+    "extra_h2o_cache_budget",
+    "extra_h2o_prompt_tokens",
     "extra_kivi_bits",
     "extra_kivi_effective_mode",
     "extra_kivi_group_size",
@@ -72,6 +76,8 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_stage_transfer_ms",
     "extra_stage_generate_ms",
     "extra_stage_decode_ms",
+    "extra_stage_prefill_ms",
+    "extra_stage_first_token_ms",
     "extra_stage_total_ms",
     "extra_original_request_id",
     "extra_profile_note",
@@ -81,6 +87,7 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_returncode",
     "extra_note",
     "extra_strategy",
+    "extra_ttft_semantics",
     "extra_unsupported",
     "extra_worker_mode",
     "extra_vllm_cache_hits",
@@ -176,6 +183,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
     try:
         profiles = config_profiles(config)
         runtime = config_runtime(config)
+        require_ttft = bool(runtime.get("require_ttft", False))
         adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
         requests, fallback_requests = load_requests(config)
         max_requests = int(runtime.get("max_requests", 0) or 0)
@@ -189,8 +197,11 @@ def build_profile_table(args: argparse.Namespace) -> int:
             for request in requests
         ]
         output_path = Path(output)
+        diagnostic_output = _failed_chunks_output(output_path)
         if output_path.exists():
             output_path.unlink()
+        if diagnostic_output.exists():
+            diagnostic_output.unlink()
         measurements = []
         exact = exact_profiles(profiles, config)
         for adapter in adapters:
@@ -214,6 +225,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
                             output,
                             required_profiles=[spec.name],
                             require_measured=not args.dry_run,
+                            require_ttft=require_ttft and not args.dry_run,
                         )
                     except ValueError as exc:
                         diagnostic_output = _failed_chunks_output(output)
@@ -252,6 +264,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
             output,
             required_profiles=profiles,
             require_measured=not args.dry_run,
+            require_ttft=bool(config_runtime(config).get("require_ttft", False)) and not args.dry_run,
         )
     except ValueError as exc:
         print(json.dumps({

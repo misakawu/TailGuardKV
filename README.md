@@ -13,7 +13,6 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
 推荐的 profile 优化验证流程为：
 
 ```bash
-python3 run_check_profiles.py --config configs/pilot_50.yaml --timeout 180
 python3 run_profile_test.py --config configs/pilot_50.yaml
 python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
 python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
@@ -35,9 +34,9 @@ conda run -n tailguardkv-base python run_profile_test.py --config configs/pilot_
 
 执行流程为：
 
-1. 调用 `run_build_profile_table.py` 的 `build_profile_table`，以真实 measured 模式生成 profile 表。
+1. 调用 `run_util.build_profile_table` 的 `build_profile_table`，以真实 measured 模式生成 profile 表。
 2. 读取并校验生成的 profile 表，要求配置中的全部 profile 都存在且 `measured=True`。
-3. 按 `pilot.epsilons x pilot.deltas x pilot.memory_budgets_mib` 展开 policy 参数组合，逐个调用 `run_run_policies.py` 的 `run_policies`，用同一 profile 表做 measured replay policy 评估。
+3. 按 `pilot.epsilons x pilot.deltas x pilot.memory_budgets_mib` 展开 policy 参数组合，逐个调用 `run_util.run_policies` 的 `run_policies`，用同一 profile 表做 measured replay policy 评估。
 4. 将完整 summary 写入宽表 CSV 文件；多组合 policy sweep 会在 summary 中为每个组合分别展开 policy 汇总行。
 
 `run_profile_test.py` 复用同一套 profile 构建和校验逻辑，但在第 2 步后立即停止，不会触发 policy 层。
@@ -76,7 +75,7 @@ policy summary 额外输出 `unique_action_count`、`identical_to_full_lru`、`u
 - pilot 预算固定为 `[4900, 5000] MiB`，用来逼出 exact/lossy 的预算边界。
 - `exact_fallback_ratio` 表示“被迫 fallback 到 exact 的比例”；`exact_action_ratio` 表示“最终 exact 动作占比”。
 
-Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile CSV 只保留此前成功 chunk，失败 chunk 会写入同目录 sidecar 诊断表 `<profile_stem>_failed_chunks.csv`，并在 summary 的 `diagnostic_output`、`failures` 列暴露失败位置和 error，便于复跑定位。
+Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile CSV 只保留此前成功 chunk，失败 chunk 会写入同目录 sidecar 诊断表 `<profile_stem>_failed_chunks.csv`，并在 summary 的 `diagnostic_output`、`failures` 列暴露失败位置和 error，便于复跑定位。新一轮 profile 表生成开始时会先清理同 stem 的旧 sidecar，避免成功复跑后遗留历史失败诊断。
 
 `policies.record_rejected_unsafe: true` 会让 `utility_dynamic` 和 `uncalibrated_dynamic` 在 calibrated unsafe lossy 动作上强制回退到校准集 p95 TTFT 最低的 exact profile，并在 policy CSV 写入 `rejected_profile`、`rejected_pred_loss`、`rejected_risk_upper`。关闭该记录开关时仍会强制回退，但 rejected 字段保持为空。配套 summary 中：
 
@@ -84,16 +83,16 @@ Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile C
 - `exact_fallback_ratio` 只统计“最终 exact 且带 fallback_reason”的比例
 - `exact_action_ratio` 统计所有最终 exact 动作比例
 
-底层 runner 仍可独立调用，适合调试或复现实验中间产物：
+内部 runner 已收敛到 `run_util` 包；如需调试或复现实验中间产物，可用模块方式调用：
 
 ```bash
-python3 run_build_profile_table.py --config configs/pilot_50.yaml --no-dry-run --output out/profile_tables/pilot_50_measured_profiles.csv
+python3 -m run_util.build_profile_table --config configs/pilot_50.yaml --no-dry-run --output out/profile_tables/pilot_50_measured_profiles.csv
 python3 run_profile_test.py --config configs/pilot_50.yaml --output out/profile_tables/pilot_50_measured_profiles.csv --summary-output out/profile_tables/pilot_50_profile_summary.csv
-python3 run_run_policies.py --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output out/policy_tables/pilot_50_measured_policy.csv
+python3 -m run_util.run_policies --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output out/policy_tables/pilot_50_measured_policy.csv
 ```
 
-`run_build_profile_table.py` 默认是 dry-run；正式 measured profile 需要显式传入
-`--no-dry-run`。`run_run_policies.py` 默认拒绝 dry-run replay，只接受
+`run_util.build_profile_table` 默认是 dry-run；正式 measured profile 需要显式传入
+`--no-dry-run`。`run_util.run_policies` 默认拒绝 dry-run replay，只接受
 `ok=True, measured=True` 且覆盖配置中全部 profile 的测量表；`--allow-dry-run-replay`
 仅用于 smoke/debug。
 
@@ -103,12 +102,12 @@ E0 只验收 `full_gpu`、`kivi_4bit`、`h2o_heavy_hitter` 三类 profile，三�
 Qwen2.5 模型、同一组中等长度请求和同一条 quality_loss 计算链路：
 
 ```bash
-conda run -n tailguardkv-base python run_check_profiles.py --config configs/e0_reproduce.yaml --output out/profile_tables/e0_profile_smoke.csv
-conda run -n tailguardkv-base python run_build_profile_table.py --config configs/e0_reproduce.yaml --no-dry-run --output out/profile_tables/e0_measured_profiles.csv
-conda run -n tailguardkv-base python run_run_policies.py --config configs/e0_reproduce.yaml --measurements out/profile_tables/e0_measured_profiles.csv --output out/policy_tables/e0_policy.csv
+conda run -n tailguardkv-base python -m run_util.check_profiles --config configs/e0_reproduce.yaml --output out/profile_tables/e0_profile_smoke.csv
+conda run -n tailguardkv-base python -m run_util.build_profile_table --config configs/e0_reproduce.yaml --no-dry-run --output out/profile_tables/e0_measured_profiles.csv
+conda run -n tailguardkv-base python -m run_util.run_policies --config configs/e0_reproduce.yaml --measurements out/profile_tables/e0_measured_profiles.csv --output out/policy_tables/e0_policy.csv
 ```
 
-`run_run_policies.py` 默认要求 profile 表全部为 `ok=True, measured=True`，且每个请求都包含
+`run_util.run_policies` 默认要求 profile 表全部为 `ok=True, measured=True`，且每个请求都包含
 配置中的三个 profile。`--allow-dry-run-replay` 仅保留给 smoke/debug。
 
 ## Pilot 资产准备
@@ -120,7 +119,7 @@ XSum validation 取到 300 条，均按原始顺序取有效样本：
 ```bash
 conda run -n tailguardkv-base python env_asset_prepare/prepare_pilot_assets.py --download-models --download-data --hf-endpoint https://hf-mirror.com
 conda run -n tailguardkv-base python env_asset_prepare/check_envs.py --json
-conda run -n tailguardkv-base python run_check_profiles.py --config configs/pilot_50.yaml --timeout 180
+conda run -n tailguardkv-base python run_profile_test.py --config configs/pilot_50.yaml
 conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
 conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 ```

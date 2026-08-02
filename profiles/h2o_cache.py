@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from profiles.cache_common import Cache, init_cache_list, reorder_tensor_like
+from profiles.cache_common import Cache, init_cache_list, reorder_tensor_like, tensors_memory_mib
 
 
 @dataclass(slots=True)
@@ -92,6 +92,14 @@ class H2OCache(Cache):
                 continue
             legacy.append((state.key_states, state.value_states, state.hh_score, state.logical_seq_len))
         return tuple(legacy)
+
+    def kv_cache_memory_mib(self) -> float:
+        total = 0.0
+        for state in self.layers:
+            if state is None:
+                continue
+            total += tensors_memory_mib(state.key_states, state.value_states, state.hh_score)
+        return total
 
 
 def build_h2o_cache(model_config: Any, *, heavy_size: int, recent_size: int) -> H2OCache:

@@ -20,6 +20,7 @@ class MetricCollector:
             losses = [row.quality_loss for row in rows if row.quality_loss is not None]
             ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
             memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
+            kv_memories = [row.kv_cache_memory_mib for row in rows if row.kv_cache_memory_mib is not None]
             summary[profile] = {
                 "count": float(len(rows)),
                 "ok_count": float(sum(1 for row in rows if row.ok)),
@@ -34,6 +35,8 @@ class MetricCollector:
                 "p99_ttft_ms": _percentile(ttfts, 0.99),
                 "mean_peak_memory_mib": _mean(memories),
                 "p95_peak_memory_mib": _percentile(memories, 0.95),
+                "mean_kv_cache_memory_mib": _mean(kv_memories),
+                "p95_kv_cache_memory_mib": _percentile(kv_memories, 0.95),
             }
         return summary
 
@@ -52,6 +55,7 @@ class MetricCollector:
         for policy, rows in grouped.items():
             ttfts: list[float] = []
             memories: list[float] = []
+            kv_memories: list[float] = []
             losses: list[float] = []
             pred_losses: list[float] = []
             risk_uppers: list[float] = []
@@ -81,6 +85,8 @@ class MetricCollector:
                     ttfts.append(row.ttft_ms)
                 if row.peak_memory_mib is not None:
                     memories.append(row.peak_memory_mib)
+                if row.kv_cache_memory_mib is not None:
+                    kv_memories.append(row.kv_cache_memory_mib)
                 if row.quality_loss is not None:
                     losses.append(row.quality_loss)
                     known_count += 1
@@ -140,6 +146,8 @@ class MetricCollector:
                 "p99_ttft_ms": _percentile(ttfts, 0.99),
                 "mean_peak_memory_mib": _mean(memories),
                 "p95_peak_memory_mib": _percentile(memories, 0.95),
+                "mean_kv_cache_memory_mib": _mean(kv_memories),
+                "p95_kv_cache_memory_mib": _percentile(kv_memories, 0.95),
                 "mean_quality_loss": _mean(losses),
                 "p95_quality_loss": _percentile(losses, 0.95),
                 "p99_quality_loss": _percentile(losses, 0.99),

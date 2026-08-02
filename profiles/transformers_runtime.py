@@ -8,6 +8,9 @@ import time
 import traceback
 from typing import Any
 
+from profiles.cache_common import legacy_kv_cache_memory_mib
+from profiles.generation_timing import generate_with_first_token_timing
+
 
 def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
     requests = list(payload.get("requests") or [])
@@ -116,7 +119,6 @@ def _run_one_request(runtime: dict[str, Any], request: dict[str, Any]) -> dict[s
     try:
         tokenize_start = time.perf_counter()
         inputs = tokenizer(str(request.get("prompt") or ""), return_tensors="pt")
-        prompt_tokens = int(inputs["input_ids"].shape[-1])
         stage_tokenize_ms = (time.perf_counter() - tokenize_start) * 1000
     except Exception as exc:
         return _failure_result(
@@ -151,16 +153,19 @@ def _run_one_request(runtime: dict[str, Any], request: dict[str, Any]) -> dict[s
     try:
         generate_start = time.perf_counter()
         with torch.inference_mode():
-            output_ids = model.generate(
-                **inputs,
+            generated = generate_with_first_token_timing(
+                model,
+                tokenizer,
+                torch,
+                inputs,
+                request_start=request_start,
+                device=device,
                 max_new_tokens=int(request.get("max_new_tokens") or 16),
-                do_sample=False,
+                has_cuda=has_cuda,
                 use_cache=bool(request.get("use_cache", True)),
                 pad_token_id=tokenizer.eos_token_id,
             )
-        if has_cuda:
-            torch.cuda.synchronize(device)
-        stage_generate_ms = (time.perf_counter() - generate_start) * 1000
+        stage_generate_ms = float(generated["stage_generate_ms"])
     except Exception as exc:
         return _failure_result(
             error=f"{type(exc).__name__}: {str(exc)[:1200]}",
@@ -174,27 +179,6 @@ def _run_one_request(runtime: dict[str, Any], request: dict[str, Any]) -> dict[s
             worker_mode="batch",
         )
 
-    try:
-        decode_start = time.perf_counter()
-        generated_ids = output_ids[0][prompt_tokens:]
-        output_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-        if not output_text:
-            output_text = " ".join(str(int(token)) for token in generated_ids)
-        stage_decode_ms = (time.perf_counter() - decode_start) * 1000
-    except Exception as exc:
-        return _failure_result(
-            error=f"{type(exc).__name__}: {str(exc)[:1200]}",
-            failure_stage="decode",
-            stage_startup_ms=float(runtime["startup_ms"]),
-            stage_model_load_ms=float(runtime["model_load_ms"]),
-            stage_tokenize_ms=stage_tokenize_ms,
-            stage_transfer_ms=stage_transfer_ms,
-            stage_generate_ms=stage_generate_ms,
-            stage_decode_ms=stage_decode_ms,
-            stage_total_ms=(time.perf_counter() - request_start) * 1000,
-            worker_mode="batch",
-        )
-
     peak_memory_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     if has_cuda:
         peak_memory_mib = runtime["torch"].cuda.max_memory_allocated(device) / 1024 / 1024
@@ -202,10 +186,11 @@ def _run_one_request(runtime: dict[str, Any], request: dict[str, Any]) -> dict[s
     return {
         "ok": True,
         "measured": True,
-        "output_text": output_text,
+        "output_text": generated["output_text"],
         "latency_ms": total_ms,
-        "ttft_ms": total_ms,
+        "ttft_ms": generated["ttft_ms"],
         "peak_memory_mib": peak_memory_mib,
+        "kv_cache_memory_mib": legacy_kv_cache_memory_mib(generated.get("past_key_values")),
         "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
         "stage_startup_ms": float(runtime["startup_ms"]),
         "stage_model_load_ms": float(runtime["model_load_ms"]),
@@ -213,7 +198,10 @@ def _run_one_request(runtime: dict[str, Any], request: dict[str, Any]) -> dict[s
         "stage_transfer_ms": stage_transfer_ms,
         "stage_generate_ms": stage_generate_ms,
         "stage_decode_ms": stage_decode_ms,
+        "stage_prefill_ms": generated["stage_prefill_ms"],
+        "stage_first_token_ms": generated["stage_first_token_ms"],
         "stage_total_ms": total_ms,
+        "ttft_semantics": "first_token",
         "worker_mode": "batch",
     }
 

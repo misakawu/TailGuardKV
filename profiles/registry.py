@@ -4,6 +4,7 @@ from profiles.base import ProfileAdapter
 from profiles.full import FullKVAdapter
 from profiles.h2o import H2OAdapter
 from profiles.kivi import KIVIAdapter
+from profiles.vllm import VLLMAdapter
 
 
 def build_profile_adapters(
@@ -14,6 +15,7 @@ def build_profile_adapters(
         "full": FullKVAdapter,
         "kivi": KIVIAdapter,
         "h2o": H2OAdapter,
+        "vllm": VLLMAdapter,
     }
     selected = names or list(registry)
     unknown = sorted(set(selected) - set(registry))

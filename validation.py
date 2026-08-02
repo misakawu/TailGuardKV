@@ -13,8 +13,8 @@ REQUIRED_PROFILE_FIELDS = {
     "measured",
     "output_text",
     "quality_loss",
-    "ttft_ms",
     "peak_memory_mib",
+    "kv_cache_memory_mib",
     "task",
     "length_bucket",
     "split",
@@ -32,6 +32,7 @@ def validate_profile_measurements(
     path: Path | str = "<memory>",
     required_profiles: list[str] | None = None,
     require_measured: bool = False,
+    require_ttft: bool = False,
 ) -> None:
     if not measurements:
         raise ValueError(f"profile 表为空: {path}")
@@ -46,10 +47,22 @@ def validate_profile_measurements(
         if measurement.ok and measurement.measured:
             if measurement.quality_loss is None:
                 missing.append("quality_loss")
-            if measurement.ttft_ms is None:
+            if measurement.latency_ms is None:
+                missing.append("latency_ms")
+            if (
+                measurement.extra.get("ttft_semantics") == "first_token"
+                and measurement.ttft_ms is None
+            ):
                 missing.append("ttft_ms")
+            if require_ttft:
+                if measurement.ttft_ms is None:
+                    missing.append("ttft_ms")
+                if measurement.extra.get("ttft_semantics") != "first_token":
+                    missing.append("ttft_semantics")
             if measurement.peak_memory_mib is None:
                 missing.append("peak_memory_mib")
+            if measurement.kv_cache_memory_mib is None:
+                missing.append("kv_cache_memory_mib")
             if not measurement.extra.get("task"):
                 missing.append("task")
             if not measurement.extra.get("length_bucket"):

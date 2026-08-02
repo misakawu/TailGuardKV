@@ -6,6 +6,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from profiles.cache_common import legacy_kv_cache_memory_mib
+from profiles.generation_timing import generate_with_first_token_timing
+
 
 def import_runtime_modules(*, use_kivi: bool) -> dict[str, Any]:
     import torch
@@ -100,7 +103,6 @@ def generate_decode(
     try:
         tokenize_start = time.perf_counter()
         inputs = tokenized_inputs or tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")
-        prompt_len = int(inputs["input_ids"].shape[-1])
         if tokenized_inputs is None:
             stage_tokenize_ms = (time.perf_counter() - tokenize_start) * 1000
         max_new_tokens = int(payload.get("max_new_tokens") or 16)
@@ -138,18 +140,20 @@ def generate_decode(
     try:
         generate_start = time.perf_counter()
         with torch.inference_mode():
-            generate_kwargs = {
-                **inputs,
-                "max_new_tokens": max_new_tokens,
-                "do_sample": False,
-                "use_cache": True,
-                "return_dict_in_generate": True,
-            }
-            if past_key_values is not None:
-                generate_kwargs["past_key_values"] = past_key_values
-            generated = model.generate(**generate_kwargs)
-        torch.cuda.synchronize(device)
-        stage_generate_ms = (time.perf_counter() - generate_start) * 1000
+            generated = generate_with_first_token_timing(
+                model,
+                tokenizer,
+                torch,
+                inputs,
+                request_start=request_start,
+                device=device,
+                max_new_tokens=max_new_tokens,
+                past_key_values=past_key_values,
+                has_cuda=True,
+                use_cache=True,
+                pad_token_id=getattr(tokenizer, "eos_token_id", None),
+            )
+        stage_generate_ms = float(generated["stage_generate_ms"])
     except Exception as exc:
         return failure(
             payload,
@@ -164,37 +168,16 @@ def generate_decode(
             worker_mode=worker_mode,
         )
 
-    try:
-        decode_start = time.perf_counter()
-        sequences = generated.sequences if hasattr(generated, "sequences") else generated
-        output_ids = sequence_suffix(sequences, prompt_len)
-        output_text = tokenizer.decode(output_ids, skip_special_tokens=True)
-        if not output_text:
-            output_text = " ".join(str(token) for token in output_ids)
-        stage_decode_ms = (time.perf_counter() - decode_start) * 1000
-    except Exception as exc:
-        return failure(
-            payload,
-            f"{type(exc).__name__}: {str(exc)[:1200]}",
-            failure_stage="decode",
-            stage_startup_ms=stage_startup_ms,
-            stage_model_load_ms=stage_model_load_ms,
-            stage_tokenize_ms=stage_tokenize_ms,
-            stage_transfer_ms=stage_transfer_ms,
-            stage_generate_ms=stage_generate_ms,
-            stage_decode_ms=stage_decode_ms,
-            stage_total_ms=(time.perf_counter() - request_start) * 1000,
-            worker_mode=worker_mode,
-        )
-
     total_ms = (time.perf_counter() - request_start) * 1000
+    kv_cache_memory_mib = _cache_memory_mib(generated.get("past_key_values"))
     return {
         "ok": True,
         "measured": True,
-        "output_text": output_text,
+        "output_text": generated["output_text"],
         "latency_ms": total_ms,
-        "ttft_ms": total_ms,
+        "ttft_ms": generated["ttft_ms"],
         "peak_memory_mib": torch.cuda.max_memory_allocated(device) / 1024 / 1024,
+        "kv_cache_memory_mib": kv_cache_memory_mib,
         "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
         "stage_startup_ms": stage_startup_ms,
         "stage_model_load_ms": stage_model_load_ms,
@@ -202,9 +185,20 @@ def generate_decode(
         "stage_transfer_ms": stage_transfer_ms,
         "stage_generate_ms": stage_generate_ms,
         "stage_decode_ms": stage_decode_ms,
+        "stage_prefill_ms": generated["stage_prefill_ms"],
+        "stage_first_token_ms": generated["stage_first_token_ms"],
         "stage_total_ms": total_ms,
+        "ttft_semantics": "first_token",
         "worker_mode": worker_mode,
     }
+
+
+def _cache_memory_mib(cache: Any) -> float:
+    if cache is None:
+        return 0.0
+    if hasattr(cache, "kv_cache_memory_mib"):
+        return float(cache.kv_cache_memory_mib())
+    return legacy_kv_cache_memory_mib(cache)
 
 
 def sequence_suffix(sequences: Any, prompt_len: int) -> list[int]:

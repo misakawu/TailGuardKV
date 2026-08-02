@@ -32,6 +32,8 @@ policies:
     - full_lru
     - static_best
     - static_safe
+    - tailguard
+    - quality_oracle
     - utility_dynamic
     - uncalibrated_dynamic
 
@@ -47,6 +49,7 @@ data:
 
 profile_smoke:
   max_new_tokens: 16
+  require_ttft: true
   timeout_s: 180
   repeat: 1
   local_files_only: true

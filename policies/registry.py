@@ -3,8 +3,10 @@ from __future__ import annotations
 from core_types import ProfileMeasurement
 from policies.base import Policy
 from policies.full_lru import FullLRUPolicy
+from policies.quality_oracle import QualityOraclePolicy
 from policies.static_best import StaticBestPolicy
 from policies.static_safe import StaticSafePolicy
+from policies.tailguard import TailGuardPolicy
 from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
 
@@ -24,11 +26,26 @@ def build_policies(
     for item in names:
         name, options = _normalize_policy_config(item)
         if name == "full_lru":
-            policies.append(FullLRUPolicy())
+            profile = "engine_full_lru" if "engine_full_lru" in profiles and "full_gpu" not in profiles else "full_gpu"
+            policies.append(FullLRUPolicy(profile))
         elif name == "static_best":
             policies.append(StaticBestPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
         elif name == "static_safe":
             policies.append(StaticSafePolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
+        elif name == "tailguard":
+            policies.append(
+                TailGuardPolicy(
+                    calibration_measurements,
+                    profiles,
+                    epsilon,
+                    delta,
+                    exact_profiles,
+                    memory_budget_mib,
+                    record_rejected_unsafe=record_rejected_unsafe,
+                )
+            )
+        elif name == "quality_oracle":
+            policies.append(QualityOraclePolicy(oracle_measurements, profiles, epsilon, delta, exact_profiles))
         elif name == "utility_dynamic":
             policies.append(
                 UtilityDynamicPolicy(

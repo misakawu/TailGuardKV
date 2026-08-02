@@ -119,12 +119,14 @@ def dry_profile_measurement(
         measured=False,
         output_text=request.prompt,
         latency_ms=latency_ms,
-        ttft_ms=latency_ms,
+        ttft_ms=None,
         peak_memory_mib=peak_memory_mib,
+        kv_cache_memory_mib=peak_memory_mib,
         resident_memory_mib=peak_memory_mib,
         quality_loss=None,
         extra={
             "family": spec.family,
+            "ttft_semantics": "unavailable",
             "note": "dry_run仅验证统一表结构，尚未执行真实模型和profile kernel",
         },
     )
@@ -328,6 +330,7 @@ def transformers_profile_measurement(
         latency_ms=_optional_float(result.get("latency_ms")),
         ttft_ms=_optional_float(result.get("ttft_ms")),
         peak_memory_mib=_optional_float(result.get("peak_memory_mib")),
+        kv_cache_memory_mib=_optional_float(result.get("kv_cache_memory_mib")),
         resident_memory_mib=_optional_float(result.get("resident_memory_mib")),
         extra=result_extra,
     )
@@ -417,6 +420,7 @@ def qwen2_kv_profile_measurement(
             "latency_ms",
             "ttft_ms",
             "peak_memory_mib",
+            "kv_cache_memory_mib",
             "resident_memory_mib",
         }:
             continue
@@ -436,6 +440,7 @@ def qwen2_kv_profile_measurement(
         latency_ms=_optional_float(result.get("latency_ms")),
         ttft_ms=_optional_float(result.get("ttft_ms")),
         peak_memory_mib=_optional_float(result.get("peak_memory_mib")),
+        kv_cache_memory_mib=_optional_float(result.get("kv_cache_memory_mib")),
         resident_memory_mib=_optional_float(result.get("resident_memory_mib")),
         extra=result_extra,
     )
@@ -588,6 +593,7 @@ def _measurements_from_batch_result(
                 latency_ms=row.latency_ms,
                 ttft_ms=row.ttft_ms,
                 peak_memory_mib=row.peak_memory_mib,
+                kv_cache_memory_mib=row.kv_cache_memory_mib,
                 resident_memory_mib=row.resident_memory_mib,
                 quality_score=row.quality_score,
                 quality_loss=row.quality_loss,
@@ -617,6 +623,7 @@ def _measurement_from_result(
         "latency_ms",
         "ttft_ms",
         "peak_memory_mib",
+        "kv_cache_memory_mib",
         "resident_memory_mib",
     }
     for key, value in item.items():
@@ -638,6 +645,7 @@ def _measurement_from_result(
         latency_ms=_optional_float(item.get("latency_ms")),
         ttft_ms=_optional_float(item.get("ttft_ms")),
         peak_memory_mib=_optional_float(item.get("peak_memory_mib")),
+        kv_cache_memory_mib=_optional_float(item.get("kv_cache_memory_mib")),
         resident_memory_mib=_optional_float(item.get("resident_memory_mib")),
         extra=result_extra,
     )
@@ -752,12 +760,13 @@ def _transformers_profile_code(payload: dict[str, object]) -> str:
                 torch.cuda.synchronize()
             start = time.perf_counter()
             with torch.inference_mode():
-                output_ids = model.generate(
+                generated = model.generate(
                     **inputs,
                     max_new_tokens=int(payload["max_new_tokens"]),
                     do_sample=False,
                     use_cache=bool(payload["use_cache"]),
                     pad_token_id=tokenizer.eos_token_id,
+                    return_dict_in_generate=True,
                 )
             if device_mode != "cpu" and has_cuda:
                 torch.cuda.synchronize()
@@ -766,6 +775,7 @@ def _transformers_profile_code(payload: dict[str, object]) -> str:
                 peak_memory_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
             latency_ms = (time.perf_counter() - start) * 1000
             prompt_tokens = int(inputs["input_ids"].shape[-1])
+            output_ids = generated.sequences if hasattr(generated, "sequences") else generated
             generated_ids = output_ids[0][prompt_tokens:]
             output_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
             if not output_text:
@@ -774,9 +784,11 @@ def _transformers_profile_code(payload: dict[str, object]) -> str:
                 "ok": True,
                 "output_text": output_text,
                 "latency_ms": latency_ms,
-                "ttft_ms": latency_ms,
+                "ttft_ms": None,
                 "peak_memory_mib": peak_memory_mib,
+                "kv_cache_memory_mib": 0.0,
                 "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+                "ttft_semantics": "unavailable",
             }}, ensure_ascii=False))
         except Exception as exc:
             print(json.dumps({{

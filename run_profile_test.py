@@ -13,11 +13,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, Callable
 
-from experiment_common import config_profiles, load_config, read_measurements, validate_profile_measurements
-from experiment_summary import summary_rows, write_summary
-from run_build_profile_table import build_profile_table
-from run_cli_common import run_command
-from run_run_policies import run_policies
+from experiment_common import config_profiles, config_runtime, load_config, read_measurements, validate_profile_measurements
+from profile_summary import write_profile_summary
+from run_util.build_profile_table import build_profile_table
+from run_util.cli_common import run_command
 
 
 DEFAULT_PROFILE_OUTPUT = "out/profile_tables/smoke_profiles.csv"
@@ -53,8 +52,14 @@ def _resolve_outputs(args: argparse.Namespace, config: dict[str, Any]) -> tuple[
     return profile_output, summary_output
 
 
-def _write_payload(payload: dict[str, Any], summary_output: str) -> None:
-    write_summary(payload, summary_output)
+def _write_payload(
+    payload: dict[str, Any],
+    summary_output: str,
+    *,
+    measurements: list[Any] | None = None,
+    config: dict[str, Any] | None = None,
+) -> None:
+    write_profile_summary(payload, summary_output, measurements=measurements, config=config)
 
 
 def run_profile_test(args: argparse.Namespace) -> int:
@@ -64,6 +69,7 @@ def run_profile_test(args: argparse.Namespace) -> int:
     try:
         config = load_config(Path(config_path))
         profiles = config_profiles(config)
+        runtime = config_runtime(config)
         profile_output, summary_output = _resolve_outputs(args, config)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
@@ -94,16 +100,33 @@ def run_profile_test(args: argparse.Namespace) -> int:
             "failures": profile_payload.get("failures"),
             "profile": profile_payload,
         }
-        _write_payload(payload, summary_output)
+        _write_payload(payload, summary_output, config=config)
         return profile_code
 
     try:
         measurements = read_measurements(Path(profile_output))
+    except (FileNotFoundError, ValueError) as exc:
+        payload = {
+            "ok": False,
+            "return_code": 2,
+            "step": "read_profile_table",
+            "error": str(exc),
+            "config": config_path,
+            "dry_run": args.dry_run,
+            "diagnostic_output": profile_payload.get("diagnostic_output"),
+            "failures": profile_payload.get("failures"),
+            "profile": profile_payload,
+        }
+        _write_payload(payload, summary_output, config=config)
+        return 2
+
+    try:
         validate_profile_measurements(
             measurements,
             profile_output,
             required_profiles=profiles,
             require_measured=not args.dry_run,
+            require_ttft=bool(runtime.get("require_ttft", False)) and not args.dry_run,
         )
     except (FileNotFoundError, ValueError) as exc:
         payload = {
@@ -112,11 +135,12 @@ def run_profile_test(args: argparse.Namespace) -> int:
             "step": "validate_profile_table",
             "error": str(exc),
             "config": config_path,
+            "dry_run": args.dry_run,
             "diagnostic_output": profile_payload.get("diagnostic_output"),
             "failures": profile_payload.get("failures"),
             "profile": profile_payload,
         }
-        _write_payload(payload, summary_output)
+        _write_payload(payload, summary_output, measurements=measurements, config=config)
         return 2
 
     payload = {
@@ -124,12 +148,13 @@ def run_profile_test(args: argparse.Namespace) -> int:
         "return_code": 0,
         "step": "complete",
         "config": config_path,
+        "dry_run": args.dry_run,
         "rows": {
             "profiles": profile_payload.get("rows", len(measurements)),
         },
         "profile": profile_payload,
     }
-    _write_payload(payload, summary_output)
+    _write_payload(payload, summary_output, measurements=measurements, config=config)
     return 0
 
 

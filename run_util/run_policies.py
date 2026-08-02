@@ -21,7 +21,7 @@ from experiment_common import (
 from metrics import MetricCollector
 from policies import build_policies
 from policies.base import Policy
-from run_cli_common import add_policy_arguments, first_number, print_error, run_command
+from run_util.cli_common import add_policy_arguments, first_number, print_error, run_command
 
 
 def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str], list[str | dict], float, float, float]:
@@ -154,6 +154,7 @@ def _run_policy_matrix(
                         latency_ms=measurement.latency_ms,
                         ttft_ms=measurement.ttft_ms,
                         peak_memory_mib=measurement.peak_memory_mib,
+                        kv_cache_memory_mib=measurement.kv_cache_memory_mib,
                         resident_memory_mib=measurement.resident_memory_mib,
                         quality_loss=measurement.quality_loss,
                         exact=action.profile in exact,

@@ -29,6 +29,8 @@ SUMMARY_KEY_COLUMNS = [
     "p99_ttft_ms",
     "mean_peak_memory_mib",
     "p95_peak_memory_mib",
+    "mean_kv_cache_memory_mib",
+    "p95_kv_cache_memory_mib",
     "mean_quality_loss",
     "p95_quality_loss",
     "p99_quality_loss",

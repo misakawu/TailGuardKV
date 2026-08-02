@@ -20,6 +20,7 @@ class ProfileStats:
     violation_rate: float | None
     p95_ttft_ms: float | None
     p95_peak_memory_mib: float | None
+    p95_kv_cache_memory_mib: float | None
 
 
 class Policy(ABC):
@@ -132,9 +133,13 @@ class StatsPolicy(Policy):
 
     def _memory_or_inf(self, profile: str) -> float:
         stat = self.stats.get(profile)
-        if stat is None or stat.p95_peak_memory_mib is None:
+        if stat is None:
             return inf
-        return stat.p95_peak_memory_mib
+        if stat.p95_kv_cache_memory_mib is not None:
+            return stat.p95_kv_cache_memory_mib
+        if stat.p95_peak_memory_mib is not None:
+            return stat.p95_peak_memory_mib
+        return inf
 
     def _best_profile(self, use_tail_constraint: bool) -> str:
         best_profile = ""
@@ -191,6 +196,7 @@ def _profile_stats(
             losses = [0.0 for row in rows if row.ok and row.measured and row.output_text]
         ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
         memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
+        kv_memories = [row.kv_cache_memory_mib for row in rows if row.kv_cache_memory_mib is not None]
         stats[profile] = ProfileStats(
             profile=profile,
             count=len(rows),
@@ -199,6 +205,7 @@ def _profile_stats(
             violation_rate=(sum(1 for loss in losses if loss > epsilon) / len(losses) if losses else None),
             p95_ttft_ms=(_percentile(ttfts, 0.95) if ttfts else None),
             p95_peak_memory_mib=(_percentile(memories, 0.95) if memories else None),
+            p95_kv_cache_memory_mib=(_percentile(kv_memories, 0.95) if kv_memories else None),
         )
     return stats
 

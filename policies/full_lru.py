@@ -5,8 +5,8 @@ from policies.base import StaticProfilePolicy
 
 
 class FullLRUPolicy(StaticProfilePolicy):
-    def __init__(self) -> None:
-        super().__init__("full_gpu", name="full_lru")
+    def __init__(self, profile: str = "full_gpu") -> None:
+        super().__init__(profile, name="full_lru")
 
     def decide(self, request, cache_state, device_state) -> Action:
         return Action(profile=self.profile, reason="full precision exact profile")

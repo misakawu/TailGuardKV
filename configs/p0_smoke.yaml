@@ -1,0 +1,44 @@
+model:
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
+
+profiles:
+  adapters:
+    - vllm
+  names:
+    - engine_full_lru
+  specs:
+    engine_full_lru: {exact: true}
+
+policies:
+  record_rejected_unsafe: true
+  names:
+    - full_lru
+    - tailguard
+    - quality_oracle
+
+pilot:
+  epsilons: [0.05]
+  deltas: [0.05]
+  memory_budgets_mib: [4900]
+
+data:
+  requests: data/fixtures/e0_reproduce_requests.jsonl
+  calibration_fraction: 0.5
+  max_requests: 1
+
+profile_smoke:
+  max_new_tokens: 1
+  timeout_s: 180
+  repeat: 1
+  local_files_only: true
+  vllm_enforce_eager: true
+  vllm_gpu_memory_utilization: 0.95
+  vllm_max_model_len: 1024
+  vllm_cuda_visible_devices: "0,1"
+  vllm_tensor_parallel_size: 2
+
+outputs:
+  smoke_profiles: out/profile_tables/p0_vllm_smoke_profiles.csv
+  smoke_policy: out/policy_tables/p0_policy_smoke.csv
+  smoke_summary: out/policy_tables/p0_smoke_summary.csv

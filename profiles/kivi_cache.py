@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from profiles.cache_common import Cache, init_cache_list, reorder_tensor_like
+from profiles.cache_common import Cache, init_cache_list, reorder_tensor_like, tensors_memory_mib
 
 
 @dataclass(slots=True)
@@ -98,6 +98,23 @@ class KIVICache(Cache):
                 )
             )
         return tuple(legacy)
+
+    def kv_cache_memory_mib(self) -> float:
+        total = 0.0
+        for state in self.layers:
+            if state is None:
+                continue
+            total += tensors_memory_mib(
+                state.key_q,
+                state.key_full,
+                state.key_scale,
+                state.key_mn,
+                state.value_q,
+                state.value_full,
+                state.value_scale,
+                state.value_mn,
+            )
+        return total
 
 
 def build_kivi_cache(model_config: Any, *, residual_length: int, group_size: int, k_bits: int, v_bits: int) -> KIVICache:

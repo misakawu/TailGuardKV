@@ -43,6 +43,7 @@ class ProfileMeasurement:
     latency_ms: float | None = None
     ttft_ms: float | None = None
     peak_memory_mib: float | None = None
+    kv_cache_memory_mib: float | None = None
     resident_memory_mib: float | None = None
     quality_score: float | None = None
     quality_loss: float | None = None
@@ -79,6 +80,7 @@ class ProfileMeasurement:
             latency_ms=_parse_optional_float(payload.get("latency_ms")),
             ttft_ms=_parse_optional_float(payload.get("ttft_ms")),
             peak_memory_mib=_parse_optional_float(payload.get("peak_memory_mib")),
+            kv_cache_memory_mib=_parse_optional_float(payload.get("kv_cache_memory_mib")),
             resident_memory_mib=_parse_optional_float(payload.get("resident_memory_mib")),
             quality_score=_parse_optional_float(payload.get("quality_score")),
             quality_loss=_parse_optional_float(payload.get("quality_loss")),
@@ -157,6 +159,7 @@ class PolicyRunRecord:
     latency_ms: float | None = None
     ttft_ms: float | None = None
     peak_memory_mib: float | None = None
+    kv_cache_memory_mib: float | None = None
     resident_memory_mib: float | None = None
     quality_loss: float | None = None
     exact: bool = False
