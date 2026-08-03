@@ -345,6 +345,29 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertNotIn('"ttft_ms": total_ms', source)
         self.assertIn('"ttft_semantics": "first_token"', source)
 
+    def test_mem_test_budget_series_uses_100_mib_steps(self) -> None:
+        from run_util.mem_test_config import build_budget_series
+
+        self.assertEqual(build_budget_series(100, 500, 100), [100.0, 200.0, 300.0, 400.0, 500.0])
+        self.assertEqual(build_budget_series(100, 350, 100), [100.0, 200.0, 300.0])
+
+    def test_mem_test_generated_config_removes_tailguard_and_uses_relative_outputs(self) -> None:
+        from run_util.mem_test_config import build_mem_test_config
+
+        base = load_config(Path("configs/pilot.yaml"))
+        config = build_mem_test_config(base, max_requests=80, budgets_mib=[100.0, 200.0], include_tailguard=False)
+
+        self.assertEqual(config["data"]["max_requests"], 80)
+        self.assertEqual(config["pilot"]["memory_budgets_mib"], [100.0, 200.0])
+        self.assertNotIn("tailguard", config["policies"]["names"])
+        self.assertEqual(
+            config["policies"]["names"],
+            ["full_lru", "static_best", "static_safe", "quality_oracle", "utility_dynamic", "uncalibrated_dynamic"],
+        )
+        self.assertEqual(config["outputs"]["smoke_profiles"], "out/profile_tables/run_mem_test_profiles.csv")
+        self.assertEqual(config["outputs"]["smoke_policy"], "out/policy_tables/run_mem_test_policy.csv")
+        self.assertEqual(config["outputs"]["smoke_summary"], "out/policy_tables/run_mem_test_summary.csv")
+
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
         source = Path("profiles/qwen2_runtime_common.py").read_text(encoding="utf-8")
         self.assertNotIn('"ttft_ms": total_ms', source)
