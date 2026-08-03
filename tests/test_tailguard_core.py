@@ -368,6 +368,51 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(config["outputs"]["smoke_policy"], "out/policy_tables/run_mem_test_policy.csv")
         self.assertEqual(config["outputs"]["smoke_summary"], "out/policy_tables/run_mem_test_summary.csv")
 
+    def test_mem_test_analysis_finds_budget_with_kv_and_ttft_gain(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,210,30,35,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertTrue(analysis["found_passing_budget"])
+        self.assertEqual(analysis["passing_points"][0]["policy"], "static_best")
+        self.assertEqual(analysis["passing_points"][0]["memory_budget_mib"], 100.0)
+        self.assertEqual(analysis["passing_points"][0]["ttft_win_metric"], "mean_ttft_ms")
+
+    def test_mem_test_analysis_reports_no_budget_when_ttft_not_better(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,120,220,30,35,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["near_misses"][0]["policy"], "static_best")
+        self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.625)
+
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
         source = Path("profiles/qwen2_runtime_common.py").read_text(encoding="utf-8")
         self.assertNotIn('"ttft_ms": total_ms', source)
