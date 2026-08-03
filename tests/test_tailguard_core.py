@@ -345,6 +345,221 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertNotIn('"ttft_ms": total_ms', source)
         self.assertIn('"ttft_semantics": "first_token"', source)
 
+    def test_mem_test_budget_series_uses_100_mib_steps(self) -> None:
+        from run_util.mem_test_config import build_budget_series
+
+        self.assertEqual(build_budget_series(100, 500, 100), [100.0, 200.0, 300.0, 400.0, 500.0])
+        self.assertEqual(build_budget_series(100, 350, 100), [100.0, 200.0, 300.0])
+
+    def test_mem_test_generated_config_removes_tailguard_and_uses_relative_outputs(self) -> None:
+        from run_util.mem_test_config import build_mem_test_config
+
+        base = load_config(Path("configs/pilot.yaml"))
+        config = build_mem_test_config(base, max_requests=80, budgets_mib=[100.0, 200.0], include_tailguard=False)
+
+        self.assertEqual(config["data"]["max_requests"], 80)
+        self.assertEqual(config["pilot"]["memory_budgets_mib"], [100.0, 200.0])
+        self.assertNotIn("tailguard", config["policies"]["names"])
+        self.assertEqual(
+            config["policies"]["names"],
+            ["full_lru", "static_best", "static_safe", "quality_oracle", "utility_dynamic", "uncalibrated_dynamic"],
+        )
+        self.assertEqual(config["outputs"]["smoke_profiles"], "out/profile_tables/run_mem_test_profiles.csv")
+        self.assertEqual(config["outputs"]["smoke_policy"], "out/policy_tables/run_mem_test_policy.csv")
+        self.assertEqual(config["outputs"]["smoke_summary"], "out/policy_tables/run_mem_test_summary.csv")
+
+    def test_mem_test_analysis_finds_budget_with_kv_and_ttft_gain(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,210,30,35,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertTrue(analysis["found_passing_budget"])
+        self.assertEqual(analysis["passing_points"][0]["policy"], "static_best")
+        self.assertEqual(analysis["passing_points"][0]["memory_budget_mib"], 100.0)
+        self.assertEqual(analysis["passing_points"][0]["ttft_win_metric"], "mean_ttft_ms")
+
+    def test_mem_test_analysis_reports_no_budget_when_ttft_not_better(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,120,220,30,35,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["near_misses"][0]["policy"], "static_best")
+        self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.625)
+
+    def test_mem_test_analysis_records_ttft_gain_but_kv_miss_as_near_miss(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,190,45,50,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["near_misses"][0]["policy"], "static_best")
+        self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.4375)
+        self.assertNotIn("ttft_win_metric", analysis["near_misses"][0])
+
+    def test_mem_test_analysis_ignores_non_kivi_h2o_lossy_actions(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,190,30,35,"{""adaptive_budget"": 2, ""full_gpu"": 1}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["passing_points"], [])
+        self.assertEqual(analysis["near_misses"], [])
+
+    def test_run_mem_test_orchestrates_baseline_only_sweep_without_nested_outputs(self) -> None:
+        from run_util import mem_test
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "mem_run"
+            config_path = root / "pilot.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "model:",
+                        "  pilot_model: fake",
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  record_rejected_unsafe: true",
+                        "  names: [full_lru, tailguard]",
+                        "pilot:",
+                        "  epsilons: [0.05]",
+                        "  deltas: [0.05]",
+                        "  memory_budgets_mib: [4900]",
+                        "data:",
+                        "  requests: fake.jsonl",
+                        "  calibration_fraction: 0.5",
+                        "  max_requests: 200",
+                        "profile_smoke:",
+                        "  repeat: 1",
+                        "outputs:",
+                        "  smoke_profiles: out/profile_tables/pilot.csv",
+                        "  smoke_policy: out/policy_tables/policy.csv",
+                        "  smoke_summary: out/policy_tables/summary.csv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            calls = {"policy": []}
+
+            def fake_build(args: argparse.Namespace) -> int:
+                calls["profile"] = args
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1}}}))
+                return 0
+
+            def fake_policy(args: argparse.Namespace) -> int:
+                calls["policy"].append(args)
+                print(
+                    json.dumps(
+                        {
+                            "output": args.output,
+                            "rows": 1,
+                            "epsilon": args.epsilon,
+                            "delta": args.delta,
+                            "memory_budget_mib": args.memory_budget_mib,
+                            "summary": {
+                                "full_lru": {
+                                    "mean_ttft_ms": 100.0,
+                                    "p95_ttft_ms": 200.0,
+                                    "mean_kv_cache_memory_mib": 80.0,
+                                    "p95_kv_cache_memory_mib": 90.0,
+                                    "violation_rate": 0.0,
+                                    "action_distribution": {"full_gpu": 1},
+                                }
+                            },
+                        }
+                    )
+                )
+                return 0
+
+            with (
+                patch("run_util.mem_test.build_profile_table", side_effect=fake_build),
+                patch("run_util.mem_test.run_policies", side_effect=fake_policy),
+                patch("run_util.mem_test.plot_summary", return_value=[]),
+            ):
+                code = mem_test.run(
+                    argparse.Namespace(
+                        base_config=str(config_path),
+                        run_dir=str(run_dir),
+                        max_requests=80,
+                        budget_start_mib=100.0,
+                        budget_stop_mib=300.0,
+                        budget_step_mib=100.0,
+                        include_tailguard=False,
+                        total_summary_output="",
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertFalse(calls["profile"].formal_run)
+            self.assertEqual(calls["profile"].output, str(run_dir / "profile_tables/run_mem_test_profiles.csv"))
+            self.assertEqual([call.memory_budget_mib for call in calls["policy"]], [100.0, 200.0, 300.0])
+            self.assertTrue(all(call.allow_dry_run_replay is False for call in calls["policy"]))
+            self.assertTrue((run_dir / "policy_tables/run_mem_test_total_summary.csv").exists())
+            self.assertTrue((run_dir / "run_mem_test_analysis.md").exists())
+            with (run_dir / "policy_tables/run_mem_test_summary.csv").open(encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["section"], "experiment")
+            self.assertEqual(summary_rows[0]["name"], "run_mem_test")
+            self.assertFalse((run_dir / "mem_run").exists())
+
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
         source = Path("profiles/qwen2_runtime_common.py").read_text(encoding="utf-8")
         self.assertNotIn('"ttft_ms": total_ms', source)
