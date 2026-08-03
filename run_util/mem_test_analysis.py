@@ -23,7 +23,11 @@ def analyze_mem_test_summary(summary_path: Path, *, kv_drop_threshold: float = 0
             continue
 
         action_distribution = _action_distribution(row)
-        lossy_actions = {name: count for name, count in action_distribution.items() if name != "full_gpu"}
+        lossy_actions = {
+            name: count
+            for name, count in action_distribution.items()
+            if name.startswith("kivi_") or name.startswith("h2o_")
+        }
         if not lossy_actions:
             continue
 

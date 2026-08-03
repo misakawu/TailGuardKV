@@ -436,6 +436,28 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.4375)
         self.assertNotIn("ttft_win_metric", analysis["near_misses"][0])
 
+    def test_mem_test_analysis_ignores_non_kivi_h2o_lossy_actions(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,190,30,35,"{""adaptive_budget"": 2, ""full_gpu"": 1}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["passing_points"], [])
+        self.assertEqual(analysis["near_misses"], [])
+
     def test_run_mem_test_orchestrates_baseline_only_sweep_without_nested_outputs(self) -> None:
         from run_util import mem_test
 
