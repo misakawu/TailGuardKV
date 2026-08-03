@@ -436,6 +436,103 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.4375)
         self.assertNotIn("ttft_win_metric", analysis["near_misses"][0])
 
+    def test_run_mem_test_orchestrates_baseline_only_sweep_without_nested_outputs(self) -> None:
+        from run_util import mem_test
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "mem_run"
+            config_path = root / "pilot.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "model:",
+                        "  pilot_model: fake",
+                        "profiles:",
+                        "  adapters: [full]",
+                        "  names: [full_gpu]",
+                        "  specs:",
+                        "    full_gpu: {exact: true}",
+                        "policies:",
+                        "  record_rejected_unsafe: true",
+                        "  names: [full_lru, tailguard]",
+                        "pilot:",
+                        "  epsilons: [0.05]",
+                        "  deltas: [0.05]",
+                        "  memory_budgets_mib: [4900]",
+                        "data:",
+                        "  requests: fake.jsonl",
+                        "  calibration_fraction: 0.5",
+                        "  max_requests: 200",
+                        "profile_smoke:",
+                        "  repeat: 1",
+                        "outputs:",
+                        "  smoke_profiles: out/profile_tables/pilot.csv",
+                        "  smoke_policy: out/policy_tables/policy.csv",
+                        "  smoke_summary: out/policy_tables/summary.csv",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            calls = {"policy": []}
+
+            def fake_build(args: argparse.Namespace) -> int:
+                calls["profile"] = args
+                write_csv(Path(args.output), [_measurement("e1", "full_gpu", 0.0).to_row()])
+                print(json.dumps({"output": args.output, "rows": 1, "summary": {"full_gpu": {"count": 1}}}))
+                return 0
+
+            def fake_policy(args: argparse.Namespace) -> int:
+                calls["policy"].append(args)
+                print(
+                    json.dumps(
+                        {
+                            "output": args.output,
+                            "rows": 1,
+                            "epsilon": args.epsilon,
+                            "delta": args.delta,
+                            "memory_budget_mib": args.memory_budget_mib,
+                            "summary": {
+                                "full_lru": {
+                                    "mean_ttft_ms": 100.0,
+                                    "p95_ttft_ms": 200.0,
+                                    "mean_kv_cache_memory_mib": 80.0,
+                                    "p95_kv_cache_memory_mib": 90.0,
+                                    "violation_rate": 0.0,
+                                    "action_distribution": {"full_gpu": 1},
+                                }
+                            },
+                        }
+                    )
+                )
+                return 0
+
+            with (
+                patch("run_util.mem_test.build_profile_table", side_effect=fake_build),
+                patch("run_util.mem_test.run_policies", side_effect=fake_policy),
+                patch("run_util.mem_test.plot_summary", return_value=[]),
+            ):
+                code = mem_test.run(
+                    argparse.Namespace(
+                        base_config=str(config_path),
+                        run_dir=str(run_dir),
+                        max_requests=80,
+                        budget_start_mib=100.0,
+                        budget_stop_mib=300.0,
+                        budget_step_mib=100.0,
+                        include_tailguard=False,
+                        total_summary_output="",
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertFalse(calls["profile"].formal_run)
+            self.assertEqual(calls["profile"].output, str(run_dir / "profile_tables/run_mem_test_profiles.csv"))
+            self.assertEqual([call.memory_budget_mib for call in calls["policy"]], [100.0, 200.0, 300.0])
+            self.assertTrue((run_dir / "policy_tables/run_mem_test_total_summary.csv").exists())
+            self.assertTrue((run_dir / "run_mem_test_analysis.md").exists())
+            self.assertFalse((run_dir / "mem_run").exists())
+
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
         source = Path("profiles/qwen2_runtime_common.py").read_text(encoding="utf-8")
         self.assertNotIn('"ttft_ms": total_ms', source)
