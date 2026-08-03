@@ -144,6 +144,7 @@ def _run_generated_config(
             total_summary_output = _derive_total_summary_output(summary_output)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
+            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": 2,
             "step": "load_config",
@@ -168,6 +169,7 @@ def _run_generated_config(
     profile_code, profile_payload = _run_stage(build_profile_table, profile_args)
     if profile_code != 0:
         payload = {
+            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": profile_code,
             "step": "build_profile_table",
@@ -192,6 +194,7 @@ def _run_generated_config(
         )
     except (FileNotFoundError, ValueError) as exc:
         payload = {
+            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": 2,
             "step": "validate_profile_table",
@@ -243,6 +246,7 @@ def _run_generated_config(
             break
 
     payload = {
+        "experiment_name": "run_mem_test",
         "ok": policy_code == 0,
         "return_code": policy_code,
         "step": "complete" if policy_code == 0 else "run_policies",

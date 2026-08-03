@@ -131,7 +131,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows = [
         {
             "section": "experiment",
-            "name": "pilot-smoke-measured",
+            "name": str(payload.get("experiment_name") or "pilot-smoke-measured"),
             "ok": payload.get("ok"),
             "error": _summary_error(payload),
             "diagnostic_output": payload.get("diagnostic_output", ""),

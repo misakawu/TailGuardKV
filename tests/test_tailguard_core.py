@@ -529,8 +529,13 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertFalse(calls["profile"].formal_run)
             self.assertEqual(calls["profile"].output, str(run_dir / "profile_tables/run_mem_test_profiles.csv"))
             self.assertEqual([call.memory_budget_mib for call in calls["policy"]], [100.0, 200.0, 300.0])
+            self.assertTrue(all(call.allow_dry_run_replay is False for call in calls["policy"]))
             self.assertTrue((run_dir / "policy_tables/run_mem_test_total_summary.csv").exists())
             self.assertTrue((run_dir / "run_mem_test_analysis.md").exists())
+            with (run_dir / "policy_tables/run_mem_test_summary.csv").open(encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["section"], "experiment")
+            self.assertEqual(summary_rows[0]["name"], "run_mem_test")
             self.assertFalse((run_dir / "mem_run").exists())
 
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
