@@ -413,6 +413,29 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(analysis["near_misses"][0]["policy"], "static_best")
         self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.625)
 
+    def test_mem_test_analysis_records_ttft_gain_but_kv_miss_as_near_miss(self) -> None:
+        from run_util.mem_test_analysis import analyze_mem_test_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "summary.csv"
+            path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,mean_ttft_ms,p95_ttft_ms,mean_kv_cache_memory_mib,p95_kv_cache_memory_mib,action_distribution,violation_rate,candidate_safe_count",
+                        'full_lru,100,0.05,0.05,100,200,80,90,"{""full_gpu"": 2}",0,',
+                        'static_best,100,0.05,0.05,90,190,45,50,"{""h2o_heavy15_recent15"": 2}",0.05,',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            analysis = analyze_mem_test_summary(path)
+
+        self.assertFalse(analysis["found_passing_budget"])
+        self.assertEqual(analysis["near_misses"][0]["policy"], "static_best")
+        self.assertEqual(analysis["near_misses"][0]["kv_drop_mean"], 0.4375)
+        self.assertNotIn("ttft_win_metric", analysis["near_misses"][0])
+
     def test_qwen2_generate_decode_uses_first_token_semantics(self) -> None:
         source = Path("profiles/qwen2_runtime_common.py").read_text(encoding="utf-8")
         self.assertNotIn('"ttft_ms": total_ms', source)

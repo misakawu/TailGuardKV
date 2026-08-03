@@ -33,7 +33,7 @@ def analyze_mem_test_summary(summary_path: Path, *, kv_drop_threshold: float = 0
             continue
 
         record = _comparison_record(row, full, lossy_actions)
-        kv_ok = record["kv_drop_mean"] >= kv_drop_threshold or record["kv_drop_p95"] >= kv_drop_threshold
+        kv_ok = record["kv_drop_mean"] >= kv_drop_threshold
         mean_ttft_ok = _float(row["mean_ttft_ms"]) < _float(full["mean_ttft_ms"])
         p95_ttft_ok = _float(row["p95_ttft_ms"]) < _float(full["p95_ttft_ms"])
         record["kv_ok"] = kv_ok
@@ -43,7 +43,7 @@ def analyze_mem_test_summary(summary_path: Path, *, kv_drop_threshold: float = 0
         if kv_ok and (mean_ttft_ok or p95_ttft_ok):
             record["ttft_win_metric"] = "mean_ttft_ms" if mean_ttft_ok else "p95_ttft_ms"
             passing.append(record)
-        elif kv_ok:
+        else:
             near_misses.append(record)
 
     passing.sort(key=lambda item: (-item["memory_budget_mib"], item["policy"], item["epsilon"], item["delta"]))
