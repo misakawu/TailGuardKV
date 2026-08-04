@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from experiment_common import json_ready
+from run_util.experiment_common import json_ready
 
 
 SUMMARY_KEY_COLUMNS = [

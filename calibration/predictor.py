@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core_types import ProfileMeasurement, Request
+from run_util.core_types import ProfileMeasurement, Request
 
 
 def _length_bucket(prompt_chars: int) -> str:

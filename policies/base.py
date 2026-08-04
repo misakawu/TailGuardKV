@@ -8,7 +8,7 @@ from math import inf, isfinite
 
 from calibration.conformal import ConformalGuard
 from calibration.predictor import MetadataOnlyRiskPredictor
-from core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
 
 
 @dataclass(frozen=True)

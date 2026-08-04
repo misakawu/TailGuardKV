@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from experiment_common import config_adapters, json_ready, load_config
+from run_util.experiment_common import config_adapters, json_ready, load_config
 from run_util.build_profile_table import build_profile_table
 from run_util.check_profiles import check_profiles
 from run_util.cli_common import KNOWN_SETUP_ERRORS, add_reproduce_arguments, run_command

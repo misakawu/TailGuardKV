@@ -8,7 +8,7 @@ import textwrap
 from collections.abc import Sequence
 from pathlib import Path
 
-from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from run_util.core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 from profiles.base import ProfileAdapter, dry_profile_measurement, run_conda_probe
 
 

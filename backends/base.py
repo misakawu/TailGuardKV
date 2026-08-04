@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from core_types import ProfileMeasurement, Request
+from run_util.core_types import ProfileMeasurement, Request
 
 
 class Backend(ABC):

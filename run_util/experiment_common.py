@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config_loader import (
+from run_util.config_loader import (
     config_adapters,
     config_policies,
     config_profiles,
@@ -8,7 +8,7 @@ from config_loader import (
     exact_profiles,
     load_config,
 )
-from data_utils import (
+from run_util.data_utils import (
     annotate_measurement,
     default_requests,
     expand_repeated_requests,
@@ -19,8 +19,8 @@ from data_utils import (
     split_measurements,
     with_quality,
 )
-from io_utils import json_ready, read_measurements, write_csv
-from validation import (
+from run_util.io_utils import json_ready, read_measurements, write_csv
+from run_util.validation import (
     REQUIRED_PROFILE_FIELDS,
     failed_measurement_summary,
     validate_profile_measurements,

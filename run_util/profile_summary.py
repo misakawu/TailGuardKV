@@ -7,9 +7,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from config_loader import exact_profiles
-from core_types import ProfileMeasurement
-from experiment_common import json_ready
+from run_util.config_loader import exact_profiles
+from run_util.core_types import ProfileMeasurement
+from run_util.experiment_common import json_ready
 
 
 PROFILE_SUMMARY_COLUMNS = [

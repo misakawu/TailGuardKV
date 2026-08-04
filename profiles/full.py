@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from collections.abc import Sequence
 
-from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from run_util.core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 from profiles.base import (
     ProfileAdapter,
     dry_profile_measurement,

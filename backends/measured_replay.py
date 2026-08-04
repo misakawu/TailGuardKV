@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from backends.base import Backend
-from core_types import ProfileMeasurement, Request
+from run_util.core_types import ProfileMeasurement, Request
 
 
 class MeasuredReplayBackend(Backend):

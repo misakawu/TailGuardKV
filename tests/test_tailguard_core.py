@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import io
 import json
@@ -14,16 +15,16 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import run_experiment
+import run_util.experiment as run_experiment
 from calibration.conformal import ConformalGuard
 from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
-from core_types import Action
-from core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
-from experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, failed_measurement_summary, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
+from run_util.core_types import Action
+from run_util.core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
+from run_util.experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, failed_measurement_summary, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
 from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, select_primary_loss, token_f1_loss
 from metrics import MetricCollector
-from profile_summary import profile_summary_rows
+from run_util.profile_summary import profile_summary_rows
 from policies.base import Policy
 from policies.registry import build_policies
 from profiles import base as profiles_base
@@ -36,14 +37,14 @@ from profiles.kivi_cache import KIVICache
 from profiles.generation_timing import generate_with_first_token_timing
 from profiles import qwen2_kv_runtime
 from profiles.registry import build_profile_adapters
-from vllm_lru_policy import create_vllm_policy
+from run_util.vllm_lru_policy import create_vllm_policy
 from env_asset_prepare.prepare_pilot_assets import format_longbench_prompt
 import run_util.build_profile_table as profile_table_module
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import run_command
-from run_experiment import _policy_output_for_sweep, _policy_sweep_points, _summary_rows, build_parser as build_experiment_parser, pilot_smoke_measured
-from experiment_summary import total_policy_summary_rows
-from run_profile_test import build_parser as build_profile_test_parser, main as run_profile_test_main
+from run_util.experiment import _policy_output_for_sweep, _policy_sweep_points, _summary_rows, build_parser as build_experiment_parser, pilot_smoke_measured
+from run_util.experiment_summary import total_policy_summary_rows
+from run_util.profile_test import build_parser as build_profile_test_parser, main as run_profile_test_main
 from run_util.run_policies import run_policies
 
 
@@ -126,6 +127,30 @@ def _write_pilot_test_config(
 
 
 class TailGuardCoreTest(unittest.TestCase):
+    def test_root_run_launchers_are_thin_import_shims(self) -> None:
+        expected = {
+            "run_experiment.py": "run_util.experiment",
+            "run_profile_test.py": "run_util.profile_test",
+            "run_mem_test.py": "run_util.mem_test",
+        }
+        for filename, module in expected.items():
+            with self.subTest(filename=filename):
+                tree = ast.parse(Path(filename).read_text(encoding="utf-8"), filename=filename)
+                definitions = [
+                    node.name
+                    for node in tree.body
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                ]
+                self.assertEqual(definitions, [])
+                self.assertTrue(
+                    any(
+                        isinstance(node, ast.ImportFrom)
+                        and node.module == module
+                        and any(alias.name == "main" for alias in node.names)
+                        for node in tree.body
+                    )
+                )
+
     def test_format_longbench_prompt_includes_context_and_question(self) -> None:
         row = {
             "context": "Paper context sentence. " * 40,
@@ -2625,7 +2650,7 @@ class TailGuardCoreTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "profiles.csv"
             write_csv(path, [row.to_row()])
-            [loaded] = __import__("io_utils").read_measurements(path)
+            [loaded] = __import__("run_util.io_utils", fromlist=["read_measurements"]).read_measurements(path)
 
         self.assertEqual(loaded.kv_cache_memory_mib, 7.5)
 
@@ -3549,11 +3574,11 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
-                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
-                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_util.experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_util.experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
             ):
                 stream = io.StringIO()
                 with redirect_stdout(stream):
@@ -3691,8 +3716,8 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path)))
 
@@ -3905,7 +3930,7 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_default_run_dir_uses_timestamp_and_config_stem(self) -> None:
         fixed_time = SimpleNamespace(strftime=lambda fmt: "20260802_123456")
 
-        with patch("run_experiment.datetime") as datetime_mock:
+        with patch("run_util.experiment.datetime") as datetime_mock:
             datetime_mock.now.return_value = fixed_time
             run_dir = run_experiment._resolve_run_dir(None, "configs/pilot_50.yaml")
 
@@ -3968,8 +3993,8 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path)))
 
@@ -4006,9 +4031,9 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", return_value=[]),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", return_value=[]),
             ):
                 code = pilot_smoke_measured(
                     argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=str(total_summary_path))
@@ -4041,9 +4066,9 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", return_value=[]),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", return_value=[]),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None))
 
@@ -4091,9 +4116,9 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", return_value=[]),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", return_value=[]),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
 
@@ -4148,10 +4173,10 @@ class TailGuardCoreTest(unittest.TestCase):
                 run_experiment.write_total_policy_summary(payload, str(payload.get("total_summary_output")))
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", return_value=[]),
-                patch("run_experiment._print_and_write", side_effect=record_payload),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", return_value=[]),
+                patch("run_util.experiment._print_and_write", side_effect=record_payload),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
 
@@ -4199,9 +4224,9 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", return_value=[]),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", return_value=[]),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=str(run_dir)))
 
@@ -4238,10 +4263,10 @@ class TailGuardCoreTest(unittest.TestCase):
                 payloads.append(payload)
 
             with (
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies", side_effect=fake_policies),
-                patch("run_experiment.plot_summary", side_effect=lambda path: plot_inputs.append(path) or [chart_path]),
-                patch("run_experiment._print_and_write", side_effect=record_payload),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies", side_effect=fake_policies),
+                patch("run_util.experiment.plot_summary", side_effect=lambda path: plot_inputs.append(path) or [chart_path]),
+                patch("run_util.experiment._print_and_write", side_effect=record_payload),
             ):
                 code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None))
 
@@ -4323,11 +4348,11 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 2
 
             with (
-                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
-                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
-                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies") as policy_mock,
+                patch("run_util.experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_util.experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_util.experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies") as policy_mock,
             ):
                 stream = io.StringIO()
                 with redirect_stdout(stream):
@@ -4360,11 +4385,11 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
-                patch("run_experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
-                patch("run_experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
-                patch("run_experiment.build_profile_table", side_effect=fake_build),
-                patch("run_experiment.run_policies") as policy_mock,
+                patch("run_util.experiment.PILOT_PROFILE_OUTPUT", str(profile_path)),
+                patch("run_util.experiment.PILOT_POLICY_OUTPUT", str(policy_path)),
+                patch("run_util.experiment.PILOT_SUMMARY_OUTPUT", str(summary_path)),
+                patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+                patch("run_util.experiment.run_policies") as policy_mock,
             ):
                 stream = io.StringIO()
                 with redirect_stdout(stream):
@@ -4404,7 +4429,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_profile_test.build_profile_table", side_effect=fake_build),
+                patch("run_util.profile_test.build_profile_table", side_effect=fake_build),
                 patch("sys.argv", argv),
             ):
                 stream = io.StringIO()
@@ -4422,7 +4447,7 @@ class TailGuardCoreTest(unittest.TestCase):
             full_gpu = next(row for row in summary_rows if row["section"] == "profile" and row["name"] == "full_gpu")
             self.assertEqual(full_gpu["count"], "1.0")
             self.assertNotEqual(full_gpu["count"], "1.0 from stdout")
-            import run_profile_test
+            import run_util.profile_test as run_profile_test
 
             self.assertFalse(hasattr(run_profile_test, "run_policies"))
 
@@ -4450,7 +4475,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_profile_test.build_profile_table", side_effect=fake_build),
+                patch("run_util.profile_test.build_profile_table", side_effect=fake_build),
                 patch("sys.argv", argv),
             ):
                 stream = io.StringIO()
@@ -4507,7 +4532,7 @@ class TailGuardCoreTest(unittest.TestCase):
                 return 0
 
             with (
-                patch("run_profile_test.build_profile_table", side_effect=fake_build),
+                patch("run_util.profile_test.build_profile_table", side_effect=fake_build),
                 patch("sys.argv", argv),
             ):
                 stream = io.StringIO()

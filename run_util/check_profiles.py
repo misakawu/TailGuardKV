@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from experiment_common import config_adapters, config_runtime, load_config, write_csv
+from run_util.experiment_common import config_adapters, config_runtime, load_config, write_csv
 from profiles.registry import build_profile_adapters
 from run_util.cli_common import add_adapters_argument, add_config_argument, run_command
 

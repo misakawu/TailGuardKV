@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core_types import ProfileMeasurement
+from run_util.core_types import ProfileMeasurement
 from policies.base import Policy
 from policies.full_lru import FullLRUPolicy
 from policies.quality_oracle import QualityOraclePolicy

@@ -7,7 +7,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from experiment_common import (
+from run_util.experiment_common import (
     annotate_measurement,
     config_adapters,
     config_profiles,

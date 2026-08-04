@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from core_types import ProfileMeasurement, Request
+from run_util.core_types import ProfileMeasurement, Request
 from metrics.quality import compute_quality_loss, select_primary_loss
 
 

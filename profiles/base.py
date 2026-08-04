@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
+from run_util.core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 
 
 class ProfileAdapter(ABC):

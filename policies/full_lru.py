@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core_types import Action
+from run_util.core_types import Action
 from policies.base import StaticProfilePolicy
 
 

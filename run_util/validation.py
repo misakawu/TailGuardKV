@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core_types import ProfileMeasurement
+from run_util.core_types import ProfileMeasurement
 
 
 REQUIRED_PROFILE_FIELDS = {

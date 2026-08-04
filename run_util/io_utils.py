@@ -6,8 +6,8 @@ import math
 from pathlib import Path
 from typing import Any
 
-from core_types import ProfileMeasurement
-from validation import validate_profile_measurements, validate_profile_table_header
+from run_util.core_types import ProfileMeasurement
+from run_util.validation import validate_profile_measurements, validate_profile_table_header
 
 
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:

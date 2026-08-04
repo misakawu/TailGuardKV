@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from math import ceil
 
-from core_types import ProfileMeasurement, Request
+from run_util.core_types import ProfileMeasurement, Request
 
 
 def _conformal_quantile(values: list[float], delta_a: float) -> float:

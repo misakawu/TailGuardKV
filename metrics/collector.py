@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from math import isnan
 from typing import Any
 
-from core_types import PolicyRunRecord, ProfileMeasurement
+from run_util.core_types import PolicyRunRecord, ProfileMeasurement
 
 
 class MetricCollector:

@@ -1,5 +1,26 @@
 from __future__ import annotations
 
+# 常用运行命令:
+# 1. profile runtime 预检:
+#    python3 -m run_util.check_profiles --config configs/pilot_50.yaml --timeout 180
+# 2. 快速 measured gate，50 requests，policy sweep 写参数后缀 CSV:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot_50.yaml
+# 3. 正式 pilot measured，200 requests:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+# 4. 完整实验一键运行，含 profile 构建、profile 校验、policy sweep 和 summary 聚合:
+#    python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+# 5. dry-run/CLI 兼容检查:
+#    python3 -m run_util.build_profile_table --config configs/pilot.yaml --dry-run --output /tmp/tailguardkv_profiles.csv
+#    python3 -m run_util.run_policies --config configs/pilot.yaml --measurements /tmp/tailguardkv_profiles.csv --output /tmp/tailguardkv_policy.csv --allow-dry-run-replay
+# 6. 单个 policy 组合复跑:
+#    python3 -m run_util.run_policies --config configs/pilot_50.yaml --measurements out/profile_tables/pilot_50_measured_profiles.csv --output /tmp/tailguardkv_policy_eps0p05_delta0p05_mem4900.csv --epsilon 0.05 --delta 0.05 --memory-budget-mib 4900
+# 7. nohup + conda 后台跑完整实验:
+#    mkdir -p out/logs && nohup conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml > out/logs/pilot_measured.nohup.log 2>&1 < /dev/null & echo $! > out/logs/pilot_measured.pid
+# 8. 查看后台实验状态和日志:
+#    cat out/logs/pilot_measured.pid && ps -fp "$(cat out/logs/pilot_measured.pid)" && tail -n 120 out/logs/pilot_measured.nohup.log
+# 9. 停止后台实验:
+#    kill "$(cat out/logs/pilot_measured.pid)"
+
 import argparse
 import io
 import json
@@ -10,17 +31,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from run_util.experiment_common import config_policies, config_profiles, json_ready, load_config, read_measurements, validate_profile_measurements
-from run_util.experiment_summary import write_summary, write_total_policy_summary
+from run_util.experiment_summary import summary_rows, write_summary, write_total_policy_summary
 from run_util.build_profile_table import build_profile_table
-from run_util.cli_common import first_number, run_command
-from run_util.mem_test_analysis import analyze_mem_test_summary, write_mem_test_analysis
-from run_util.mem_test_config import build_budget_series, build_mem_test_config, write_generated_config
+from run_util.cli_common import first_number
 from run_util.run_policies import run_policies
 from visual.plot_summary import plot_summary
 
 
-MEM_TEST_SUMMARY_OUTPUT = "out/policy_tables/run_mem_test_summary.csv"
-
+PILOT_CONFIG = "configs/pilot.yaml"
+PILOT_PROFILE_OUTPUT = "out/profile_tables/pilot_smoke_measured_profiles.csv"
+PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
+PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     stream = io.StringIO()
@@ -33,8 +54,6 @@ def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespa
         return code, json.loads(raw_output)
     except json.JSONDecodeError:
         return code, {"raw_stdout": raw_output}
-
-
 def _number_list(value: Any, *, default: float, name: str) -> list[float]:
     if value is None:
         return [default]
@@ -81,10 +100,11 @@ def _policy_output_for_sweep(base_output: str, sweep: dict[str, float], sweep_co
     return str(path.with_name(f"{path.stem}_{suffix}{path.suffix}"))
 
 
-def _resolve_run_dir(run_dir: str | None) -> Path:
+def _resolve_run_dir(run_dir: str | None, config_path: str) -> Path:
     if run_dir:
         return Path(run_dir)
-    return Path("out") / f"{datetime.now().strftime('%Y%m%d')}_mem_test"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path("out") / f"{timestamp}_{Path(config_path).stem}"
 
 
 def _resolve_run_output(output: str, run_dir: Path) -> Path:
@@ -108,33 +128,35 @@ def _derive_total_summary_output(summary_output: str) -> str:
 
 
 def _print_and_write(payload: dict[str, Any]) -> None:
-    write_summary(payload, str(payload.get("summary_output") or MEM_TEST_SUMMARY_OUTPUT))
+    write_summary(payload, str(payload.get("summary_output") or PILOT_SUMMARY_OUTPUT))
     total_summary_output = payload.get("total_summary_output")
     if total_summary_output:
         write_total_policy_summary(payload, str(total_summary_output))
 
 
-def _run_generated_config(
-    config_path: Path,
-    run_dir: Path,
-    *,
-    explicit_total_summary_output: str,
-) -> int:
-    fallback_summary_output = str(_resolve_run_output(MEM_TEST_SUMMARY_OUTPUT, run_dir))
+def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return summary_rows(payload)
+
+
+def pilot_smoke_measured(args: argparse.Namespace) -> int:
+    config_path = getattr(args, "config", PILOT_CONFIG)
+    run_dir = _resolve_run_dir(getattr(args, "run_dir", None), config_path)
+    fallback_summary_output = str(_resolve_run_output(PILOT_SUMMARY_OUTPUT, run_dir))
+    explicit_total_summary_output = str(getattr(args, "total_summary_output", "") or "")
     fallback_total_summary_output = str(
         _resolve_run_output(explicit_total_summary_output, run_dir)
         if explicit_total_summary_output
         else _derive_total_summary_output(fallback_summary_output)
     )
     try:
-        config = load_config(config_path)
+        config = load_config(Path(config_path))
         profiles = config_profiles(config)
         policies = config_policies(config)
         outputs = config.get("outputs", {})
         outputs = outputs if isinstance(outputs, dict) else {}
-        profile_output = str(_resolve_run_output(str(outputs.get("smoke_profiles", "out/profile_tables/run_mem_test_profiles.csv")), run_dir))
-        policy_output = str(_resolve_run_output(str(outputs.get("smoke_policy", "out/policy_tables/run_mem_test_policy.csv")), run_dir))
-        summary_output = str(_resolve_run_output(str(outputs.get("smoke_summary", MEM_TEST_SUMMARY_OUTPUT)), run_dir))
+        profile_output = str(_resolve_run_output(str(outputs.get("smoke_profiles", PILOT_PROFILE_OUTPUT)), run_dir))
+        policy_output = str(_resolve_run_output(str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT)), run_dir))
+        summary_output = str(_resolve_run_output(str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT)), run_dir))
         configured_total_summary_output = outputs.get("smoke_total_summary")
         if explicit_total_summary_output:
             total_summary_output = str(_resolve_run_output(explicit_total_summary_output, run_dir))
@@ -144,12 +166,11 @@ def _run_generated_config(
             total_summary_output = _derive_total_summary_output(summary_output)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
-            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": 2,
             "step": "load_config",
             "error": str(exc),
-            "config": str(config_path),
+            "config": config_path,
             "run_dir": str(run_dir),
             "summary_output": fallback_summary_output,
             "total_summary_output": fallback_total_summary_output,
@@ -158,22 +179,19 @@ def _run_generated_config(
         return 2
 
     profile_args = argparse.Namespace(
-        config=str(config_path),
+        config=config_path,
         adapters=None,
         output=profile_output,
         import_measurements="",
-        allow_import_measurements_for_debug=False,
         dry_run=False,
-        formal_run=False,
     )
     profile_code, profile_payload = _run_stage(build_profile_table, profile_args)
     if profile_code != 0:
         payload = {
-            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": profile_code,
             "step": "build_profile_table",
-            "config": str(config_path),
+            "config": config_path,
             "run_dir": str(run_dir),
             "summary_output": summary_output,
             "total_summary_output": total_summary_output,
@@ -194,12 +212,11 @@ def _run_generated_config(
         )
     except (FileNotFoundError, ValueError) as exc:
         payload = {
-            "experiment_name": "run_mem_test",
             "ok": False,
             "return_code": 2,
             "step": "validate_profile_table",
             "error": str(exc),
-            "config": str(config_path),
+            "config": config_path,
             "run_dir": str(run_dir),
             "summary_output": summary_output,
             "total_summary_output": total_summary_output,
@@ -218,7 +235,7 @@ def _run_generated_config(
     for sweep in sweeps:
         run_output = _policy_output_for_sweep(policy_output, sweep, len(sweeps))
         policy_args = argparse.Namespace(
-            config=str(config_path),
+            config=config_path,
             measurements=profile_output,
             output=run_output,
             profiles=None,
@@ -244,13 +261,11 @@ def _run_generated_config(
         policy_rows += int(policy_payload.get("rows") or 0)
         if policy_code != 0:
             break
-
     payload = {
-        "experiment_name": "run_mem_test",
         "ok": policy_code == 0,
         "return_code": policy_code,
         "step": "complete" if policy_code == 0 else "run_policies",
-        "config": str(config_path),
+        "config": config_path,
         "run_dir": str(run_dir),
         "summary_output": summary_output,
         "total_summary_output": total_summary_output,
@@ -266,64 +281,35 @@ def _run_generated_config(
         "profile": profile_payload,
         "policy": policy_payload,
         "policy_runs": policy_runs,
-        "generated_config": str(config_path),
     }
     _print_and_write(payload)
     visual_outputs: list[Path] = []
     if policy_code == 0:
         try:
             visual_outputs = plot_summary(total_summary_output)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover - visualization must not fail the experiment.
             payload["visual_error"] = str(exc)
     payload["visual_outputs"] = [str(path) for path in visual_outputs]
     _print_and_write(payload)
-
-    if policy_code == 0:
-        analysis_path = run_dir / "run_mem_test_analysis.json"
-        analysis_md_path = run_dir / "run_mem_test_analysis.md"
-        analysis = analyze_mem_test_summary(Path(total_summary_output))
-        analysis.update(
-            {
-                "config": str(config_path),
-                "generated_config": str(config_path),
-                "run_dir": str(run_dir),
-            }
-        )
-        analysis_path.write_text(json.dumps(json_ready(analysis), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        write_mem_test_analysis(analysis, analysis_md_path)
     return policy_code
 
 
-def run(args: argparse.Namespace) -> int:
-    run_dir = _resolve_run_dir(args.run_dir)
-    budgets = build_budget_series(args.budget_start_mib, args.budget_stop_mib, args.budget_step_mib)
-    base_config = load_config(Path(args.base_config))
-    config = build_mem_test_config(
-        base_config,
-        max_requests=args.max_requests,
-        budgets_mib=budgets,
-        include_tailguard=args.include_tailguard,
-    )
-    config_path = write_generated_config(config, run_dir)
-    return _run_generated_config(
-        config_path,
-        run_dir,
-        explicit_total_summary_output=args.total_summary_output,
-    )
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run TailGuardKV memory-budget baseline sweep.")
-    parser.add_argument("--base-config", default="configs/pilot.yaml")
-    parser.add_argument("--run-dir")
-    parser.add_argument("--max-requests", type=int, default=80)
-    parser.add_argument("--budget-start-mib", type=float, default=100.0)
-    parser.add_argument("--budget-stop-mib", type=float, default=5000.0)
-    parser.add_argument("--budget-step-mib", type=float, default=100.0)
-    parser.add_argument("--include-tailguard", action="store_true")
-    parser.add_argument("--total-summary-output", default="")
+    parser = argparse.ArgumentParser(description="TailGuardKV 正式实验入口。")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    pilot = subparsers.add_parser("pilot-smoke-measured", help="运行真实 pilot measured smoke 实验。")
+    pilot.add_argument("--config", default=PILOT_CONFIG)
+    pilot.add_argument("--run-dir")
+    pilot.add_argument("--total-summary-output", default="")
+    pilot.set_defaults(func=pilot_smoke_measured)
     return parser
 
 
 def main() -> int:
-    return run_command(run, build_parser().parse_args())
+    parser = build_parser()
+    args = parser.parse_args()
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
