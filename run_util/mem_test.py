@@ -84,7 +84,7 @@ def _policy_output_for_sweep(base_output: str, sweep: dict[str, float], sweep_co
 def _resolve_run_dir(run_dir: str | None) -> Path:
     if run_dir:
         return Path(run_dir)
-    return Path("out") / f"{datetime.now().strftime('%Y%m%d')}_mem_test"
+    return Path("out") / f"{datetime.now().strftime('%m-%d-%H')}_mem_test"
 
 
 def _resolve_run_output(output: str, run_dir: Path) -> Path:
@@ -317,9 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-config", default="configs/pilot.yaml")
     parser.add_argument("--run-dir")
     parser.add_argument("--max-requests", type=int, default=80)
-    parser.add_argument("--budget-start-mib", type=float, default=100.0)
-    parser.add_argument("--budget-stop-mib", type=float, default=5000.0)
-    parser.add_argument("--budget-step-mib", type=float, default=100.0)
+    parser.add_argument("--budget-start-mib", type=float, default=10.0)
+    parser.add_argument("--budget-stop-mib", type=float, default=100.0)
+    parser.add_argument("--budget-step-mib", type=float, default=10.0)
     parser.add_argument("--include-tailguard", action="store_true")
     parser.add_argument("--total-summary-output", default="")
     return parser

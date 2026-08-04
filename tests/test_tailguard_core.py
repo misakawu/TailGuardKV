@@ -370,11 +370,33 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertNotIn('"ttft_ms": total_ms', source)
         self.assertIn('"ttft_semantics": "first_token"', source)
 
-    def test_mem_test_budget_series_uses_100_mib_steps(self) -> None:
+    def test_mem_test_parser_defaults_cover_10_to_100_mib_budget_sweep(self) -> None:
+        from run_util.mem_test import build_parser
+
+        args = build_parser().parse_args([])
+
+        self.assertEqual(args.budget_start_mib, 10.0)
+        self.assertEqual(args.budget_stop_mib, 100.0)
+        self.assertEqual(args.budget_step_mib, 10.0)
+
+    def test_mem_test_budget_series_uses_10_mib_steps(self) -> None:
         from run_util.mem_test_config import build_budget_series
 
+        self.assertEqual(
+            build_budget_series(10, 100, 10),
+            [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
+        )
         self.assertEqual(build_budget_series(100, 500, 100), [100.0, 200.0, 300.0, 400.0, 500.0])
         self.assertEqual(build_budget_series(100, 350, 100), [100.0, 200.0, 300.0])
+
+    def test_mem_test_default_run_dir_uses_month_day_hour_prefix(self) -> None:
+        from run_util import mem_test
+
+        fixed_time = SimpleNamespace(strftime=lambda fmt: "08-04-15" if fmt == "%m-%d-%H" else "20260804")
+        with patch("run_util.mem_test.datetime", SimpleNamespace(now=lambda: fixed_time)):
+            run_dir = mem_test._resolve_run_dir(None)
+
+        self.assertEqual(run_dir, Path("out/08-04-15_mem_test"))
 
     def test_mem_test_generated_config_removes_tailguard_and_uses_relative_outputs(self) -> None:
         from run_util.mem_test_config import build_mem_test_config
@@ -559,23 +581,26 @@ class TailGuardCoreTest(unittest.TestCase):
                 patch("run_util.mem_test.run_policies", side_effect=fake_policy),
                 patch("run_util.mem_test.plot_summary", return_value=[]),
             ):
-                code = mem_test.run(
-                    argparse.Namespace(
-                        base_config=str(config_path),
-                        run_dir=str(run_dir),
-                        max_requests=80,
-                        budget_start_mib=100.0,
-                        budget_stop_mib=300.0,
-                        budget_step_mib=100.0,
-                        include_tailguard=False,
-                        total_summary_output="",
-                    )
+                args = mem_test.build_parser().parse_args(
+                    [
+                        "--base-config",
+                        str(config_path),
+                        "--run-dir",
+                        str(run_dir),
+                    ]
                 )
+                code = mem_test.run(args)
 
             self.assertEqual(code, 0)
+            expected_budgets = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+            generated_config = load_config(run_dir / "configs" / "run_mem_test.generated.yaml")
+            self.assertEqual(generated_config["pilot"]["memory_budgets_mib"], expected_budgets)
             self.assertFalse(calls["profile"].formal_run)
             self.assertEqual(calls["profile"].output, str(run_dir / "profile_tables/run_mem_test_profiles.csv"))
-            self.assertEqual([call.memory_budget_mib for call in calls["policy"]], [100.0, 200.0, 300.0])
+            self.assertEqual(
+                [call.memory_budget_mib for call in calls["policy"]],
+                expected_budgets,
+            )
             self.assertTrue(all(call.allow_dry_run_replay is False for call in calls["policy"]))
             self.assertTrue((run_dir / "policy_tables/run_mem_test_total_summary.csv").exists())
             self.assertTrue((run_dir / "run_mem_test_analysis.md").exists())
