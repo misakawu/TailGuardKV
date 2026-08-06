@@ -36,18 +36,17 @@ policies:
     - uncalibrated_dynamic
 
 pilot:
-  epsilons: [0.05, 0.10]
-  deltas: [0.05, 0.10]
-  memory_budgets_mib: [4900, 5000]
+  epsilons: [0.02, 0.05, 0.10]
+  deltas: [0.01, 0.05, 0.10]
+  memory_budgets_mib: [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000]
 
 data:
   requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
   calibration_fraction: 0.5
-  max_requests: 50
+  max_requests: 200
 
 profile_smoke:
   max_new_tokens: 16
-  require_ttft: true
   timeout_s: 180
   repeat: 1
   local_files_only: true
@@ -56,7 +55,7 @@ profile_smoke:
   vllm_max_model_len: 1024
 
 outputs:
-  smoke_profiles: out/profile_tables/pilot_50_measured_profiles.csv
-  smoke_profile_checks: out/profile_tables/pilot_50_profile_smoke.csv
-  smoke_policy: out/policy_tables/pilot_50_measured_policy.csv
-  smoke_summary: out/policy_tables/pilot_50_measured_summary.csv
+  smoke_profiles: out/baseline_wide_sweep/profile_tables/pilot_smoke_measured_profiles.csv
+  smoke_policy: out/baseline_wide_sweep/policy_tables/pilot_smoke_measured_policy.csv
+  smoke_summary: out/baseline_wide_sweep/policy_tables/pilot_smoke_measured_summary.csv
+  smoke_total_summary: out/baseline_wide_sweep/policy_tables/baseline_wide_sweep_total_summary.csv

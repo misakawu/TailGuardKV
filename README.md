@@ -24,7 +24,7 @@ python3 run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
 conda run -n tailguardkv-base python run_profile_test.py --config configs/pilot_50.yaml
 ```
 
-`configs/pilot_50.yaml` 是 7 策略快速 measured smoke gate：同一张 measured profile 表会回放 `full_lru`、`static_best`、`static_safe`、`tailguard`、`quality_oracle`、`utility_dynamic`、`uncalibrated_dynamic`。它使用与 `configs/pilot.yaml` 相同的 8-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
+`configs/pilot_50.yaml` 是 5 baseline 快速 measured smoke gate：同一张 measured profile 表会回放 `full_lru`、`static_best`、`static_safe`、`utility_dynamic`、`uncalibrated_dynamic`。它使用与 `configs/pilot.yaml` 相同的 8-profile grid，但只跑 50 个请求。`configs/pilot.yaml` 是正式 200-request profile table，用作论文 pilot 证据。`data.max_requests` 会在 calibration/eval split 同时存在时按 1:1 分层取样；每个 split 内再按 `task x length_bucket` 做 round-robin 分层抽样，例如 50 条会取 25 条 calibration 和 25 条 eval，避免 smoke 子集塌成单 task 单长度。只有单一 split 或某个 split 只有单组样本时才退回原有前缀截断语义。
 
 正式 profile grid 为：
 
@@ -77,7 +77,7 @@ summary 使用宽表 CSV，一行对应 `experiment`、单个 `profile` 或单�
 
 Profile 表按 chunk 增量写入。某个 chunk 校验失败时，主 profile CSV 只保留此前成功 chunk，失败 chunk 会写入同目录 sidecar 诊断表 `<profile_stem>_failed_chunks.csv`，并在 summary 的 `diagnostic_output`、`failures` 列暴露失败位置和 error，便于复跑定位。新一轮 profile 表生成开始时会先清理同 stem 的旧 sidecar，避免成功复跑后遗留历史失败诊断。
 
-`policies.record_rejected_unsafe: true` 会让 `utility_dynamic` 和 `uncalibrated_dynamic` 在 calibrated unsafe lossy 动作上强制回退到校准集 p95 TTFT 最低的 exact profile，并在 policy CSV 写入 `rejected_profile`、`rejected_pred_loss`、`rejected_risk_upper`。关闭该记录开关时仍会强制回退，但 rejected 字段保持为空。配套 summary 中：
+`utility_dynamic` 和 `uncalibrated_dynamic` 是未校准 baseline：前者按平均 utility 分数选择有损 profile，后者只用点预测阈值 `pred_loss <= epsilon` 放行动作；它们不会因为 conformal risk upper 超阈值而强制回退到 exact。配套 summary 中：
 
 - `fallback_ratio` 统计所有带 `fallback_reason` 的动作比例
 - `exact_fallback_ratio` 只统计“最终 exact 且带 fallback_reason”的比例

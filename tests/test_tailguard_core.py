@@ -2497,7 +2497,53 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(action.profile, "kivi_2bit")
         self.assertEqual(action.fallback_reason, "点预测阈值通过")
 
-    def test_utility_dynamic_falls_back_to_full_gpu_when_lossy_is_unsafe(self) -> None:
+    def test_utility_dynamic_uses_lossy_candidates_before_exact_fallback(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=1.0),
+            _measurement("c2", "full_gpu", 0.0, ttft_ms=1.0),
+            _measurement("c1", "kivi_4bit", 0.01, ttft_ms=5.0),
+            _measurement("c2", "kivi_4bit", 0.01, ttft_ms=5.0),
+            _measurement("c1", "h2o_heavy", 0.01, ttft_ms=6.0),
+            _measurement("c2", "h2o_heavy", 0.01, ttft_ms=6.0),
+        ]
+        [policy] = build_policies(
+            [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 0.0}],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit", "h2o_heavy"],
+            0.2,
+            0.05,
+            {"full_gpu"},
+        )
+
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+
+        self.assertEqual(action.profile, "kivi_4bit")
+
+    def test_uncalibrated_dynamic_uses_lossy_candidates_before_exact_fallback(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=1.0),
+            _measurement("c2", "full_gpu", 0.0, ttft_ms=1.0),
+            _measurement("c1", "kivi_4bit", 0.01, ttft_ms=5.0),
+            _measurement("c2", "kivi_4bit", 0.01, ttft_ms=5.0),
+            _measurement("c1", "h2o_heavy", 0.01, ttft_ms=6.0),
+            _measurement("c2", "h2o_heavy", 0.01, ttft_ms=6.0),
+        ]
+        [policy] = build_policies(
+            ["uncalibrated_dynamic"],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit", "h2o_heavy"],
+            0.2,
+            0.05,
+            {"full_gpu"},
+        )
+
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+
+        self.assertEqual(action.profile, "kivi_4bit")
+
+    def test_utility_dynamic_reports_unsafe_lossy_without_conformal_fallback(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
             _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
@@ -2515,12 +2561,35 @@ class TailGuardCoreTest(unittest.TestCase):
             record_rejected_unsafe=True,
         )
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
-        self.assertEqual(action.profile, "full_gpu")
-        self.assertEqual(action.rejected_profile, "kivi_4bit_residual32")
-        self.assertIsNotNone(action.rejected_pred_loss)
-        self.assertIsNotNone(action.rejected_risk_upper)
+        self.assertEqual(action.profile, "kivi_4bit_residual32")
+        self.assertFalse(action.safe)
+        self.assertEqual(action.rejected_profile, "")
+        self.assertGreater(action.risk_upper or 0.0, 0.2)
 
-    def test_uncalibrated_dynamic_falls_back_to_full_gpu_when_lossy_is_unsafe(self) -> None:
+    def test_uncalibrated_dynamic_does_not_apply_conformal_fallback_after_point_threshold(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
+            _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
+            _measurement("c1", "kivi_4bit_residual32", 0.0, ttft_ms=1.0),
+            _measurement("c2", "kivi_4bit_residual32", 0.4, ttft_ms=1.0),
+        ]
+        [policy] = build_policies(
+            ["uncalibrated_dynamic"],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit_residual32"],
+            0.25,
+            0.05,
+            {"full_gpu"},
+            record_rejected_unsafe=True,
+        )
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+        self.assertEqual(action.profile, "kivi_4bit_residual32")
+        self.assertFalse(action.safe)
+        self.assertEqual(action.rejected_profile, "")
+        self.assertGreater(action.risk_upper or 0.0, 0.25)
+
+    def test_uncalibrated_dynamic_falls_back_to_full_gpu_when_point_prediction_exceeds_epsilon(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
             _measurement("c2", "full_gpu", 0.0, ttft_ms=31.0),
@@ -2539,7 +2608,7 @@ class TailGuardCoreTest(unittest.TestCase):
         )
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
         self.assertEqual(action.profile, "full_gpu")
-        self.assertEqual(action.rejected_profile, "kivi_4bit_residual32")
+        self.assertEqual(action.rejected_profile, "")
 
     def test_vllm_lru_rank_tuple_orders_by_recency_then_block_id(self) -> None:
         policy = create_vllm_policy("full_lru")
@@ -2620,8 +2689,11 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(pilot["policies"]["record_rejected_unsafe"])
         self.assertTrue(pilot_50["policies"]["record_rejected_unsafe"])
         self.assertTrue(pilot_50["profile_smoke"]["require_ttft"])
-        self.assertEqual(config_policies(pilot), ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"])
-        self.assertEqual(config_policies(pilot_50), ["full_lru", "static_best", "static_safe", "tailguard", "quality_oracle", "utility_dynamic", "uncalibrated_dynamic"])
+        self.assertEqual(
+            config_policies(pilot),
+            ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"],
+        )
+        self.assertEqual(config_policies(pilot_50), ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"])
         self.assertEqual(exact_profiles(expected_profiles, pilot), {"full_gpu"})
 
     def test_registry_rejects_structured_static_policy_config_after_cleanup(self) -> None:
