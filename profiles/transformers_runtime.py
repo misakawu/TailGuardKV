@@ -10,6 +10,7 @@ from typing import Any
 
 from profiles.cache_common import legacy_kv_cache_memory_mib
 from profiles.generation_timing import generate_with_first_token_timing
+from profiles.session_runtime import SessionRuntimeState
 
 
 def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -48,6 +49,76 @@ def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
         "results": results,
         "worker": {"mode": "batch"},
     }
+
+
+def _estimate_kv_mib(runtime: dict[str, Any], payload: dict[str, Any]) -> float:
+    estimator = runtime.get("kv_estimator")
+    if callable(estimator):
+        return float(estimator(payload))
+    prompt = str(payload.get("prompt") or "")
+    return float(max(1, len(prompt)))
+
+
+def _append_with_existing_kv(runtime: dict[str, Any], payload: dict[str, Any], state: SessionRuntimeState) -> tuple[dict[str, Any], SessionRuntimeState]:
+    session_id = str(payload.get("session_id") or "")
+    profile = str(payload.get("profile") or "")
+    turn_index = int(payload.get("turn_index") or 0)
+    previous = state.sessions.get(session_id)
+    resident_before = previous.resident_gpu_mib if previous else 0.0
+    current_total = _estimate_kv_mib(runtime, payload)
+    incremental = max(1.0, current_total - resident_before) if turn_index > 0 else current_total
+    next_state = state.record_resident(session_id, profile, turn_index=turn_index, kv_mib=incremental)
+    resident_after = next_state.sessions[session_id].resident_gpu_mib
+    result = {
+        "ok": True,
+        "measured": True,
+        "kv_incremental_mib": incremental,
+        "kv_cumulative_mib": resident_after,
+        "resident_kv_mib_before": resident_before,
+        "resident_kv_mib_after": resident_after,
+        "restore_ms": 0.0,
+        "recompute_ms": 0.0,
+        "evicted_kv_mib": 0.0,
+        "budget_hit": False,
+        "event_trace": [{"event": "resident", "session_id": session_id, "profile": profile, "turn_index": turn_index}],
+    }
+    return result, next_state
+
+
+def _rebuild_session_from_turn0(runtime: dict[str, Any], history_payloads: list[dict[str, Any]], *, target_profile: str) -> dict[str, Any]:
+    state = SessionRuntimeState()
+    last_result: dict[str, Any] = {}
+    recompute_ms = 0.0
+    for payload in history_payloads:
+        rebuilt = dict(payload)
+        rebuilt["profile"] = target_profile
+        result, state = _append_with_existing_kv(runtime, rebuilt, state)
+        recompute_ms += float(runtime.get("clock_ms", 1.0))
+        last_result = result
+    last_result["recompute_ms"] = recompute_ms
+    last_result["event_trace"] = [*last_result.get("event_trace", []), {"event": "recompute", "profile": target_profile}]
+    return last_result
+
+
+def _run_one_request_with_session(runtime: dict[str, Any], payload: dict[str, Any], state: SessionRuntimeState) -> tuple[dict[str, Any], SessionRuntimeState]:
+    session_id = str(payload.get("session_id") or "")
+    profile = str(payload.get("profile") or "")
+    session = state.sessions.get(session_id)
+    if session and session.current_profile and session.current_profile != profile:
+        history_payloads = []
+        for turn in range(int(payload.get("turn_index") or 0) + 1):
+            prompt = "\n".join(list(payload.get("history_turns") or [])[:turn] + [str(payload.get("prompt") or "")])
+            history_payloads.append({**payload, "turn_index": turn, "prompt": prompt, "history_turns": list(payload.get("history_turns") or [])[:turn]})
+        result = _rebuild_session_from_turn0(runtime, history_payloads, target_profile=profile)
+        rebuilt_state = state.switch_profile(session_id, from_profile=session.current_profile, to_profile=profile, rebuild_required=True)
+        rebuilt_state = rebuilt_state.record_resident(
+            session_id,
+            profile,
+            turn_index=int(payload.get("turn_index") or 0),
+            kv_mib=float(result["kv_cumulative_mib"]) - rebuilt_state.sessions[session_id].resident_gpu_mib,
+        )
+        return result, rebuilt_state
+    return _append_with_existing_kv(runtime, payload, state)
 
 
 def main() -> int:

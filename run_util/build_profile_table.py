@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import inspect
 import json
 import sys
 from dataclasses import replace
@@ -34,17 +35,27 @@ PROFILE_CHUNK_SIZE = 10
 PROFILE_TABLE_FIELDNAMES = [
     "adapter",
     "error",
+    "session_id",
+    "turn_index",
     "latency_ms",
     "measured",
     "ok",
     "output_text",
     "peak_memory_mib",
     "kv_cache_memory_mib",
+    "kv_incremental_mib",
+    "kv_cumulative_mib",
     "profile",
     "quality_loss",
     "quality_score",
     "request_id",
     "resident_memory_mib",
+    "resident_kv_mib_before",
+    "resident_kv_mib_after",
+    "restore_ms",
+    "recompute_ms",
+    "evicted_kv_mib",
+    "budget_hit",
     "ttft_ms",
     "length_bucket",
     "split",
@@ -101,6 +112,22 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_vllm_eviction_decision_time_ms",
 ]
 
+PROFILE_TRACE_FIELDNAMES = [
+    "session_id",
+    "turn_index",
+    "request_id",
+    "profile",
+    "event",
+    "kv_incremental_mib",
+    "kv_cumulative_mib",
+    "resident_kv_mib_before",
+    "resident_kv_mib_after",
+    "restore_ms",
+    "recompute_ms",
+    "evicted_kv_mib",
+    "budget_hit",
+]
+
 
 def _pilot_epsilons(config: dict) -> list[float]:
     pilot = config.get("pilot", {})
@@ -121,6 +148,16 @@ def _request_chunks(requests: list, chunk_size: int = PROFILE_CHUNK_SIZE):
         yield start // chunk_size + 1, requests[start : start + chunk_size]
 
 
+def _active_profile_names(adapters: list, configured_profiles: list[str]) -> list[str]:
+    configured = set(configured_profiles)
+    active: list[str] = []
+    for adapter in adapters:
+        for spec in adapter.profiles():
+            if spec.name in configured and spec.name not in active:
+                active.append(spec.name)
+    return active
+
+
 def _append_profile_rows(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     needs_header = not path.exists() or path.stat().st_size == 0
@@ -134,6 +171,50 @@ def _append_profile_rows(path: Path, rows: list[dict[str, object]]) -> None:
 def _failed_chunks_output(output: str | Path) -> Path:
     path = Path(output)
     return path.with_name(f"{path.stem}_failed_chunks.csv")
+
+
+def _trace_rows(measurements: list) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for measurement in measurements:
+        if not measurement.session_id:
+            continue
+        base = {
+            "session_id": measurement.session_id,
+            "turn_index": measurement.turn_index,
+            "request_id": measurement.request_id,
+            "profile": measurement.profile,
+            "kv_incremental_mib": measurement.kv_incremental_mib,
+            "kv_cumulative_mib": measurement.kv_cumulative_mib,
+            "resident_kv_mib_before": measurement.resident_kv_mib_before,
+            "resident_kv_mib_after": measurement.resident_kv_mib_after,
+            "restore_ms": measurement.restore_ms,
+            "recompute_ms": measurement.recompute_ms,
+            "evicted_kv_mib": measurement.evicted_kv_mib,
+            "budget_hit": measurement.budget_hit,
+        }
+        rows.append({**base, "event": "resident"})
+        if measurement.evicted_kv_mib and measurement.evicted_kv_mib > 0:
+            rows.append({**base, "event": "evict"})
+        if measurement.restore_ms and measurement.restore_ms > 0:
+            rows.append({**base, "event": "restore"})
+        if measurement.recompute_ms and measurement.recompute_ms > 0:
+            rows.append({**base, "event": "recompute"})
+    return rows
+
+
+def _write_trace_if_configured(config: dict, measurements: list) -> None:
+    trace_path = config.get("outputs", {}).get("smoke_profile_trace")
+    if not trace_path:
+        return
+    rows = _trace_rows(measurements)
+    if not rows:
+        return
+    path = Path(str(trace_path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=PROFILE_TRACE_FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _print_chunk_progress(
@@ -166,6 +247,25 @@ def _print_chunk_progress(
     )
 
 
+def _profile_many_compat(
+    adapter: object,
+    request_chunk: list,
+    profile_name: str,
+    *,
+    dry_run: bool,
+    session_runtime: object | None,
+    memory_budget_mib: float | None,
+):
+    profile_many = getattr(adapter, "profile_many")
+    parameters = inspect.signature(profile_many).parameters
+    kwargs: dict[str, object] = {"dry_run": dry_run}
+    if "session_runtime" in parameters:
+        kwargs["session_runtime"] = session_runtime
+    if "memory_budget_mib" in parameters:
+        kwargs["memory_budget_mib"] = memory_budget_mib
+    return profile_many(request_chunk, profile_name, **kwargs)
+
+
 def build_profile_table(args: argparse.Namespace) -> int:
     try:
         config = load_config(Path(args.config))
@@ -189,6 +289,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
             print_error(exc, output=output)
             return 2
         write_csv(Path(output), [measurement.to_row() for measurement in measurements])
+        _write_trace_if_configured(config, measurements)
         summary = MetricCollector().summarize_profiles(measurements, epsilons=_pilot_epsilons(config))
         print(json.dumps(json_ready({
             "output": output,
@@ -203,6 +304,8 @@ def build_profile_table(args: argparse.Namespace) -> int:
         runtime = config_runtime(config)
         require_ttft = bool(runtime.get("require_ttft", False))
         adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
+        active_profiles = _active_profile_names(adapters, profiles)
+        require_quality_loss = "full_gpu" in active_profiles
         requests, fallback_requests = load_requests(config)
         max_requests = int(runtime.get("max_requests", 0) or 0)
         requests = limit_requests_by_split(requests, max_requests)
@@ -221,16 +324,26 @@ def build_profile_table(args: argparse.Namespace) -> int:
         if diagnostic_output.exists():
             diagnostic_output.unlink()
         measurements = []
-        exact = exact_profiles(profiles, config)
+        exact = exact_profiles(active_profiles, config)
+        session_runtime_by_profile: dict[str, dict[str, object]] = {}
+        memory_budget_mib = runtime.get("memory_budget_mib")
         for adapter in adapters:
             for spec in adapter.profiles():
                 if spec.name not in profiles:
                     continue
+                session_runtime = session_runtime_by_profile.setdefault(spec.name, {})
                 for chunk_index, request_chunk in _request_chunks(requests):
                     chunk_measurements = [
                         annotate_measurement(measurement, request, fallback_requests)
                         for measurement, request in zip(
-                            adapter.profile_many(request_chunk, spec.name, dry_run=args.dry_run),
+                            _profile_many_compat(
+                                adapter,
+                                request_chunk,
+                                spec.name,
+                                dry_run=args.dry_run,
+                                session_runtime=session_runtime,
+                                memory_budget_mib=memory_budget_mib,
+                            ),
                             request_chunk,
                             strict=True,
                         )
@@ -244,6 +357,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
                             required_profiles=[spec.name],
                             require_measured=not args.dry_run,
                             require_ttft=require_ttft and not args.dry_run,
+                            require_quality_loss=require_quality_loss,
                         )
                     except ValueError as exc:
                         diagnostic_output = _failed_chunks_output(output)
@@ -275,14 +389,15 @@ def build_profile_table(args: argparse.Namespace) -> int:
         print_error(exc, output=output)
         return 1
 
-    measurements = with_quality(measurements, exact_profiles(profiles, config))
+    measurements = with_quality(measurements, exact)
     try:
         validate_profile_measurements(
             measurements,
             output,
-            required_profiles=profiles,
+            required_profiles=active_profiles,
             require_measured=not args.dry_run,
             require_ttft=bool(config_runtime(config).get("require_ttft", False)) and not args.dry_run,
+            require_quality_loss=require_quality_loss,
         )
     except ValueError as exc:
         print(json.dumps({
@@ -293,6 +408,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
         }, ensure_ascii=False, indent=2))
         return 2
     write_csv(Path(output), [measurement.to_row() for measurement in measurements])
+    _write_trace_if_configured(config, measurements)
     summary = MetricCollector().summarize_profiles(measurements, epsilons=_pilot_epsilons(config))
     print(json.dumps(json_ready({
         "output": output,

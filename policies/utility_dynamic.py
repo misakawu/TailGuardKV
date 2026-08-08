@@ -28,7 +28,11 @@ class UtilityDynamicPolicy(StatsPolicy):
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         best_profile = self._fallback_profile()
         best_score = inf
-        for profile in self._candidate_profiles(include_exact=False):
+        budget_filtered = False
+        for profile in [profile for profile in self.profiles if profile not in self.exact_profiles]:
+            if not self._within_memory_budget(profile, request, cache_state):
+                budget_filtered = True
+                continue
             pred_loss = self.predictor.predict_loss(request, profile)
             score = self._ttft_or_inf(profile) + self.memory_weight * self._memory_or_inf(profile) + self.loss_weight * pred_loss
             if score < best_score:
@@ -42,8 +46,9 @@ class UtilityDynamicPolicy(StatsPolicy):
             pred_loss=pred_loss,
             risk_upper=risk_upper,
             safe=safe,
+            budget_hit=budget_filtered,
             epsilon=self.epsilon,
             delta=self.delta,
             fallback_reason=reason if best_profile in self.exact_profiles else "",
-            candidate_safe_count=candidate_safe_count,
+            candidate_safe_count=float(self._candidate_safe_count(request, cache_state)),
         )

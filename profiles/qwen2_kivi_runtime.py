@@ -86,17 +86,25 @@ def run_kivi_request(
             }
         )
     tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
+    reusable_cache = payload.get("_runtime_reusable_kivi_cache")
+    cached_prompt_token_ids = payload.get("_runtime_cached_prompt_token_ids")
+    rebuild_reason = str(payload.get("_runtime_cache_rebuild_reason") or "")
     prompt_tokens = int(tokenized["input_ids"].shape[-1])
     max_new_tokens = int(payload.get("max_new_tokens") or 16)
     residual_length = int(runtime["residual_length"])
     bits = int(runtime["bits"])
-    cache = build_kivi_cache(
-        runtime["model"].config,
-        residual_length=residual_length,
-        group_size=int(payload.get("kivi_group_size") or 32),
-        k_bits=bits,
-        v_bits=bits,
-    )
+    cache = reusable_cache if isinstance(reusable_cache, KIVICache) else None
+    effective_tokenized = tokenized
+    if cache is None:
+        cache = build_kivi_cache(
+            runtime["model"].config,
+            residual_length=residual_length,
+            group_size=int(payload.get("kivi_group_size") or 32),
+            k_bits=bits,
+            v_bits=bits,
+        )
+    elif isinstance(cached_prompt_token_ids, list):
+        effective_tokenized = _trim_tokenized_inputs(runtime["torch"], tokenized, prefix_len=len(cached_prompt_token_ids))
     result = invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
@@ -104,7 +112,7 @@ def run_kivi_request(
         payload,
         runtime["torch"],
         past_key_values=cache,
-        tokenized_inputs=tokenized,
+        tokenized_inputs=effective_tokenized,
         stage_startup_ms=float(runtime["startup_ms"]),
         stage_model_load_ms=float(runtime["model_load_ms"]),
         worker_mode=worker_mode,
@@ -118,6 +126,10 @@ def run_kivi_request(
             "kivi_residual_length": residual_length,
             "prompt_tokens": prompt_tokens,
             "max_new_tokens": max_new_tokens,
+            "cache_reused": bool(isinstance(reusable_cache, KIVICache)),
+            "cache_rebuild_reason": rebuild_reason or ("new_request" if not isinstance(reusable_cache, KIVICache) else ""),
+            "runtime_cache": result.get("past_key_values", cache),
+            "runtime_prompt_token_ids": _token_ids_list(tokenized["input_ids"]),
         }
     )
     quantization_triggered = tracker["kivi_quantized_layers"] > 0 and tracker["kivi_kernel_calls"] > 0
@@ -128,6 +140,34 @@ def run_kivi_request(
         }
     )
     return result
+
+
+def _trim_tokenized_inputs(torch: Any, tokenized: dict[str, Any], *, prefix_len: int) -> dict[str, Any]:
+    trimmed = dict(tokenized)
+    for key in ("input_ids", "attention_mask", "token_type_ids"):
+        value = trimmed.get(key)
+        if value is None or not hasattr(value, "__getitem__"):
+            continue
+        sliced = value[:, prefix_len:]
+        if hasattr(sliced, "shape") and int(sliced.shape[-1]) == 0:
+            sliced = value[:, -1:]
+        trimmed[key] = sliced
+    return trimmed
+
+
+def _token_ids_list(input_ids: Any) -> list[int]:
+    values = input_ids
+    if hasattr(values, "detach"):
+        values = values.detach()
+    if hasattr(values, "cpu"):
+        values = values.cpu()
+    if hasattr(values, "tolist"):
+        values = values.tolist()
+    while isinstance(values, list) and values and isinstance(values[0], list):
+        values = values[0]
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [int(token) for token in values]
 
 
 def split_prefill_kivi_states(

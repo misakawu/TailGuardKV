@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from profiles.session_runtime import SessionRuntimeState
 from run_util.core_types import ProfileMeasurement, ProfileSpec, Request, SmokeResult
 
 
@@ -30,11 +31,34 @@ class ProfileAdapter(ABC):
         ...
 
     @abstractmethod
-    def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
+    def profile(
+        self,
+        request: Request,
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> ProfileMeasurement:
         ...
 
-    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
-        return [self.profile(request, profile_name, dry_run=dry_run) for request in requests]
+    def profile_many(
+        self,
+        requests: Sequence[Request],
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> list[ProfileMeasurement]:
+        return [
+            self.profile(
+                request,
+                profile_name,
+                dry_run=dry_run,
+                session_runtime=session_runtime,
+                memory_budget_mib=memory_budget_mib,
+            )
+            for request in requests
+        ]
 
     def profile_names(self) -> tuple[str, ...]:
         return tuple(spec.name for spec in self.profiles())
@@ -113,16 +137,26 @@ def dry_profile_measurement(
 ) -> ProfileMeasurement:
     return ProfileMeasurement(
         request_id=request.request_id,
+        session_id=request.session_id,
+        turn_index=request.turn_index,
         profile=spec.name,
         adapter=adapter,
         ok=True,
         measured=False,
-        output_text=request.prompt,
+        output_text=request.effective_prompt,
         latency_ms=latency_ms,
         ttft_ms=None,
         peak_memory_mib=peak_memory_mib,
         kv_cache_memory_mib=peak_memory_mib,
         resident_memory_mib=peak_memory_mib,
+        kv_incremental_mib=peak_memory_mib,
+        kv_cumulative_mib=peak_memory_mib * max(1, request.turn_index + 1),
+        resident_kv_mib_before=peak_memory_mib * max(0, request.turn_index),
+        resident_kv_mib_after=peak_memory_mib * max(1, request.turn_index + 1),
+        restore_ms=0.0,
+        recompute_ms=0.0,
+        evicted_kv_mib=0.0,
+        budget_hit=False,
         quality_loss=None,
         extra={
             "family": spec.family,
@@ -196,6 +230,8 @@ def qwen2_kv_profile_many_measurements(
     *,
     timeout_s: int | None = None,
     pythonpath: Sequence[str] = (),
+    session_runtime: object | None = None,
+    memory_budget_mib: float | None = None,
     extra: dict[str, object] | None = None,
 ) -> list[ProfileMeasurement]:
     request_list = list(requests)
@@ -211,8 +247,20 @@ def qwen2_kv_profile_many_measurements(
             {"backend": "qwen2_kv_runtime", "env": env_name, **(extra or {})},
         )
     payload = {
-        "requests": [_qwen2_payload(request, spec, runtime_config, model_name) for request in request_list],
+        "requests": [
+            _qwen2_payload(
+                request,
+                spec,
+                runtime_config,
+                model_name,
+                memory_budget_mib=memory_budget_mib,
+            )
+            for request in request_list
+        ],
     }
+    state = _session_runtime_state(session_runtime)
+    if state.sessions:
+        payload["session_runtime_state"] = state.to_payload()
     proc, result, error = _run_runtime_batch(
         env_name,
         "profiles.qwen2_kv_runtime",
@@ -229,6 +277,7 @@ def qwen2_kv_profile_many_measurements(
             error,
             {"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
         )
+    _update_session_runtime_container(session_runtime, result)
     return _measurements_from_batch_result(
         adapter,
         request_list,
@@ -346,6 +395,7 @@ def qwen2_kv_profile_measurement(
     spec: ProfileSpec,
     runtime_config: dict[str, object],
     timeout_s: int | None = None,
+    pythonpath: Sequence[str] = (),
     extra: dict[str, object] | None = None,
 ) -> ProfileMeasurement:
     model_name = _runtime_model_name(runtime_config)
@@ -363,7 +413,7 @@ def qwen2_kv_profile_measurement(
     payload = _qwen2_payload(request, spec, runtime_config, model_name)
     env = os.environ.copy()
     repo_root = str(Path(__file__).resolve().parents[1])
-    python_paths = [repo_root]
+    python_paths = [repo_root, *[os.path.abspath(path) for path in pythonpath]]
     current_pythonpath = env.get("PYTHONPATH")
     if current_pythonpath:
         python_paths.append(current_pythonpath)
@@ -458,7 +508,12 @@ def _transformers_payload(
     return {
         "profile": spec.name,
         "model_name": model_name,
-        "prompt": request.prompt,
+        "prompt": request.effective_prompt,
+        "session_id": request.session_id,
+        "turn_index": request.turn_index,
+        "history_turns": list(request.history_turns),
+        "execution_mode": "append",
+        "memory_budget_mib": runtime_config.get("memory_budget_mib"),
         "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
         "cache_dir": runtime_config.get("model_cache_dir"),
         "local_files_only": bool(runtime_config.get("local_files_only", True)),
@@ -481,11 +536,18 @@ def _qwen2_payload(
     spec: ProfileSpec,
     runtime_config: dict[str, object],
     model_name: str,
+    *,
+    memory_budget_mib: float | None = None,
 ) -> dict[str, object]:
     return {
         "profile": spec.name,
         "model_name": model_name,
-        "prompt": request.prompt,
+        "prompt": request.effective_prompt,
+        "session_id": request.session_id,
+        "turn_index": request.turn_index,
+        "history_turns": list(request.history_turns),
+        "execution_mode": "append",
+        "memory_budget_mib": runtime_config.get("memory_budget_mib") if memory_budget_mib is None else memory_budget_mib,
         "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
         "cache_dir": runtime_config.get("model_cache_dir"),
         "local_files_only": bool(runtime_config.get("local_files_only", True)),
@@ -495,6 +557,23 @@ def _qwen2_payload(
         "h2o_heavy_ratio": float(spec.metadata.get("h2o_heavy_ratio", runtime_config.get("h2o_heavy_ratio", 0.1))),
         "h2o_recent_ratio": float(spec.metadata.get("h2o_recent_ratio", runtime_config.get("h2o_recent_ratio", 0.1))),
     }
+
+
+def _session_runtime_state(session_runtime: object | None) -> SessionRuntimeState:
+    if isinstance(session_runtime, SessionRuntimeState):
+        return session_runtime
+    if isinstance(session_runtime, dict):
+        return SessionRuntimeState.from_payload(session_runtime.get("state"))
+    return SessionRuntimeState()
+
+
+def _update_session_runtime_container(session_runtime: object | None, result: dict[str, object] | None) -> None:
+    if not isinstance(session_runtime, dict) or not isinstance(result, dict):
+        return
+    payload = result.get("session_runtime_state")
+    if payload is None:
+        return
+    session_runtime["state"] = payload
 
 
 def _run_runtime_batch(
@@ -584,24 +663,6 @@ def _measurements_from_batch_result(
             default_extra=default_extra,
             worker_mode=worker_mode,
         )
-        if proc.returncode != 0 and row.ok:
-            row = ProfileMeasurement(
-                request_id=row.request_id,
-                profile=row.profile,
-                adapter=row.adapter,
-                ok=False,
-                measured=False,
-                output_text=row.output_text,
-                error=(proc.stderr or proc.stdout).strip()[-1200:] or row.error or "worker returned non-zero status",
-                latency_ms=row.latency_ms,
-                ttft_ms=row.ttft_ms,
-                peak_memory_mib=row.peak_memory_mib,
-                kv_cache_memory_mib=row.kv_cache_memory_mib,
-                resident_memory_mib=row.resident_memory_mib,
-                quality_score=row.quality_score,
-                quality_loss=row.quality_loss,
-                extra={**row.extra, "returncode": proc.returncode, "unsupported": "true"},
-            )
         rows.append(row)
     return rows
 
@@ -628,6 +689,15 @@ def _measurement_from_result(
         "peak_memory_mib",
         "kv_cache_memory_mib",
         "resident_memory_mib",
+        "kv_incremental_mib",
+        "kv_cumulative_mib",
+        "resident_kv_mib_before",
+        "resident_kv_mib_after",
+        "restore_ms",
+        "recompute_ms",
+        "evicted_kv_mib",
+        "budget_hit",
+        "event_trace",
     }
     for key, value in item.items():
         if key in standard_keys:
@@ -639,6 +709,8 @@ def _measurement_from_result(
         result_extra.setdefault("unsupported", "true")
     return ProfileMeasurement(
         request_id=request.request_id,
+        session_id=request.session_id,
+        turn_index=request.turn_index,
         profile=spec.name,
         adapter=adapter,
         ok=ok,
@@ -650,6 +722,14 @@ def _measurement_from_result(
         peak_memory_mib=_optional_float(item.get("peak_memory_mib")),
         kv_cache_memory_mib=_optional_float(item.get("kv_cache_memory_mib")),
         resident_memory_mib=_optional_float(item.get("resident_memory_mib")),
+        kv_incremental_mib=_optional_float(item.get("kv_incremental_mib")),
+        kv_cumulative_mib=_optional_float(item.get("kv_cumulative_mib")),
+        resident_kv_mib_before=_optional_float(item.get("resident_kv_mib_before")),
+        resident_kv_mib_after=_optional_float(item.get("resident_kv_mib_after")),
+        restore_ms=_optional_float(item.get("restore_ms")),
+        recompute_ms=_optional_float(item.get("recompute_ms")),
+        evicted_kv_mib=_optional_float(item.get("evicted_kv_mib")),
+        budget_hit=bool(item.get("budget_hit")),
         extra=result_extra,
     )
 

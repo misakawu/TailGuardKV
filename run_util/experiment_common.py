@@ -23,6 +23,7 @@ from run_util.io_utils import json_ready, read_measurements, write_csv
 from run_util.validation import (
     REQUIRED_PROFILE_FIELDS,
     failed_measurement_summary,
+    validate_backend_results,
     validate_profile_measurements,
     validate_profile_table_header,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "read_measurements",
     "requests_from_measurements",
     "split_measurements",
+    "validate_backend_results",
     "validate_profile_measurements",
     "validate_profile_table_header",
     "with_quality",

@@ -60,7 +60,15 @@ class H2OAdapter(ProfileAdapter):
             versions=versions,
         )
 
-    def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
+    def profile(
+        self,
+        request: Request,
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> ProfileMeasurement:
+        del session_runtime, memory_budget_mib
         spec = self.get_profile(profile_name)
         if not dry_run:
             row = qwen2_kv_profile_measurement(
@@ -69,6 +77,7 @@ class H2OAdapter(ProfileAdapter):
                 request,
                 spec,
                 self.runtime_config,
+                pythonpath=self.pythonpath,
                 extra={
                     "family": spec.family,
                     "h2o_heavy_ratio": spec.metadata.get("h2o_heavy_ratio", ""),
@@ -82,9 +91,22 @@ class H2OAdapter(ProfileAdapter):
         heavy_ratio = float(spec.metadata["h2o_heavy_ratio"])
         return dry_profile_measurement(self.name, request, spec, scale * (0.07 + heavy_ratio * 0.05), scale * (0.7 + heavy_ratio) / 1024.0)
 
-    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+    def profile_many(
+        self,
+        requests: Sequence[Request],
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> list[ProfileMeasurement]:
         if dry_run:
-            return super().profile_many(requests, profile_name, dry_run=dry_run)
+            return super().profile_many(
+                requests,
+                profile_name,
+                dry_run=dry_run,
+                session_runtime=session_runtime,
+                memory_budget_mib=memory_budget_mib,
+            )
         spec = self.get_profile(profile_name)
         rows = qwen2_kv_profile_many_measurements(
             self.name,
@@ -92,6 +114,9 @@ class H2OAdapter(ProfileAdapter):
             requests,
             spec,
             self.runtime_config,
+            pythonpath=self.pythonpath,
+            session_runtime=session_runtime,
+            memory_budget_mib=memory_budget_mib,
             extra={
                 "family": spec.family,
                 "h2o_heavy_ratio": spec.metadata.get("h2o_heavy_ratio", ""),

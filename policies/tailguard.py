@@ -35,10 +35,14 @@ class TailGuardPolicy(StatsPolicy):
         start = time.perf_counter()
         safe_candidates: list[tuple[float, str, float, float]] = []
         rejected: tuple[str, float, float] | None = None
+        budget_filtered = False
         qrp_ms = 0.0
         cg_ms = 0.0
         stc_start = time.perf_counter()
-        for profile in self._candidate_profiles(include_exact=False):
+        for profile in [profile for profile in self.profiles if profile not in self.exact_profiles]:
+            if not self._within_memory_budget(profile, request, cache_state):
+                budget_filtered = True
+                continue
             qrp_start = time.perf_counter()
             pred_loss = self.predictor.predict_loss(request, profile)
             qrp_ms += (time.perf_counter() - qrp_start) * 1000
@@ -59,6 +63,7 @@ class TailGuardPolicy(StatsPolicy):
                 pred_loss=pred_loss,
                 risk_upper=risk_upper,
                 safe=True,
+                budget_hit=budget_filtered,
                 epsilon=self.epsilon,
                 delta=self.delta,
                 candidate_safe_count=float(len(safe_candidates)),
@@ -77,6 +82,7 @@ class TailGuardPolicy(StatsPolicy):
             pred_loss=pred_loss,
             risk_upper=risk_upper,
             safe=safe,
+            budget_hit=budget_filtered,
             epsilon=self.epsilon,
             delta=self.delta,
             fallback_reason="no calibrated safe lossy profile within memory budget",

@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import gc
 import resource
 import sys
 import time
+from math import ceil
 from pathlib import Path
 from typing import Any
 
 from profiles.cache_common import legacy_kv_cache_memory_mib
 from profiles.generation_timing import generate_with_first_token_timing
+
+QWEN2_RUNTIME_GPU_INDICES = (0, 1)
+QWEN2_RUNTIME_GPU_MEMORY_LIMIT_MIB = 10_240
+QWEN2_RUNTIME_GPU_MEMORY_RESERVE_MIB = {
+    0: 2_560,
+    1: 2_048,
+}
 
 
 def import_runtime_modules(*, use_kivi: bool) -> dict[str, Any]:
@@ -44,6 +53,124 @@ def require_cuda(torch: Any) -> None:
         raise RuntimeError("CUDA is required for true Qwen2 KIVI/H2O profile execution")
 
 
+def _managed_gpu_indices(torch: Any) -> tuple[int, int]:
+    device_count_fn = getattr(torch.cuda, "device_count", None)
+    device_count = int(device_count_fn()) if callable(device_count_fn) else len(QWEN2_RUNTIME_GPU_INDICES)
+    if device_count < len(QWEN2_RUNTIME_GPU_INDICES):
+        raise RuntimeError(
+            f"Qwen2 measured runtime requires GPUs {QWEN2_RUNTIME_GPU_INDICES}, "
+            f"but only detected {device_count} CUDA device(s)"
+        )
+    return QWEN2_RUNTIME_GPU_INDICES
+
+
+def _gpu_memory_reserve_mib(gpu_index: int) -> int:
+    reserve = QWEN2_RUNTIME_GPU_MEMORY_RESERVE_MIB.get(gpu_index)
+    if reserve is not None:
+        return int(reserve)
+    return int(min(QWEN2_RUNTIME_GPU_MEMORY_RESERVE_MIB.values()))
+
+
+def _safe_max_memory_mib(torch: Any, gpu_index: int) -> int:
+    total_mib = int(torch.cuda.get_device_properties(gpu_index).total_memory / 1024 / 1024)
+    allowed_mib = min(total_mib - _gpu_memory_reserve_mib(gpu_index), QWEN2_RUNTIME_GPU_MEMORY_LIMIT_MIB)
+    if allowed_mib <= 0:
+        raise RuntimeError(f"GPU {gpu_index} total memory too small for Qwen2 runtime: {total_mib} MiB")
+    return allowed_mib
+
+
+def _build_two_gpu_max_memory(torch: Any) -> dict[int, str]:
+    return {gpu_index: f"{_safe_max_memory_mib(torch, gpu_index)}MiB" for gpu_index in _managed_gpu_indices(torch)}
+
+
+def _build_qwen2_device_map(num_hidden_layers: int) -> dict[str, int]:
+    if num_hidden_layers <= 0:
+        raise ValueError(f"invalid Qwen2 hidden layer count: {num_hidden_layers}")
+    split_index = int(ceil(num_hidden_layers / 2))
+    device_map = {"model.embed_tokens": 0}
+    for layer_idx in range(num_hidden_layers):
+        device_map[f"model.layers.{layer_idx}"] = 0 if layer_idx < split_index else 1
+    device_map["model.norm"] = 1
+    device_map["lm_head"] = 1
+    return device_map
+
+
+def _peak_memory_by_gpu_mib(torch: Any) -> dict[int, float]:
+    peaks: dict[int, float] = {}
+    for gpu_index in _managed_gpu_indices(torch):
+        peaks[gpu_index] = float(torch.cuda.max_memory_allocated(gpu_index) / 1024 / 1024)
+    return peaks
+
+
+def _gpu_memory_snapshot(torch: Any) -> dict[str, float]:
+    snapshot: dict[str, float] = {}
+    for gpu_index in _managed_gpu_indices(torch):
+        if hasattr(torch.cuda, "mem_get_info"):
+            free_bytes, total_bytes = torch.cuda.mem_get_info(gpu_index)
+            free_mib = float(free_bytes / 1024 / 1024)
+            total_mib = float(total_bytes / 1024 / 1024)
+            used_mib = total_mib - free_mib
+        else:
+            total_mib = float(torch.cuda.get_device_properties(gpu_index).total_memory / 1024 / 1024)
+            used_mib = float(torch.cuda.memory_allocated(gpu_index) / 1024 / 1024)
+            free_mib = total_mib - used_mib
+        snapshot[f"gpu{gpu_index}_used_mib"] = used_mib
+        snapshot[f"gpu{gpu_index}_free_mib"] = free_mib
+        snapshot[f"gpu{gpu_index}_total_mib"] = total_mib
+    return snapshot
+
+
+def _reset_peak_memory_stats(torch: Any) -> None:
+    for gpu_index in _managed_gpu_indices(torch):
+        torch.cuda.reset_peak_memory_stats(gpu_index)
+        torch.cuda.synchronize(gpu_index)
+
+
+def _peak_memory_fields(torch: Any) -> dict[str, float]:
+    peaks = _peak_memory_by_gpu_mib(torch)
+    return {
+        "peak_memory_mib": sum(peaks.values()),
+        "gpu0_peak_memory_mib": peaks[0],
+        "gpu1_peak_memory_mib": peaks[1],
+    }
+
+
+def _oom_extra_fields(torch: Any, error: str) -> dict[str, float]:
+    if "out of memory" not in str(error or "").lower():
+        return {}
+    return _gpu_memory_snapshot(torch)
+
+
+def release_runtime_cuda_resources(torch: Any, *resources: Any) -> None:
+    for resource_obj in resources:
+        if hasattr(resource_obj, "clear"):
+            try:
+                resource_obj.clear()
+            except Exception:
+                pass
+    gc.collect()
+    if hasattr(torch, "cuda") and hasattr(torch.cuda, "empty_cache"):
+        torch.cuda.empty_cache()
+    if hasattr(torch, "cuda") and hasattr(torch.cuda, "synchronize"):
+        for gpu_index in _managed_gpu_indices(torch):
+            torch.cuda.synchronize(gpu_index)
+
+
+def _load_qwen2_num_hidden_layers(model_name: str, cache_dir: Any, local_files_only: bool) -> int:
+    from transformers import AutoConfig
+
+    config = AutoConfig.from_pretrained(
+        model_name,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+        trust_remote_code=True,
+    )
+    num_hidden_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+    if num_hidden_layers <= 0:
+        raise ValueError(f"unsupported Qwen2 config: num_hidden_layers={num_hidden_layers}")
+    return num_hidden_layers
+
+
 def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_tokenizer: Any) -> tuple[Any, Any, Any]:
     model_name = str(payload.get("model_name") or "")
     if not model_name:
@@ -56,6 +183,12 @@ def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_
         local_files_only=local_files_only,
         trust_remote_code=True,
     )
+    num_hidden_layers = int(payload.get("num_hidden_layers") or 0) or _load_qwen2_num_hidden_layers(
+        model_name,
+        cache_dir,
+        local_files_only,
+    )
+    device_map = _build_qwen2_device_map(num_hidden_layers)
     model = auto_model.from_pretrained(
         model_name,
         cache_dir=cache_dir,
@@ -63,9 +196,11 @@ def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_
         trust_remote_code=True,
         torch_dtype=torch.float16,
         attn_implementation="eager",
-        device_map="auto",
+        device_map=device_map,
+        max_memory=_build_two_gpu_max_memory(torch),
         low_cpu_mem_usage=True,
     )
+    model.hf_device_map = device_map
     model.eval()
     return model, tokenizer, model.model.embed_tokens.weight.device
 
@@ -121,13 +256,13 @@ def generate_decode(
     try:
         transfer_start = time.perf_counter()
         inputs = {key: value.to(device) for key, value in inputs.items()}
-        torch.cuda.reset_peak_memory_stats(device)
-        torch.cuda.synchronize(device)
+        _reset_peak_memory_stats(torch)
         stage_transfer_ms = (time.perf_counter() - transfer_start) * 1000
     except Exception as exc:
+        error = f"{type(exc).__name__}: {str(exc)[:1200]}"
         return failure(
             payload,
-            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            error,
             failure_stage="transfer",
             stage_startup_ms=stage_startup_ms,
             stage_model_load_ms=stage_model_load_ms,
@@ -135,6 +270,7 @@ def generate_decode(
             stage_transfer_ms=stage_transfer_ms,
             stage_total_ms=(time.perf_counter() - request_start) * 1000,
             worker_mode=worker_mode,
+            extra=_oom_extra_fields(torch, error),
         )
 
     try:
@@ -155,9 +291,10 @@ def generate_decode(
             )
         stage_generate_ms = float(generated["stage_generate_ms"])
     except Exception as exc:
+        error = f"{type(exc).__name__}: {str(exc)[:1200]}"
         return failure(
             payload,
-            f"{type(exc).__name__}: {str(exc)[:1200]}",
+            error,
             failure_stage="generate",
             stage_startup_ms=stage_startup_ms,
             stage_model_load_ms=stage_model_load_ms,
@@ -166,6 +303,7 @@ def generate_decode(
             stage_generate_ms=(time.perf_counter() - generate_start) * 1000,
             stage_total_ms=(time.perf_counter() - request_start) * 1000,
             worker_mode=worker_mode,
+            extra=_oom_extra_fields(torch, error),
         )
 
     total_ms = (time.perf_counter() - request_start) * 1000
@@ -176,7 +314,6 @@ def generate_decode(
         "output_text": generated["output_text"],
         "latency_ms": total_ms,
         "ttft_ms": generated["ttft_ms"],
-        "peak_memory_mib": torch.cuda.max_memory_allocated(device) / 1024 / 1024,
         "kv_cache_memory_mib": kv_cache_memory_mib,
         "resident_memory_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
         "stage_startup_ms": stage_startup_ms,
@@ -190,6 +327,8 @@ def generate_decode(
         "stage_total_ms": total_ms,
         "ttft_semantics": "first_token",
         "worker_mode": worker_mode,
+        "past_key_values": generated.get("past_key_values"),
+        **_peak_memory_fields(torch),
     }
 
 
@@ -249,8 +388,9 @@ def failure(
     stage_decode_ms: float = 0.0,
     stage_total_ms: float = 0.0,
     worker_mode: str = "single",
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "ok": False,
         "measured": False,
         "error": error,
@@ -266,3 +406,6 @@ def failure(
         "stage_total_ms": stage_total_ms,
         "worker_mode": worker_mode,
     }
+    if extra:
+        result.update(extra)
+    return result

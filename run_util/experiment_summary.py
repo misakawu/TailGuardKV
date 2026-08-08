@@ -197,6 +197,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten backend/policy outcome summaries for downstream tables and plots."""
     rows: list[dict[str, Any]] = []
     policy_runs = payload.get("policy_runs")
     if isinstance(policy_runs, list):
@@ -252,7 +253,6 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _evidence_fields(payload: dict[str, Any]) -> dict[str, Any]:
-    profile_metrics = _all_summary_metrics(payload.get("profile"))
     policy_metrics = []
     policy_runs = payload.get("policy_runs")
     if isinstance(policy_runs, list):
@@ -261,19 +261,21 @@ def _evidence_fields(payload: dict[str, Any]) -> dict[str, Any]:
                 policy_metrics.extend(_all_summary_metrics(policy_run.get("payload")))
     else:
         policy_metrics.extend(_all_summary_metrics(payload.get("policy")))
-    all_metrics = profile_metrics + policy_metrics
+    evidence_metrics = policy_metrics
+    if not evidence_metrics and payload.get("policy") is None and not isinstance(policy_runs, list):
+        evidence_metrics = _all_summary_metrics(payload.get("profile"))
     deployable = [
         str(name)
         for name in payload.get("policies", [])
         if str(name) != "quality_oracle"
     ]
     return {
-        "has_h0_tail_metrics": _has_any_metric(all_metrics, {"p95_quality_loss", "p99_quality_loss", "cvar_quality_loss", "worst_group_violation"}),
-        "has_h1_coverage_metrics": _has_any_metric(policy_metrics, {"safe_ratio", "fallback_ratio", "exact_fallback_ratio", "candidate_safe_count"}),
+        "has_h0_tail_metrics": _has_any_metric(evidence_metrics, {"p95_quality_loss", "p99_quality_loss", "cvar_quality_loss", "worst_group_violation"}),
+        "has_h1_coverage_metrics": _has_any_metric(evidence_metrics, {"safe_ratio", "fallback_ratio", "exact_fallback_ratio", "candidate_safe_count"}),
         "has_h2_lite_benefit_metrics": bool(
             deployable
-            and _has_any_metric(policy_metrics, {"p95_ttft_ms", "mean_ttft_ms"})
-            and _has_any_metric(policy_metrics, {"mean_kv_cache_memory_mib", "p95_kv_cache_memory_mib", "mean_peak_memory_mib"})
+            and _has_any_metric(evidence_metrics, {"p95_ttft_ms", "mean_ttft_ms"})
+            and _has_any_metric(evidence_metrics, {"mean_kv_cache_memory_mib", "p95_kv_cache_memory_mib", "mean_peak_memory_mib"})
         ),
         "deployable_baseline_names": deployable,
     }

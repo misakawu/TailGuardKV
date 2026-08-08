@@ -38,10 +38,11 @@ policies:
 pilot:
   epsilons: [0.05, 0.10]
   deltas: [0.05, 0.10]
-  memory_budgets_mib: [4900, 5000]
+  memory_budgets_mib: [2000, 2500]
 
 data:
-  requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
+  source: sharegpt
+  requests: data/fixtures/sharegpt_sessions.json
   calibration_fraction: 0.5
   max_requests: 200
 
@@ -56,6 +57,7 @@ profile_smoke:
 
 outputs:
   smoke_profiles: out/profile_tables/pilot_smoke_measured_profiles.csv
+  smoke_profile_trace: out/profile_tables/pilot_smoke_measured_session_trace.csv
   smoke_profile_checks: out/profile_tables/pilot_profile_smoke.csv
   smoke_policy: out/policy_tables/pilot_smoke_measured_policy.csv
   smoke_summary: out/policy_tables/pilot_smoke_measured_summary.csv

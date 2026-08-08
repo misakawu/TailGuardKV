@@ -20,7 +20,7 @@ class QualityOraclePolicy(Policy):
         delta: float,
         exact_profiles: set[str],
     ) -> None:
-        self.measurements = {(row.request_id, row.profile): row for row in measurements}
+        self.measurements = {(row.session_id or "", row.turn_index, row.request_id, row.profile): row for row in measurements}
         self.profiles = profiles
         self.epsilon = epsilon
         self.delta = delta
@@ -30,7 +30,7 @@ class QualityOraclePolicy(Policy):
         started = time.perf_counter()
         feasible = []
         for profile in self.profiles:
-            row = self.measurements.get((request.request_id, profile))
+            row = self.measurements.get((request.session_id or "", request.turn_index, request.request_id, profile))
             if row is None or row.quality_loss is None:
                 continue
             if row.quality_loss <= self.epsilon:
@@ -38,7 +38,7 @@ class QualityOraclePolicy(Policy):
         fallback_reason = ""
         if not feasible:
             profile = self._fastest_exact_profile(request.request_id)
-            row = self.measurements.get((request.request_id, profile))
+            row = self.measurements.get((request.session_id or "", request.turn_index, request.request_id, profile))
             loss = row.quality_loss if row is not None else None
             fallback_reason = "oracle exact fallback"
         else:
@@ -69,7 +69,8 @@ class QualityOraclePolicy(Policy):
         for profile in self.profiles:
             if profile not in self.exact_profiles:
                 continue
-            row = self.measurements.get((request_id, profile))
+            matching = [row for key, row in self.measurements.items() if key[2] == request_id and key[3] == profile]
+            row = matching[0] if matching else None
             latency = self._latency(row) if row is not None else float("inf")
             if latency < best_latency:
                 best_profile = profile

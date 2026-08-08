@@ -38,7 +38,15 @@ class FullKVAdapter(ProfileAdapter):
             versions=versions,
         )
 
-    def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
+    def profile(
+        self,
+        request: Request,
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> ProfileMeasurement:
+        del session_runtime, memory_budget_mib
         spec = self.get_profile(profile_name)
         if not dry_run:
             row = transformers_profile_measurement(
@@ -55,7 +63,15 @@ class FullKVAdapter(ProfileAdapter):
         scale = max(request.prompt_chars, 1)
         return dry_profile_measurement(self.name, request, spec, scale * 0.08, scale * 2.0 / 1024.0)
 
-    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+    def profile_many(
+        self,
+        requests: Sequence[Request],
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> list[ProfileMeasurement]:
+        del session_runtime, memory_budget_mib
         if dry_run:
             return super().profile_many(requests, profile_name, dry_run=dry_run)
         spec = self.get_profile(profile_name)

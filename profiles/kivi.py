@@ -41,7 +41,15 @@ class KIVIAdapter(ProfileAdapter):
             versions=versions,
         )
 
-    def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
+    def profile(
+        self,
+        request: Request,
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> ProfileMeasurement:
+        del session_runtime, memory_budget_mib
         spec = self.get_profile(profile_name)
         if not dry_run:
             row = qwen2_kv_profile_measurement(
@@ -72,9 +80,22 @@ class KIVIAdapter(ProfileAdapter):
             scale * memory_factor / 1024.0,
         )
 
-    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+    def profile_many(
+        self,
+        requests: Sequence[Request],
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> list[ProfileMeasurement]:
         if dry_run:
-            return super().profile_many(requests, profile_name, dry_run=dry_run)
+            return super().profile_many(
+                requests,
+                profile_name,
+                dry_run=dry_run,
+                session_runtime=session_runtime,
+                memory_budget_mib=memory_budget_mib,
+            )
         spec = self.get_profile(profile_name)
         rows = qwen2_kv_profile_many_measurements(
             self.name,
@@ -82,6 +103,8 @@ class KIVIAdapter(ProfileAdapter):
             requests,
             spec,
             self.runtime_config,
+            session_runtime=session_runtime,
+            memory_budget_mib=memory_budget_mib,
             extra={
                 "family": spec.family,
                 "bits": spec.metadata.get("bits", ""),

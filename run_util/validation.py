@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from run_util.core_types import ProfileMeasurement
+from run_util.core_types import BackendResult, ProfileMeasurement
 
 
 REQUIRED_PROFILE_FIELDS = {
@@ -33,6 +33,7 @@ def validate_profile_measurements(
     required_profiles: list[str] | None = None,
     require_measured: bool = False,
     require_ttft: bool = False,
+    require_quality_loss: bool = True,
 ) -> None:
     if not measurements:
         raise ValueError(f"profile 表为空: {path}")
@@ -45,7 +46,7 @@ def validate_profile_measurements(
         if not measurement.adapter:
             missing.append("adapter")
         if measurement.ok and measurement.measured:
-            if measurement.quality_loss is None:
+            if require_quality_loss and measurement.quality_loss is None:
                 missing.append("quality_loss")
             if measurement.latency_ms is None:
                 missing.append("latency_ms")
@@ -92,6 +93,37 @@ def validate_profile_measurements(
                 raise ValueError(
                     f"profile 表 request={request_id} 缺少必需 profile {missing_profiles}: path={path}"
                 )
+
+
+def validate_backend_results(
+    results: list[BackendResult],
+    path: Path | str = "<memory>",
+    require_memory: bool = True,
+    require_ttft: bool = False,
+) -> None:
+    if not results:
+        raise ValueError(f"backend 结果为空: {path}")
+    for index, result in enumerate(results, start=1):
+        missing: list[str] = []
+        if not result.request_id:
+            missing.append("request_id")
+        if not result.profile:
+            missing.append("profile")
+        if result.ok and result.measured:
+            if result.latency_ms is None:
+                missing.append("latency_ms")
+            if require_ttft and result.ttft_ms is None:
+                missing.append("ttft_ms")
+            if require_memory:
+                if result.peak_memory_mib is None:
+                    missing.append("peak_memory_mib")
+                if result.kv_cache_memory_mib is None:
+                    missing.append("kv_cache_memory_mib")
+        if missing:
+            raise ValueError(
+                f"backend 结果第 {index} 行字段不完整，缺少 {missing}: "
+                f"request={result.request_id} profile={result.profile} path={path}"
+            )
 
 
 def failed_measurement_summary(measurements: list[ProfileMeasurement]) -> list[dict[str, object]]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from backends.base import Backend
-from run_util.core_types import ProfileMeasurement, Request
+from run_util.core_types import BackendResult, CacheState, ProfileMeasurement, Request
 
 
 class MeasuredReplayBackend(Backend):
@@ -28,41 +28,64 @@ class MeasuredReplayBackend(Backend):
             )
         self._use_pandas = False
         self._frame = None
+        self.cache_state = CacheState()
         if use_pandas:
             try:
                 import pandas as pd
             except ModuleNotFoundError:
-                self.measurements = {
-                    (measurement.request_id, measurement.profile): measurement for measurement in rows
-                }
+                self.measurements = {self._measurement_key(measurement): measurement for measurement in rows}
             else:
                 self._use_pandas = True
                 self._frame = pd.DataFrame(
                     {
                         "request_id": measurement.request_id,
+                        "session_id": measurement.session_id or "",
+                        "turn_index": measurement.turn_index,
                         "profile": measurement.profile,
                         "measurement": measurement,
                     }
                     for measurement in rows
-                ).set_index(["request_id", "profile"])
+                ).set_index(["session_id", "turn_index", "request_id", "profile"])
                 self.measurements = {}
         else:
-            self.measurements = {
-                (measurement.request_id, measurement.profile): measurement for measurement in rows
-            }
+            self.measurements = {self._measurement_key(measurement): measurement for measurement in rows}
 
-    def run(self, requests: list[Request], profiles: list[str]) -> list[ProfileMeasurement]:
-        rows: list[ProfileMeasurement] = []
-        for request in requests:
-            for profile in profiles:
-                key = (request.request_id, profile)
-                if self._use_pandas:
-                    try:
-                        rows.append(self._frame.loc[key, "measurement"])
-                    except KeyError as exc:
-                        raise KeyError(f"缺少回放数据: request={key[0]} profile={key[1]}") from exc
-                    continue
+    def run(self, requests: list[Request], profiles: list[str]) -> list[BackendResult]:
+        if len(profiles) not in {1, len(requests)}:
+            raise ValueError("profiles 长度必须为 1 或与 requests 一致")
+        rows: list[BackendResult] = []
+        for index, request in enumerate(requests):
+            profile = profiles[0] if len(profiles) == 1 else profiles[index]
+            key = self._request_key(request, profile)
+            if self._use_pandas:
+                try:
+                    measurement = self._frame.loc[key, "measurement"]
+                except KeyError as exc:
+                    raise KeyError(f"缺少回放数据: session={key[0] or '-'} turn={key[1]} request={key[2]} profile={key[3]}") from exc
+            else:
                 if key not in self.measurements:
-                    raise KeyError(f"缺少回放数据: request={key[0]} profile={key[1]}")
-                rows.append(self.measurements[key])
+                    raise KeyError(f"缺少回放数据: session={key[0] or '-'} turn={key[1]} request={key[2]} profile={key[3]}")
+                measurement = self.measurements[key]
+            result = BackendResult.from_profile_measurement(
+                measurement,
+                backend_name=self.name,
+                replay_source="measured_profile_table",
+                extra={"source_profile": measurement.profile},
+            )
+            self.cache_state = self.cache_state.with_session_turn(
+                request.session_id,
+                profile=profile,
+                turn_index=request.turn_index,
+                cumulative_kv_mib=result.kv_cumulative_mib or result.kv_cache_memory_mib or 0.0,
+                resident_kv_mib=result.resident_kv_mib_after or result.resident_memory_mib or result.kv_cumulative_mib or 0.0,
+            )
+            rows.append(result)
         return rows
+
+    @staticmethod
+    def _measurement_key(measurement: ProfileMeasurement) -> tuple[str, int, str, str]:
+        return (measurement.session_id or "", measurement.turn_index, measurement.request_id, measurement.profile)
+
+    @staticmethod
+    def _request_key(request: Request, profile: str) -> tuple[str, int, str, str]:
+        return (request.session_id or "", request.turn_index, request.request_id, profile)

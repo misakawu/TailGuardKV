@@ -16,10 +16,10 @@ ChartSpec = tuple[str, str, str, str]
 
 
 POLICY_CHARTS: tuple[ChartSpec, ...] = (
-    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "P95 TTFT by budget and constraint", "P95 TTFT (ms)"),
-    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "KV cache memory by budget and constraint", "Mean KV cache memory (MiB)"),
-    ("p95_quality_loss", "summary_policy_quality_loss.png", "Quality loss by budget and constraint", "P95 quality loss"),
-    ("violation_rate", "summary_policy_violation_rate.png", "Violation rate by budget and constraint", "Violation rate"),
+    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "Backend P95 TTFT by budget and constraint", "Backend P95 TTFT (ms)"),
+    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "Backend KV cache outcome by budget and constraint", "Backend mean KV cache memory (MiB)"),
+    ("p95_quality_loss", "summary_policy_quality_loss.png", "Backend quality outcome by budget and constraint", "Backend P95 quality loss"),
+    ("violation_rate", "summary_policy_violation_rate.png", "Backend violation rate by budget and constraint", "Backend violation rate"),
 )
 
 
@@ -103,25 +103,58 @@ def _policy_metric_series(rows: list[dict[str, str]], metric: str) -> tuple[list
     return labels, series
 
 
-def _line_chart(labels: list[str], series: dict[str, list[float | None]], output: Path, title: str, ylabel: str) -> Path | None:
-    if not labels or not series:
+def _constraint_groups(rows: list[dict[str, str]]) -> dict[tuple[str, str], list[dict[str, str]]]:
+    grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        epsilon = row.get("epsilon") or ""
+        delta = row.get("delta") or ""
+        grouped[(epsilon, delta)].append(row)
+    return dict(
+        sorted(
+            grouped.items(),
+            key=lambda item: (
+                _numeric(item[0][0]) if _numeric(item[0][0]) is not None else math.inf,
+                _numeric(item[0][1]) if _numeric(item[0][1]) is not None else math.inf,
+            ),
+        )
+    )
+
+
+def _line_chart(rows: list[dict[str, str]], metric: str, output: Path, title: str, ylabel: str) -> Path | None:
+    grouped = _constraint_groups(rows)
+    panels: list[tuple[tuple[str, str], list[str], dict[str, list[float | None]]]] = []
+    for constraint, group_rows in grouped.items():
+        labels, series = _policy_metric_series(group_rows, metric)
+        if labels and series:
+            panels.append((constraint, labels, series))
+    if not panels:
         return None
     output.parent.mkdir(parents=True, exist_ok=True)
-    width = max(7.0, min(18.0, 1.1 * len(labels) + 4.0))
-    fig, ax = plt.subplots(figsize=(width, 4.5))
-    x_values = list(range(len(labels)))
-    for policy, values in series.items():
-        if all(value is None for value in values):
-            continue
-        ax.plot(x_values, values, marker="o", linewidth=1.7, markersize=4.0, label=policy)
-    ax.set_title(title)
-    ax.set_xlabel("Memory budget x quality constraint")
-    ax.set_ylabel(ylabel)
-    ax.set_xticks(x_values)
-    ax.set_xticklabels(labels)
-    ax.tick_params(axis="x", rotation=0, labelsize=8)
-    ax.grid(axis="y", color="#d6d6d6", linewidth=0.7, alpha=0.8)
-    ax.legend(loc="best", fontsize=8)
+    columns = 2 if len(panels) > 1 else 1
+    rows_count = math.ceil(len(panels) / columns)
+    max_labels = max(len(labels) for _, labels, _ in panels)
+    width = max(7.0, min(18.0, 1.1 * max_labels + 4.0 * columns))
+    height = max(4.5, 4.2 * rows_count)
+    fig, axes = plt.subplots(rows_count, columns, figsize=(width, height), squeeze=False)
+    flat_axes = [axis for row_axes in axes for axis in row_axes]
+    for axis, (constraint, labels, series) in zip(flat_axes, panels, strict=False):
+        x_values = list(range(len(labels)))
+        for policy, values in series.items():
+            if all(value is None for value in values):
+                continue
+            axis.plot(x_values, values, marker="o", linewidth=1.7, markersize=4.0, label=policy)
+        epsilon, delta = constraint
+        axis.set_title(f"epsilon={epsilon or '?'} delta={delta or '?'}")
+        axis.set_xlabel("Memory budget")
+        axis.set_ylabel(ylabel)
+        axis.set_xticks(x_values)
+        axis.set_xticklabels(labels)
+        axis.tick_params(axis="x", rotation=0, labelsize=8)
+        axis.grid(axis="y", color="#d6d6d6", linewidth=0.7, alpha=0.8)
+        axis.legend(loc="best", fontsize=8)
+    for axis in flat_axes[len(panels) :]:
+        axis.axis("off")
+    fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(output, dpi=160)
     plt.close(fig)
@@ -134,8 +167,7 @@ def plot_summary(summary_csv: str | Path, output_dir: str | Path | None = None) 
     rows = _read_rows(summary_path)
     outputs: list[Path] = []
     for metric, filename, title, ylabel in POLICY_CHARTS:
-        labels, series = _policy_metric_series(rows, metric)
-        chart = _line_chart(labels, series, destination / filename, title, ylabel)
+        chart = _line_chart(rows, metric, destination / filename, title, ylabel)
         if chart is not None:
             outputs.append(chart)
     return outputs

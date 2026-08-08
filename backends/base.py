@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from run_util.core_types import ProfileMeasurement, Request
+from run_util.core_types import BackendResult, Request
 
 
 class Backend(ABC):
@@ -11,5 +11,5 @@ class Backend(ABC):
     name: str
 
     @abstractmethod
-    def run(self, requests: list[Request], profiles: list[str]) -> list[ProfileMeasurement]:
+    def run(self, requests: list[Request], profiles: list[str]) -> list[BackendResult]:
         ...

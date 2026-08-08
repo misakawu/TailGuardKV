@@ -11,8 +11,9 @@ from profiles.h2o_cache import H2OCache, H2OLayerState, build_h2o_cache
 from profiles.kivi_cache import KIVICache, KIVILayerState, build_kivi_cache
 from profiles.qwen2_h2o_runtime import Qwen2H2OAttention, h2o_sizes as _h2o_sizes_impl, prepare_h2o_runtime as _prepare_h2o_runtime_impl, reset_h2o_attention as _reset_h2o_attention_impl, run_h2o_request as _run_h2o_request_impl
 from profiles.qwen2_kivi_runtime import Qwen2KIVIAttention, kivi_proof_error as _kivi_proof_error_impl, prepare_kivi_runtime as _prepare_kivi_runtime_impl, run_kivi_request as _run_kivi_request_impl, split_prefill_kivi_states as _split_prefill_kivi_states_impl
-from profiles.qwen2_runtime_common import clone_failure_result as _clone_failure_result_impl, failure as _failure_impl, generate_decode as _generate_decode_impl, import_runtime_modules as _import_runtime_modules_impl, invoke_generate_decode as _invoke_generate_decode_impl, is_fatal_cuda_error as _is_fatal_cuda_error_impl, is_oom_result as _is_oom_result_impl, load_qwen2_model as _load_qwen2_model_impl, require_cuda as _require_cuda_impl
+from profiles.qwen2_runtime_common import clone_failure_result as _clone_failure_result_impl, failure as _failure_impl, generate_decode as _generate_decode_impl, import_runtime_modules as _import_runtime_modules_impl, invoke_generate_decode as _invoke_generate_decode_impl, is_fatal_cuda_error as _is_fatal_cuda_error_impl, is_oom_result as _is_oom_result_impl, load_qwen2_model as _load_qwen2_model_impl, release_runtime_cuda_resources as _release_runtime_cuda_resources_impl, require_cuda as _require_cuda_impl
 from profiles.qwen2_runtime_layout import apply_rope as _apply_rope_impl, install_qwen2_attention as _install_qwen2_attention_impl, mask_softmax as _mask_softmax_impl, qwen2_layout_error as _kivi_compatibility_error_impl
+from profiles.session_runtime import SessionRuntimeState, apply_budget_policy
 
 
 _import_runtime_modules = _import_runtime_modules_impl
@@ -27,6 +28,7 @@ _failure = _failure_impl
 _apply_rope = _apply_rope_impl
 _mask_softmax = _mask_softmax_impl
 _split_prefill_kivi_states = _split_prefill_kivi_states_impl
+_release_runtime_cuda_resources = _release_runtime_cuda_resources_impl
 
 
 def _invoke_generate_decode(model: Any, tokenizer: Any, device: Any, payload: dict[str, Any], torch: Any, **kwargs: Any) -> dict[str, Any]:
@@ -46,40 +48,117 @@ def _greedy_decode(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("dry_session"):
+        return _run_dry_session_profile(payload)
     profile = str(payload.get("profile") or "")
     try:
         if profile.startswith("kivi_"):
-            return _run_kivi_profile(payload)
+            return _sanitize_public_result(_run_kivi_profile(payload))
         if profile.startswith("h2o_heavy"):
-            return _run_h2o_profile(payload)
+            return _sanitize_public_result(_run_h2o_profile(payload))
         return _failure(payload, f"unsupported Qwen2 KV profile: {profile}")
     except Exception as exc:
         return _failure(payload, f"{type(exc).__name__}: {str(exc)[:1200]}\n{traceback.format_exc()[-3000:]}")
 
 
+def _run_dry_session_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    state = payload.get("session_runtime_state")
+    if not isinstance(state, SessionRuntimeState):
+        state = SessionRuntimeState()
+    profile = str(payload.get("profile") or "")
+    session_id = str(payload.get("session_id") or "")
+    turn_index = int(payload.get("turn_index") or 0)
+    kv_incremental_mib = float(max(1, len(str(payload.get("prompt") or ""))))
+    if state.sessions.get(session_id, SessionRuntimeState().sessions.get(session_id, None)) and state.sessions.get(session_id) and state.sessions[session_id].dropped_mib > 0:
+        recompute_ms = max(1.0, kv_incremental_mib)
+        event_trace = [{"event": "recompute", "session_id": session_id, "profile": profile, "turn_index": turn_index}]
+        next_state = state.record_resident(session_id, profile, turn_index=turn_index, kv_mib=kv_incremental_mib)
+        return {
+            "ok": True,
+            "measured": True,
+            "output_text": str(payload.get("prompt") or ""),
+            "latency_ms": kv_incremental_mib,
+            "ttft_ms": 1.0,
+            "peak_memory_mib": kv_incremental_mib,
+            "kv_cache_memory_mib": kv_incremental_mib,
+            "resident_memory_mib": next_state.sessions[session_id].resident_gpu_mib,
+            "kv_incremental_mib": kv_incremental_mib,
+            "kv_cumulative_mib": next_state.sessions[session_id].resident_gpu_mib,
+            "resident_kv_mib_before": state.sessions[session_id].resident_gpu_mib if session_id in state.sessions else 0.0,
+            "resident_kv_mib_after": next_state.sessions[session_id].resident_gpu_mib,
+            "restore_ms": 0.0,
+            "recompute_ms": recompute_ms,
+            "evicted_kv_mib": 0.0,
+            "budget_hit": False,
+            "event_trace": event_trace,
+            "backend": "qwen2_kv_runtime",
+        }
+    next_state, events, budget_hit, restore_ms = apply_budget_policy(
+        state,
+        session_id=session_id,
+        profile=profile,
+        turn_index=turn_index,
+        kv_incremental_mib=kv_incremental_mib,
+        memory_budget_mib=float(payload.get("memory_budget_mib")) if payload.get("memory_budget_mib") is not None else None,
+        prefer_restore=bool(payload.get("restore_from_cpu")),
+    )
+    session = next_state.sessions[session_id]
+    return {
+        "ok": True,
+        "measured": True,
+        "output_text": str(payload.get("prompt") or ""),
+        "latency_ms": kv_incremental_mib,
+        "ttft_ms": 1.0,
+        "peak_memory_mib": session.resident_gpu_mib,
+        "kv_cache_memory_mib": session.resident_gpu_mib,
+        "resident_memory_mib": session.resident_gpu_mib,
+        "kv_incremental_mib": kv_incremental_mib,
+        "kv_cumulative_mib": session.resident_gpu_mib + session.offloaded_cpu_mib,
+        "resident_kv_mib_before": state.sessions[session_id].resident_gpu_mib if session_id in state.sessions else 0.0,
+        "resident_kv_mib_after": session.resident_gpu_mib,
+        "restore_ms": restore_ms,
+        "recompute_ms": 0.0,
+        "evicted_kv_mib": max(0.0, session.offloaded_cpu_mib),
+        "budget_hit": budget_hit,
+        "event_trace": events,
+        "backend": "qwen2_kv_runtime",
+    }
+
+
 def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
     requests = list(payload.get("requests") or [])
     if not requests:
-        return {"ok": True, "results": [], "worker": {"mode": "batch"}}
+        return {"ok": True, "results": [], "worker": {"mode": "batch"}, "session_runtime_state": SessionRuntimeState().to_payload()}
 
     profiles = {str(request.get("profile") or "") for request in requests}
     if len(requests) == 1 or len(profiles) != 1:
         results = [run_profile(request) for request in requests]
-        return {"ok": all(item.get("ok") for item in results), "results": results, "worker": {"mode": "batch"}}
+        return {
+            "ok": all(item.get("ok") for item in results),
+            "results": results,
+            "worker": {"mode": "batch"},
+            "session_runtime_state": _session_state_from_payload(payload.get("session_runtime_state")).to_payload(),
+        }
 
     worker_start = time.perf_counter()
     profile = next(iter(profiles))
+    state = _session_state_from_payload(payload.get("session_runtime_state"))
     try:
         if profile.startswith("kivi_"):
-            results = _run_kivi_profile_batch(requests, worker_start)
+            results, state = _run_kivi_profile_batch(requests, worker_start, state)
         elif profile.startswith("h2o_heavy"):
-            results = _run_h2o_profile_batch(requests, worker_start)
+            results, state = _run_h2o_profile_batch(requests, worker_start, state)
         else:
             results = [_failure(request, f"unsupported Qwen2 KV profile: {profile}") for request in requests]
     except Exception as exc:
         error = f"{type(exc).__name__}: {str(exc)[:1200]}\n{traceback.format_exc()[-3000:]}"
         results = [_failure(request, error) for request in requests]
-    return {"ok": all(item.get("ok") for item in results), "results": results, "worker": {"mode": "batch"}}
+    return {
+        "ok": all(item.get("ok") for item in results),
+        "results": [_sanitize_public_result(item) for item in results],
+        "worker": {"mode": "batch"},
+        "session_runtime_state": state.to_payload(),
+    }
 
 
 def main() -> int:
@@ -112,36 +191,50 @@ def _kivi_proof_error(
 
 def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = _prepare_kivi_runtime(payload, worker_start=time.perf_counter())
-    return _run_kivi_request(runtime, payload, worker_mode="single")
+    return _sanitize_public_result(_run_kivi_request(runtime, payload, worker_mode="single"))
 
 
 def _run_h2o_profile(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = _prepare_h2o_runtime(payload, worker_start=time.perf_counter())
-    return _run_h2o_request(runtime, payload, worker_mode="single")
+    return _sanitize_public_result(_run_h2o_request(runtime, payload, worker_mode="single"))
 
 
-def _run_kivi_profile_batch(requests: list[dict[str, Any]], worker_start: float) -> list[dict[str, Any]]:
+def _run_kivi_profile_batch(
+    requests: list[dict[str, Any]],
+    worker_start: float,
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
     runtime = _prepare_kivi_runtime(requests[0], worker_start=worker_start)
+    runtime["session_reuse"] = {}
     results = []
-    for index, request in enumerate(requests):
-        result = _run_kivi_request(runtime, request, worker_mode="batch")
-        results.append(result)
-        if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
-            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
-            break
-    return results
+    try:
+        for index, request in enumerate(requests):
+            session_request = _attach_kivi_session_cache(runtime, request)
+            result, state = _run_request_with_session(state, session_request, lambda item: _run_kivi_request(runtime, item, worker_mode="batch"))
+            _update_kivi_session_cache(runtime, session_request, result)
+            results.append(result)
+            if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
+                results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+                break
+        return results, state
+    finally:
+        _release_runtime_resources(runtime)
 
 
-def _run_h2o_profile_batch(requests: list[dict[str, Any]], worker_start: float) -> list[dict[str, Any]]:
+def _run_h2o_profile_batch(
+    requests: list[dict[str, Any]],
+    worker_start: float,
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
     runtime = _prepare_h2o_runtime(requests[0], worker_start=worker_start)
     results = []
     for index, request in enumerate(requests):
-        result = _run_h2o_request(runtime, request, worker_mode="batch")
+        result, state = _run_request_with_session(state, request, lambda item: _run_h2o_request(runtime, item, worker_mode="batch"))
         results.append(result)
         if _is_oom_result(result):
             results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
             break
-    return results
+    return results, state
 
 
 def _prepare_kivi_runtime(payload: dict[str, Any], *, worker_start: float) -> dict[str, Any]:
@@ -199,6 +292,176 @@ def _reset_h2o_attention(model: Any, tracker: dict[str, int], heavy_size: int, r
 def _kivi_compatibility_error(model: Any, payload: dict[str, Any]) -> str | None:
     del payload
     return _kivi_compatibility_error_impl(model)
+
+
+def _session_state_from_payload(payload: object) -> SessionRuntimeState:
+    return SessionRuntimeState.from_payload(payload)
+
+
+def _sanitize_public_result(result: dict[str, Any]) -> dict[str, Any]:
+    public = dict(result)
+    public.pop("runtime_cache", None)
+    public.pop("runtime_prompt_token_ids", None)
+    public.pop("past_key_values", None)
+    return public
+
+
+def _release_runtime_resources(runtime: dict[str, Any]) -> None:
+    session_reuse = runtime.get("session_reuse")
+    if isinstance(session_reuse, dict):
+        for cached in session_reuse.values():
+            cache = cached.get("cache") if isinstance(cached, dict) else None
+            if isinstance(cache, KIVICache):
+                cache.clear()
+        session_reuse.clear()
+    torch = runtime.get("torch")
+    if torch is not None:
+        _release_runtime_cuda_resources(torch, *(session_reuse.values() if isinstance(session_reuse, dict) else ()))
+    runtime.clear()
+
+
+def _attach_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    request = dict(payload)
+    session_id = str(payload.get("session_id") or "")
+    profile = str(payload.get("profile") or "")
+    if not session_id:
+        request["_runtime_cache_rebuild_reason"] = "no_session"
+        return request
+    session_reuse = runtime.setdefault("session_reuse", {})
+    entry = session_reuse.get(session_id)
+    if not isinstance(entry, dict):
+        request["_runtime_cache_rebuild_reason"] = "new_session"
+        return request
+    if payload.get("history_turns"):
+        _clear_runtime_cache_entry(entry)
+        session_reuse.pop(session_id, None)
+        request["_runtime_cache_rebuild_reason"] = "history_turns_present"
+        return request
+    if str(entry.get("profile") or "") != profile:
+        _clear_runtime_cache_entry(entry)
+        request["_runtime_cache_rebuild_reason"] = "profile_changed"
+        return request
+    cached_prompt_token_ids = entry.get("prompt_token_ids")
+    prompt_token_ids = _request_prompt_token_ids(runtime, payload)
+    if not isinstance(cached_prompt_token_ids, list) or prompt_token_ids[: len(cached_prompt_token_ids)] != cached_prompt_token_ids:
+        _clear_runtime_cache_entry(entry)
+        request["_runtime_cache_rebuild_reason"] = "prompt_mismatch"
+        return request
+    request["_runtime_reusable_kivi_cache"] = entry.get("cache")
+    request["_runtime_cached_prompt_token_ids"] = list(cached_prompt_token_ids)
+    request["_runtime_cache_rebuild_reason"] = ""
+    return request
+
+
+def _update_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> None:
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return
+    session_reuse = runtime.setdefault("session_reuse", {})
+    prior = session_reuse.get(session_id)
+    if not bool(result.get("ok")):
+        if isinstance(prior, dict):
+            _clear_runtime_cache_entry(prior)
+            session_reuse.pop(session_id, None)
+        return
+    session_reuse[session_id] = {
+        "profile": str(payload.get("profile") or ""),
+        "cache": result.get("runtime_cache"),
+        "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or []),
+    }
+
+
+def _clear_runtime_cache_entry(entry: dict[str, Any]) -> None:
+    cache = entry.get("cache")
+    if isinstance(cache, KIVICache):
+        cache.clear()
+
+
+def _request_prompt_token_ids(runtime: dict[str, Any], payload: dict[str, Any]) -> list[int]:
+    tokenizer = runtime.get("tokenizer")
+    if tokenizer is None:
+        return []
+    tokenized = tokenizer(str(payload.get("prompt") or ""), return_tensors="pt")
+    input_ids = tokenized.get("input_ids")
+    if input_ids is None:
+        return []
+    values = input_ids
+    if hasattr(values, "detach"):
+        values = values.detach()
+    if hasattr(values, "cpu"):
+        values = values.cpu()
+    if hasattr(values, "tolist"):
+        values = values.tolist()
+    while isinstance(values, list) and values and isinstance(values[0], list):
+        values = values[0]
+    return [int(token) for token in values]
+
+
+def _run_request_with_session(
+    state: SessionRuntimeState,
+    payload: dict[str, Any],
+    execute: Any,
+) -> tuple[dict[str, Any], SessionRuntimeState]:
+    result = execute(payload)
+    if not bool(result.get("ok")):
+        return result, state
+
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return result, state
+
+    profile = str(payload.get("profile") or "")
+    turn_index = int(payload.get("turn_index") or 0)
+    previous = state.sessions.get(session_id)
+    next_state = state
+    events: list[dict[str, object]] = []
+    resident_before = previous.resident_gpu_mib if previous else 0.0
+    restore_ms = 0.0
+    recompute_ms = 0.0
+
+    if previous and previous.current_profile and previous.current_profile != profile:
+        next_state = next_state.reset_session(session_id, profile)
+        resident_before = 0.0
+        recompute_ms = max(1.0, float(result.get("stage_prefill_ms") or result.get("latency_ms") or 1.0))
+        events.append({"event": "recompute", "session_id": session_id, "profile": profile, "turn_index": turn_index})
+    elif previous and previous.offloaded_cpu_mib > 0:
+        restore_amount = previous.offloaded_cpu_mib
+        next_state = next_state.record_restore(session_id, profile, kv_mib=restore_amount)
+        resident_before = next_state.sessions[session_id].resident_gpu_mib
+        restore_ms = max(1.0, restore_amount)
+        events.append({"event": "restore", "session_id": session_id, "profile": profile, "turn_index": turn_index, "kv_mib": restore_amount})
+    elif previous and previous.dropped_mib > 0:
+        next_state = next_state.reset_session(session_id, profile)
+        resident_before = 0.0
+        recompute_ms = max(1.0, float(result.get("stage_prefill_ms") or result.get("latency_ms") or 1.0))
+        events.append({"event": "recompute", "session_id": session_id, "profile": profile, "turn_index": turn_index})
+
+    measured_total = float(result.get("kv_cache_memory_mib") or result.get("peak_memory_mib") or 0.0)
+    kv_incremental_mib = measured_total if turn_index <= 0 else max(0.0, measured_total - resident_before)
+    next_state, budget_events, budget_hit, budget_restore_ms = apply_budget_policy(
+        next_state,
+        session_id=session_id,
+        profile=profile,
+        turn_index=turn_index,
+        kv_incremental_mib=kv_incremental_mib,
+        memory_budget_mib=float(payload.get("memory_budget_mib")) if payload.get("memory_budget_mib") is not None else None,
+        prefer_restore=False,
+    )
+    session = next_state.sessions[session_id]
+    result.update(
+        {
+            "kv_incremental_mib": kv_incremental_mib,
+            "kv_cumulative_mib": session.resident_gpu_mib + session.offloaded_cpu_mib,
+            "resident_kv_mib_before": resident_before,
+            "resident_kv_mib_after": session.resident_gpu_mib,
+            "restore_ms": restore_ms + budget_restore_ms,
+            "recompute_ms": recompute_ms,
+            "evicted_kv_mib": session.offloaded_cpu_mib,
+            "budget_hit": budget_hit,
+            "event_trace": [*events, *budget_events],
+        }
+    )
+    return result, next_state
 
 
 if __name__ == "__main__":

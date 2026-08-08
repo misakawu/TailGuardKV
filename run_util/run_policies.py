@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from backends.measured_replay import MeasuredReplayBackend
-from run_util.core_types import CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
+from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
 from run_util.experiment_common import (
     config_policies,
     config_profiles,
@@ -15,6 +15,7 @@ from run_util.experiment_common import (
     read_measurements,
     requests_from_measurements,
     split_measurements,
+    validate_backend_results,
     validate_profile_measurements,
     write_csv,
 )
@@ -92,6 +93,8 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
     return PolicyRunRecord(
         policy=policy.name,
         request_id=request.request_id,
+        session_id=request.session_id,
+        turn_index=request.turn_index,
         task=str(request.task or request.metadata.get("task") or "unknown"),
         length_bucket=str(request.metadata.get("length_bucket") or "unknown"),
         action_profile=profile,
@@ -120,6 +123,45 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         optimality_gap=action.optimality_gap if action is not None else None,
         audit_rate=action.audit_rate if action is not None else None,
         drift_state=action.drift_state if action is not None else "",
+        budget_hit=action.budget_hit if action is not None else False,
+    )
+
+
+def _record_from_backend_result(
+    policy: Policy,
+    request: Request,
+    action,
+    backend_result: BackendResult,
+    exact: set[str],
+) -> PolicyRunRecord:
+    return PolicyRunRecord.from_action_and_backend_result(
+        policy_name=policy.name,
+        request=request,
+        action_profile=action.profile,
+        action_reason=action.reason,
+        placeholder=policy.placeholder,
+        exact_profiles=exact,
+        oracle=bool(getattr(policy, "oracle", False)),
+        backend_result=backend_result,
+        pred_loss=action.pred_loss,
+        risk_upper=action.risk_upper,
+        safe=action.safe,
+        epsilon=action.epsilon,
+        delta=action.delta,
+        fallback_reason=action.fallback_reason,
+        rejected_profile=action.rejected_profile,
+        rejected_pred_loss=action.rejected_pred_loss,
+        rejected_risk_upper=action.rejected_risk_upper,
+        candidate_safe_count=action.candidate_safe_count,
+        controller_overhead_ms=action.controller_overhead_ms,
+        controller_qrp_ms=action.controller_qrp_ms,
+        controller_cg_ms=action.controller_cg_ms,
+        controller_stc_ms=action.controller_stc_ms,
+        oracle_cost_ms=action.oracle_cost_ms,
+        optimality_gap=action.optimality_gap,
+        audit_rate=action.audit_rate,
+        drift_state=action.drift_state,
+        budget_hit=action.budget_hit,
     )
 
 
@@ -131,54 +173,18 @@ def _run_policy_matrix(
 ) -> list[PolicyRunRecord]:
     records: list[PolicyRunRecord] = []
     for policy in policies:
-        for request in requests:
+        cache_state = CacheState()
+        for request in sorted(requests, key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index)):
             try:
-                action = policy.decide(request, CacheState(), DeviceState())
+                action = policy.decide(request, cache_state, DeviceState())
             except Exception as exc:
                 records.append(_failure_record(policy, request, exc, exact=exact))
                 continue
             try:
-                measurement = backend.run([request], [action.profile])[0]
-                records.append(
-                    PolicyRunRecord(
-                        policy=policy.name,
-                        request_id=request.request_id,
-                        task=str(request.task or request.metadata.get("task") or "unknown"),
-                        length_bucket=str(request.metadata.get("length_bucket") or "unknown"),
-                        action_profile=action.profile,
-                        ok=measurement.ok,
-                        measured=measurement.measured,
-                        placeholder=policy.placeholder,
-                        reason=action.reason,
-                        error=measurement.error,
-                        latency_ms=measurement.latency_ms,
-                        ttft_ms=measurement.ttft_ms,
-                        peak_memory_mib=measurement.peak_memory_mib,
-                        kv_cache_memory_mib=measurement.kv_cache_memory_mib,
-                        resident_memory_mib=measurement.resident_memory_mib,
-                        quality_loss=measurement.quality_loss,
-                        exact=action.profile in exact,
-                        oracle=bool(getattr(policy, "oracle", False)),
-                        pred_loss=action.pred_loss,
-                        risk_upper=action.risk_upper,
-                        safe=action.safe,
-                        epsilon=action.epsilon,
-                        delta=action.delta,
-                        fallback_reason=action.fallback_reason,
-                        rejected_profile=action.rejected_profile,
-                        rejected_pred_loss=action.rejected_pred_loss,
-                        rejected_risk_upper=action.rejected_risk_upper,
-                        candidate_safe_count=action.candidate_safe_count,
-                        controller_overhead_ms=action.controller_overhead_ms,
-                        controller_qrp_ms=action.controller_qrp_ms,
-                        controller_cg_ms=action.controller_cg_ms,
-                        controller_stc_ms=action.controller_stc_ms,
-                        oracle_cost_ms=action.oracle_cost_ms,
-                        optimality_gap=action.optimality_gap,
-                        audit_rate=action.audit_rate,
-                        drift_state=action.drift_state,
-                    )
-                )
+                backend_result = backend.run([request], [action.profile])[0]
+                validate_backend_results([backend_result], path=f"{policy.name}:{request.request_id}")
+                cache_state = backend.cache_state
+                records.append(_record_from_backend_result(policy, request, action, backend_result, exact))
             except Exception as exc:
                 records.append(_failure_record(policy, request, exc, action=action, exact=exact))
     return records

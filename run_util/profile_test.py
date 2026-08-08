@@ -16,6 +16,7 @@ from typing import Any, Callable
 from run_util.experiment_common import config_profiles, config_runtime, load_config, read_measurements, validate_profile_measurements
 from run_util.profile_summary import write_profile_summary
 from run_util.build_profile_table import build_profile_table
+from profiles.registry import build_profile_adapters
 from run_util.cli_common import run_command
 
 
@@ -52,6 +53,17 @@ def _resolve_outputs(args: argparse.Namespace, config: dict[str, Any]) -> tuple[
     return profile_output, summary_output
 
 
+def _active_profile_names(config: dict[str, Any], adapters: list[str] | None) -> list[str]:
+    configured_profiles = config_profiles(config)
+    runtime = config_runtime(config)
+    active: list[str] = []
+    for adapter in build_profile_adapters(adapters or config.get("profiles", {}).get("adapters", []), runtime):
+        for spec in adapter.profiles():
+            if spec.name in configured_profiles and spec.name not in active:
+                active.append(spec.name)
+    return active
+
+
 def _write_payload(
     payload: dict[str, Any],
     summary_output: str,
@@ -68,8 +80,9 @@ def run_profile_test(args: argparse.Namespace) -> int:
     fallback_summary_output = str(getattr(args, "summary_output", "") or _derive_summary_output(fallback_profile_output))
     try:
         config = load_config(Path(config_path))
-        profiles = config_profiles(config)
         runtime = config_runtime(config)
+        profiles = _active_profile_names(config, args.adapters)
+        require_quality_loss = "full_gpu" in profiles
         profile_output, summary_output = _resolve_outputs(args, config)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
@@ -104,7 +117,7 @@ def run_profile_test(args: argparse.Namespace) -> int:
         return profile_code
 
     try:
-        measurements = read_measurements(Path(profile_output))
+        measurements = read_measurements(Path(profile_output), require_quality_loss=require_quality_loss)
     except (FileNotFoundError, ValueError) as exc:
         payload = {
             "ok": False,
@@ -127,6 +140,7 @@ def run_profile_test(args: argparse.Namespace) -> int:
             required_profiles=profiles,
             require_measured=not args.dry_run,
             require_ttft=bool(runtime.get("require_ttft", False)) and not args.dry_run,
+            require_quality_loss=require_quality_loss,
         )
     except (FileNotFoundError, ValueError) as exc:
         payload = {

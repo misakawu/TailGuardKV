@@ -8,7 +8,7 @@ from run_util.core_types import PolicyRunRecord, ProfileMeasurement
 
 
 class MetricCollector:
-    """汇总 profile / policy 结果，覆盖 H0/H1/H2-lite 指标。"""
+    """汇总离线 profile 证据和 backend 驱动的 policy 运行结果。"""
 
     def summarize_profiles(
         self,
@@ -75,6 +75,10 @@ class MetricCollector:
             oracle_costs: list[float] = []
             optimality_gaps: list[float] = []
             audit_rates: list[float] = []
+            restore_times: list[float] = []
+            recompute_times: list[float] = []
+            resident_kv_after: list[float] = []
+            cumulative_kv: list[float] = []
             drift_states: Counter[str] = Counter()
             safe_count = 0
             fallback_count = 0
@@ -85,7 +89,13 @@ class MetricCollector:
             exact_count = 0
             ok_count = 0
             actions: Counter[str] = Counter()
+            profile_resident_totals: Counter[str] = Counter()
             candidate_safe_counts: list[float] = []
+            budget_hit_count = 0
+            switch_count = 0
+            restore_count = 0
+            recompute_count = 0
+            previous_profile_by_session: dict[str, str] = {}
             grouped_request = defaultdict(list)
             for row in rows:
                 if row.ok:
@@ -119,6 +129,16 @@ class MetricCollector:
                     optimality_gaps.append(row.optimality_gap)
                 if row.audit_rate is not None:
                     audit_rates.append(row.audit_rate)
+                if row.restore_ms is not None and row.restore_ms > 0:
+                    restore_times.append(row.restore_ms)
+                    restore_count += 1
+                if row.recompute_ms is not None and row.recompute_ms > 0:
+                    recompute_times.append(row.recompute_ms)
+                    recompute_count += 1
+                if row.resident_kv_mib_after is not None:
+                    resident_kv_after.append(row.resident_kv_mib_after)
+                if row.kv_cumulative_mib is not None:
+                    cumulative_kv.append(row.kv_cumulative_mib)
                 if row.drift_state:
                     drift_states[row.drift_state] += 1
                 if row.safe is True:
@@ -129,11 +149,24 @@ class MetricCollector:
                     candidate_safe_counts.append(row.candidate_safe_count)
                 if row.fallback_reason:
                     fallback_count += 1
+                if row.budget_hit:
+                    budget_hit_count += 1
                 if row.action_profile in exact_profiles:
                     exact_count += 1
                     if row.fallback_reason:
                         exact_fallback_count += 1
                 actions[row.action_profile] += 1
+                if row.session_id:
+                    previous = previous_profile_by_session.get(row.session_id)
+                    if previous is not None and row.resident_kv_mib_before is not None:
+                        profile_resident_totals[previous] += row.resident_kv_mib_before
+                    if previous is not None and previous != row.action_profile:
+                        switch_count += 1
+                    previous_profile_by_session[row.session_id] = row.action_profile
+                if row.resident_kv_mib_after is not None:
+                    profile_resident_totals[row.action_profile] += row.resident_kv_mib_after
+                elif row.resident_memory_mib is not None:
+                    profile_resident_totals[row.action_profile] += row.resident_memory_mib
                 group_key = (
                     row.task or "unknown",
                     row.length_bucket or "unknown",
@@ -186,6 +219,15 @@ class MetricCollector:
                 "oracle_cost_ms": _mean(oracle_costs),
                 "optimality_gap": _mean(optimality_gaps),
                 "audit_rate": _mean(audit_rates),
+                "switch_count": float(switch_count),
+                "budget_hit_rate": budget_hit_count / len(rows) if rows else float("nan"),
+                "restore_count": float(restore_count),
+                "restore_time_ms": _mean(restore_times),
+                "recompute_count": float(recompute_count),
+                "recompute_time_ms": _mean(recompute_times),
+                "mean_resident_kv_mib": _mean(resident_kv_after),
+                "mean_cumulative_kv_mib": _mean(cumulative_kv),
+                "profile_residence_share": _share(profile_resident_totals),
                 "drift_state": drift_states.most_common(1)[0][0] if drift_states else "",
                 "oracle": any(row.oracle for row in rows),
                 "placeholder": any(row.placeholder for row in rows),
@@ -238,3 +280,10 @@ def _delta_slack(rows: list[PolicyRunRecord], epsilon: float, delta: float) -> f
         return float("nan")
     violation_rate = sum(1 for row in known_rows if row.quality_loss is not None and row.quality_loss > epsilon) / len(known_rows)
     return delta - violation_rate
+
+
+def _share(counts: Counter[str]) -> dict[str, float]:
+    total = float(sum(counts.values()))
+    if total <= 0:
+        return {}
+    return {key: value / total for key, value in sorted(counts.items())}

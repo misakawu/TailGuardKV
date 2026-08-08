@@ -40,6 +40,11 @@ def load_requests(config: dict[str, Any]) -> tuple[list[Request], bool]:
     path = Path(str(request_path))
     if not path.exists():
         raise FileNotFoundError(f"请求输入文件不存在: {path}")
+    if str(data_config.get("source") or "").lower() == "sharegpt":
+        conversations = load_sharegpt_conversations(path)
+        requests = requests_from_sharegpt_conversations(conversations)
+        requests = _filter_requests_by_token_limit(requests, config)
+        return _ensure_session_splits(requests, float(data_config.get("calibration_fraction", 0.5))), False
     if path.suffix.lower() == ".jsonl":
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     elif path.suffix.lower() == ".csv":
@@ -70,6 +75,116 @@ def load_requests(config: dict[str, Any]) -> tuple[list[Request], bool]:
     return _ensure_request_splits(requests, float(data_config.get("calibration_fraction", 0.5))), False
 
 
+def load_sharegpt_conversations(path: Path) -> list[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"请求输入文件为空: {path}")
+    if path.suffix.lower() == ".jsonl":
+        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        rows = json.loads(text)
+    if not isinstance(rows, list):
+        raise ValueError(f"ShareGPT 输入必须是数组: {path}")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def requests_from_sharegpt_conversations(rows: list[dict[str, Any]]) -> list[Request]:
+    requests: list[Request] = []
+    arrival_index = 0
+    for conversation_index, row in enumerate(rows):
+        session_id = str(row.get("id") or row.get("session_id") or f"session_{conversation_index:06d}")
+        messages = row.get("conversations")
+        if not isinstance(messages, list):
+            continue
+        history: list[str] = []
+        user_turn_index = 0
+        pending_user: str | None = None
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            speaker = str(message.get("from") or message.get("role") or "").lower()
+            value = str(message.get("value") or message.get("content") or "").strip()
+            if not value:
+                continue
+            if speaker in {"human", "user"}:
+                prompt = f"User: {value}" if history else value
+                pending_user = value
+                requests.append(
+                    Request(
+                        request_id=f"{session_id}_turn_{user_turn_index:03d}",
+                        task="chat",
+                        prompt=prompt,
+                        session_id=session_id,
+                        turn_index=user_turn_index,
+                        arrival_index=arrival_index,
+                        history_turns=tuple(history),
+                        metadata={"source": session_id},
+                    )
+                )
+                user_turn_index += 1
+                arrival_index += 1
+            elif speaker in {"gpt", "assistant"}:
+                if pending_user is not None:
+                    history.append(f"User: {pending_user}")
+                    pending_user = None
+                history.append(f"Assistant: {value}")
+        if requests and requests[-1].session_id == session_id:
+            requests[-1] = replace(requests[-1], metadata={**requests[-1].metadata, "last_turn": True})
+    return requests
+
+
+def _filter_requests_by_token_limit(requests: list[Request], config: dict[str, Any]) -> list[Request]:
+    limit = _configured_prompt_token_limit(config)
+    if limit <= 0 or not requests:
+        return requests
+    tokenizer = _load_prompt_tokenizer(config)
+    if tokenizer is None:
+        return requests
+    filtered = [request for request in requests if _request_prompt_token_count(request, tokenizer) <= limit]
+    if filtered:
+        return filtered
+    raise ValueError(f"所有 ShareGPT 请求都超过 token 上限 {limit}")
+
+
+def _configured_prompt_token_limit(config: dict[str, Any]) -> int:
+    profile_config = config.get("profile_smoke", {})
+    raw_limit = profile_config.get("max_prompt_tokens", profile_config.get("vllm_max_model_len", 0))
+    try:
+        return max(0, int(raw_limit or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _load_prompt_tokenizer(config: dict[str, Any]) -> Any | None:
+    model_config = config.get("model", {})
+    profile_config = config.get("profile_smoke", {})
+    model_name = model_config.get("pilot_model") or model_config.get("path") or model_config.get("name")
+    if not model_name:
+        return None
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(
+        str(model_name),
+        cache_dir=model_config.get("cache_dir") or None,
+        local_files_only=bool(profile_config.get("local_files_only", True)),
+        trust_remote_code=True,
+    )
+
+
+def _request_prompt_token_count(request: Request, tokenizer: Any) -> int:
+    tokenized = tokenizer(request.effective_prompt, return_tensors="pt")
+    input_ids = tokenized.get("input_ids")
+    if input_ids is None:
+        return 0
+    shape = getattr(input_ids, "shape", None)
+    if shape is not None:
+        return int(shape[-1])
+    values = input_ids.tolist() if hasattr(input_ids, "tolist") else input_ids
+    while isinstance(values, list) and values and isinstance(values[0], list):
+        values = values[0]
+    return len(values) if isinstance(values, list) else 0
+
+
 def length_bucket(prompt_chars: int) -> str:
     if prompt_chars < 512:
         return "short"
@@ -92,6 +207,30 @@ def _ensure_request_splits(requests: list[Request], calibration_fraction: float)
             metadata={**request.metadata, "split": "calibration" if index < cutoff else "eval"},
         )
         for index, request in enumerate(requests)
+    ]
+
+
+def _ensure_session_splits(requests: list[Request], calibration_fraction: float) -> list[Request]:
+    if not requests:
+        return []
+    if any(request.metadata.get("split") for request in requests):
+        return requests
+    ordered_sessions: list[str] = []
+    for request in requests:
+        session_id = request.session_id or request.request_id
+        if session_id not in ordered_sessions:
+            ordered_sessions.append(session_id)
+    cutoff = max(1, min(len(ordered_sessions) - 1, int(round(len(ordered_sessions) * calibration_fraction)))) if len(ordered_sessions) > 1 else 1
+    calibration_sessions = set(ordered_sessions[:cutoff])
+    return [
+        replace(
+            request,
+            metadata={
+                **request.metadata,
+                "split": "calibration" if (request.session_id or request.request_id) in calibration_sessions else "eval",
+            },
+        )
+        for request in requests
     ]
 
 
@@ -135,15 +274,18 @@ def _limit_requests_for_split(requests: list[Request], limit: int) -> list[Reque
 
 
 def requests_from_measurements(measurements: list[ProfileMeasurement]) -> list[Request]:
-    seen: dict[str, Request] = {}
-    for measurement in measurements:
-        if measurement.request_id in seen:
+    seen: dict[tuple[str, int, str], Request] = {}
+    for measurement in sorted(measurements, key=lambda item: ((item.session_id or item.request_id), item.turn_index, item.request_id)):
+        key = (measurement.session_id or "", measurement.turn_index, measurement.request_id)
+        if key in seen:
             continue
         task = str(measurement.extra.get("task") or (measurement.request_id.split("_", 1)[0] if "_" in measurement.request_id else "unknown"))
-        seen[measurement.request_id] = Request(
+        seen[key] = Request(
             request_id=measurement.request_id,
             task=task,
             prompt=measurement.output_text,
+            session_id=measurement.session_id,
+            turn_index=measurement.turn_index,
             metadata={
                 "source": "profile_measurement",
                 "split": measurement.extra.get("split", ""),
@@ -159,14 +301,14 @@ def split_measurements(measurements: list[ProfileMeasurement]) -> tuple[list[Pro
     evaluation = [row for row in measurements if row.extra.get("split") != "calibration"]
     if calibration and evaluation:
         return calibration, evaluation
-    request_ids = sorted({row.request_id for row in measurements})
-    if len(request_ids) <= 1:
+    session_ids = sorted({row.session_id or row.request_id for row in measurements})
+    if len(session_ids) <= 1:
         return measurements, measurements
-    cutoff = max(1, len(request_ids) // 2)
-    calibration_ids = set(request_ids[:cutoff])
+    cutoff = max(1, len(session_ids) // 2)
+    calibration_ids = set(session_ids[:cutoff])
     return (
-        [row for row in measurements if row.request_id in calibration_ids],
-        [row for row in measurements if row.request_id not in calibration_ids],
+        [row for row in measurements if (row.session_id or row.request_id) in calibration_ids],
+        [row for row in measurements if (row.session_id or row.request_id) not in calibration_ids],
     )
 
 

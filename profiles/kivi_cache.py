@@ -78,6 +78,13 @@ class KIVICache(Cache):
             )
         return self
 
+    def clear(self) -> KIVICache:
+        for layer_idx in range(len(self.layers)):
+            self.layers[layer_idx] = None
+            self.key_cache[layer_idx] = None
+            self.value_cache[layer_idx] = None
+        return self
+
     def to_legacy_cache(self) -> tuple[tuple[object, ...], ...]:
         legacy = []
         for state in self.layers:

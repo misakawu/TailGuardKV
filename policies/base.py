@@ -21,6 +21,8 @@ class ProfileStats:
     p95_ttft_ms: float | None
     p95_peak_memory_mib: float | None
     p95_kv_cache_memory_mib: float | None
+    p95_kv_incremental_mib: float | None
+    p95_kv_cumulative_mib: float | None
 
 
 class Policy(ABC):
@@ -100,22 +102,27 @@ class StatsPolicy(Policy):
             return best_profile
         return self._fallback_profile()
 
-    def _within_memory_budget(self, profile: str) -> bool:
+    def _within_memory_budget(self, profile: str, request: Request | None = None, cache_state: CacheState | None = None) -> bool:
         if not isfinite(self.memory_budget_mib):
             return True
-        memory = self._memory_or_inf(profile)
+        memory = self._projected_memory(profile, request, cache_state)
         return memory <= self.memory_budget_mib
 
-    def _candidate_profiles(self, *, include_exact: bool = True) -> list[str]:
+    def _candidate_profiles(
+        self,
+        request: Request | None = None,
+        cache_state: CacheState | None = None,
+        *,
+        include_exact: bool = True,
+    ) -> list[str]:
         candidates = [
             profile
             for profile in self.profiles
-            if (include_exact or profile not in self.exact_profiles) and self._within_memory_budget(profile)
+            if (include_exact or profile not in self.exact_profiles) and self._within_memory_budget(profile, request, cache_state)
         ]
         if candidates:
             return candidates
-        fallback = self._fallback_profile()
-        return [fallback]
+        return []
 
     def _loss_or_inf(self, profile: str) -> float:
         stat = self.stats.get(profile)
@@ -140,6 +147,27 @@ class StatsPolicy(Policy):
         if stat.p95_peak_memory_mib is not None:
             return stat.p95_peak_memory_mib
         return inf
+
+    def _incremental_memory_or_zero(self, profile: str) -> float:
+        stat = self.stats.get(profile)
+        if stat is None:
+            return 0.0
+        if stat.p95_kv_incremental_mib is not None:
+            return stat.p95_kv_incremental_mib
+        if stat.p95_kv_cumulative_mib is not None:
+            return stat.p95_kv_cumulative_mib
+        memory = self._memory_or_inf(profile)
+        return 0.0 if memory is inf else memory
+
+    def _projected_memory(self, profile: str, request: Request | None, cache_state: CacheState | None) -> float:
+        if request is None or cache_state is None or not request.session_id:
+            return self._memory_or_inf(profile)
+        current = cache_state.get_cumulative_kv(request.session_id, profile)
+        if current <= 0.0:
+            current_profile = cache_state.get_current_profile(request.session_id)
+            if current_profile:
+                current = cache_state.get_cumulative_kv(request.session_id, current_profile)
+        return current + self._incremental_memory_or_zero(profile)
 
     def _best_profile(self, use_tail_constraint: bool) -> str:
         best_profile = ""
@@ -167,9 +195,9 @@ class StatsPolicy(Policy):
         reason = "exact fallback" if profile in self.exact_profiles else ("calibrated safe" if safe else "calibrated unsafe")
         return pred_loss, risk_upper, safe, reason
 
-    def _candidate_safe_count(self, request: Request) -> int:
+    def _candidate_safe_count(self, request: Request, cache_state: CacheState | None = None) -> int:
         count = 0
-        for profile in self._candidate_profiles():
+        for profile in self._candidate_profiles(request, cache_state):
             pred_loss = self.predictor.predict_loss(request, profile)
             risk_upper = self.guard.risk_upper(request, profile, pred_loss)
             if risk_upper <= self.epsilon or profile in self.exact_profiles:
@@ -197,6 +225,8 @@ def _profile_stats(
         ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
         memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
         kv_memories = [row.kv_cache_memory_mib for row in rows if row.kv_cache_memory_mib is not None]
+        incremental_kv = [row.kv_incremental_mib for row in rows if row.kv_incremental_mib is not None]
+        cumulative_kv = [row.kv_cumulative_mib for row in rows if row.kv_cumulative_mib is not None]
         stats[profile] = ProfileStats(
             profile=profile,
             count=len(rows),
@@ -206,6 +236,8 @@ def _profile_stats(
             p95_ttft_ms=(_percentile(ttfts, 0.95) if ttfts else None),
             p95_peak_memory_mib=(_percentile(memories, 0.95) if memories else None),
             p95_kv_cache_memory_mib=(_percentile(kv_memories, 0.95) if kv_memories else None),
+            p95_kv_incremental_mib=(_percentile(incremental_kv, 0.95) if incremental_kv else None),
+            p95_kv_cumulative_mib=(_percentile(cumulative_kv, 0.95) if cumulative_kv else None),
         )
     return stats
 

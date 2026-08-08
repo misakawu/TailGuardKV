@@ -20,7 +20,7 @@ from calibration.conformal import ConformalGuard
 from aal import AALState, AuditSample, WilsonDriftDetector
 from backends.measured_replay import MeasuredReplayBackend
 from run_util.core_types import Action
-from run_util.core_types import PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
+from run_util.core_types import BackendResult, PolicyRunRecord, ProfileMeasurement, ProfileSpec, Request
 from run_util.experiment_common import annotate_measurement, config_adapters, config_policies, config_profiles, config_runtime, exact_profiles, failed_measurement_summary, limit_requests_by_split, load_config, validate_profile_measurements, with_quality, write_csv
 from metrics.quality import compute_quality_loss, normalized_exact_match_loss, rouge_l_loss, select_primary_loss, token_f1_loss
 from metrics import MetricCollector
@@ -43,7 +43,7 @@ import run_util.build_profile_table as profile_table_module
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import run_command
 from run_util.experiment import _policy_output_for_sweep, _policy_sweep_points, _summary_rows, build_parser as build_experiment_parser, pilot_smoke_measured
-from run_util.experiment_summary import total_policy_summary_rows
+from run_util.experiment_summary import summary_rows, total_policy_summary_rows
 from run_util.profile_test import build_parser as build_profile_test_parser, main as run_profile_test_main
 from run_util.run_policies import run_policies
 
@@ -721,6 +721,41 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertTrue(row.ok)
 
+    def test_qwen2_profile_measurement_appends_pythonpath(self) -> None:
+        request = Request(request_id="r1", task="summary", prompt="a")
+        spec = ProfileSpec("h2o_heavy10_recent10", "h2o", "edgekv-h2o", lossy=True)
+
+        def fake_run(command, **kwargs):
+            pythonpath = kwargs["env"]["PYTHONPATH"].split(":")
+            self.assertIn("/DATACENTER3/zhenxiang.wang/work/TailGuardKV/third_party/H2O/h2o_hf", pythonpath)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "measured": True,
+                        "output_text": "x",
+                        "ttft_ms": 1,
+                        "latency_ms": 2,
+                        "peak_memory_mib": 3,
+                        "resident_memory_mib": 4,
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            row = qwen2_kv_profile_measurement(
+                "h2o",
+                "edgekv-h2o",
+                request,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/pilot"},
+                pythonpath=("third_party/H2O/h2o_hf",),
+            )
+
+        self.assertTrue(row.ok)
+
     def test_batch_runtime_maps_worker_failure_to_every_request(self) -> None:
         requests = [
             Request(request_id="r1", task="summary", prompt="a"),
@@ -850,24 +885,50 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_kivi_adapter_measured_profile_many_uses_batch_runtime(self) -> None:
         adapter = KIVIAdapter({"max_new_tokens": 4})
         requests = [Request(request_id="r1", task="summary", prompt="a")]
+        session_runtime = {"state": "sentinel"}
 
         with patch("profiles.kivi.qwen2_kv_profile_many_measurements") as many:
             many.return_value = [_measurement("r1", "kivi_4bit_residual32", None)]
-            rows = adapter.profile_many(requests, "kivi_4bit_residual32", dry_run=False)
+            rows = adapter.profile_many(
+                requests,
+                "kivi_4bit_residual32",
+                dry_run=False,
+                session_runtime=session_runtime,
+                memory_budget_mib=64.0,
+            )
 
         many.assert_called_once()
+        self.assertIs(many.call_args.kwargs["session_runtime"], session_runtime)
+        self.assertEqual(many.call_args.kwargs["memory_budget_mib"], 64.0)
         self.assertEqual(rows[0].profile, "kivi_4bit_residual32")
 
-    def test_h2o_adapter_measured_profile_many_uses_batch_runtime(self) -> None:
+    def test_h2o_adapter_measured_profile_many_uses_batch_runtime_and_pythonpath(self) -> None:
         adapter = H2OAdapter({"max_new_tokens": 4})
-        requests = [Request(request_id="r1", task="summary", prompt="a")]
+        requests = [
+            Request(request_id="r1", task="summary", prompt="a"),
+            Request(request_id="r2", task="summary", prompt="b"),
+        ]
+        session_runtime = {"state": "sentinel"}
 
         with patch("profiles.h2o.qwen2_kv_profile_many_measurements") as many:
-            many.return_value = [_measurement("r1", "h2o_heavy10_recent10", None)]
-            rows = adapter.profile_many(requests, "h2o_heavy10_recent10", dry_run=False)
+            many.return_value = [
+                _measurement("r1", "h2o_heavy10_recent10", None),
+                _measurement("r2", "h2o_heavy10_recent10", None),
+            ]
+            rows = adapter.profile_many(
+                requests,
+                "h2o_heavy10_recent10",
+                dry_run=False,
+                session_runtime=session_runtime,
+                memory_budget_mib=64.0,
+            )
 
         many.assert_called_once()
-        self.assertEqual(rows[0].profile, "h2o_heavy10_recent10")
+        self.assertEqual(many.call_args.kwargs["pythonpath"], adapter.pythonpath)
+        self.assertIs(many.call_args.kwargs["session_runtime"], session_runtime)
+        self.assertEqual(many.call_args.kwargs["memory_budget_mib"], 64.0)
+        self.assertEqual([row.request_id for row in rows], ["r1", "r2"])
+        self.assertTrue(all(row.profile == "h2o_heavy10_recent10" for row in rows))
 
     def test_vllm_adapter_is_registered(self) -> None:
         adapters = build_profile_adapters(["vllm"], {"max_new_tokens": 1})
@@ -1038,6 +1099,46 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertIn("extra_stage_total_ms", text)
         self.assertIn("extra_stage_prefill_ms", text)
         self.assertIn("extra_stage_first_token_ms", text)
+
+    def test_batch_measurements_keep_successful_rows_when_worker_returns_non_zero_for_other_items(self) -> None:
+        request = Request("r1", "summary", "prompt", metadata={"split": "calibration"})
+        spec = ProfileSpec("kivi_4bit_residual32", "kivi", "edgekv-kivi", lossy=True)
+        proc = subprocess.CompletedProcess(
+            args=["conda", "run"],
+            returncode=1,
+            stdout='{"ok": false}',
+            stderr="worker saw some item failures",
+        )
+        result = {
+            "ok": False,
+            "worker": {"mode": "batch"},
+            "results": [
+                {
+                    "ok": True,
+                    "measured": True,
+                    "output_text": "continued",
+                    "ttft_ms": 10.0,
+                    "latency_ms": 12.0,
+                    "peak_memory_mib": 14.0,
+                    "kv_cache_memory_mib": 14.0,
+                    "resident_memory_mib": 14.0,
+                }
+            ],
+        }
+
+        [row] = profiles_base._measurements_from_batch_result(
+            "kivi",
+            [request],
+            spec,
+            proc,
+            result,
+            default_extra={"backend": "qwen2_kivi"},
+        )
+
+        self.assertTrue(row.ok)
+        self.assertTrue(row.measured)
+        self.assertEqual(row.output_text, "continued")
+        self.assertNotIn("returncode", row.extra)
 
     def test_measurement_from_result_preserves_kivi_quantization_flags(self) -> None:
         request = Request("r1", "summary", "prompt", metadata={"split": "calibration"})
@@ -1437,6 +1538,8 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         build_cache_mock.assert_called_once()
         self.assertIs(captured["past_key_values"], built_cache)
+        self.assertNotIn("runtime_cache", result)
+        self.assertNotIn("past_key_values", result)
 
     def test_run_h2o_profile_seeds_generate_with_h2o_cache(self) -> None:
         class FakeTokenizer:
@@ -1511,6 +1614,84 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(result["h2o_cache_budget"], 4)
         self.assertEqual(result["h2o_kept_tokens"], 4)
         self.assertEqual(result["h2o_prompt_tokens"], 20)
+
+    def test_run_h2o_profile_keeps_short_prompt_when_decode_triggers_pruning(self) -> None:
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                class _Shape:
+                    shape = (1, 1)
+
+                return {"input_ids": _Shape()}
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return True
+
+        tracker_ref = {}
+
+        def fake_install_attention(model, wrapper_cls, tracker, bits, payload, modules):
+            tracker_ref["tracker"] = tracker
+
+        def fake_generate_decode(model, tokenizer, device, payload, torch, past_key_values=None, **kwargs):
+            tracker_ref["tracker"]["h2o_prune_events"] = 3
+            tracker_ref["tracker"]["h2o_kept_tokens"] = tracker_ref["tracker"]["h2o_cache_budget"]
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": "continued",
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 1.0,
+                "resident_memory_mib": 1.0,
+            }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_import_runtime_modules", return_value={"torch": FakeTorch(), "AutoModelForCausalLM": object(), "AutoTokenizer": object()}),
+            patch.object(qwen2_kv_runtime, "_require_cuda"),
+            patch.object(
+                qwen2_kv_runtime,
+                "_load_qwen2_model",
+                return_value=(
+                    SimpleNamespace(
+                        config=SimpleNamespace(
+                            num_hidden_layers=3,
+                            model_type="qwen2",
+                            num_attention_heads=2,
+                            num_key_value_heads=1,
+                        ),
+                        model=SimpleNamespace(
+                            layers=[
+                                SimpleNamespace(
+                                    self_attn=SimpleNamespace(q_proj=object(), k_proj=object(), v_proj=object(), o_proj=object())
+                                )
+                            ]
+                        ),
+                    ),
+                    FakeTokenizer(),
+                    "cuda:0",
+                ),
+            ),
+            patch.object(qwen2_kv_runtime, "_install_qwen2_attention", side_effect=fake_install_attention),
+            patch.object(qwen2_kv_runtime, "_generate_decode", side_effect=fake_generate_decode),
+        ):
+            result = qwen2_kv_runtime._run_h2o_profile(
+                {
+                    "profile": "h2o_heavy10_recent10",
+                    "prompt": "continue",
+                    "model_name": "/tmp/model",
+                    "max_new_tokens": 16,
+                    "h2o_heavy_ratio": 0.1,
+                    "h2o_recent_ratio": 0.1,
+                }
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["measured"])
+        self.assertEqual(result["h2o_prompt_tokens"], 1)
+        self.assertEqual(result["h2o_cache_budget"], 2)
+        self.assertEqual(result["h2o_prune_events"], 3)
 
     def test_run_kivi_profile_keeps_short_unquantized_request_as_success(self) -> None:
         class FakeTokenizer:
@@ -2101,6 +2282,291 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(calls, ["r1"])
         self.assertEqual(len(result["results"]), 3)
         self.assertTrue(all("device-side assert triggered" in row["error"] for row in result["results"]))
+
+    def test_qwen2_runtime_batch_reuses_kivi_cache_for_same_session_prefix_extension(self) -> None:
+        caches = [object(), object()]
+        past_caches = []
+        prompts = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __init__(self):
+                self.vocab = {"hello": 1, "world": 2}
+
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor([self.vocab[token] for token in prompt.split()])}
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi", "tokenizer": FakeTokenizer(), "model": SimpleNamespace(config=SimpleNamespace())}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            prompts.append(request["prompt"])
+            past_caches.append(request.get("_runtime_reusable_kivi_cache"))
+            prompt_token_ids = [runtime["tokenizer"].vocab[token] for token in request["prompt"].split()]
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": request["prompt"],
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "kv_cache_memory_mib": 2.0,
+                "runtime_cache": caches[len(prompts) - 1],
+                "runtime_prompt_token_ids": prompt_token_ids,
+            }
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "session_id": "s1", "turn_index": 0, "profile": "kivi_4bit_residual32", "prompt": "hello"},
+                {"request_id": "r2", "session_id": "s1", "turn_index": 1, "profile": "kivi_4bit_residual32", "prompt": "hello world"},
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+            patch.object(qwen2_kv_runtime, "_release_runtime_resources"),
+        ):
+            result = qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(past_caches, [None, caches[0]])
+        self.assertNotIn("runtime_cache", result["results"][0])
+        self.assertNotIn("runtime_prompt_token_ids", result["results"][0])
+
+    def test_qwen2_runtime_batch_rebuilds_kivi_cache_when_prompt_is_not_prefix_extension(self) -> None:
+        rebuild_reasons = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __init__(self):
+                self.vocab = {"hello": 1, "there": 2, "different": 3, "path": 4}
+
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor([self.vocab[token] for token in prompt.split()])}
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi", "tokenizer": FakeTokenizer(), "model": SimpleNamespace(config=SimpleNamespace())}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            rebuild_reasons.append(request.get("_runtime_cache_rebuild_reason"))
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": request["prompt"],
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "kv_cache_memory_mib": 2.0,
+                "runtime_cache": object(),
+                "runtime_prompt_token_ids": request["prompt"].split(),
+            }
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "session_id": "s1", "turn_index": 0, "profile": "kivi_4bit_residual32", "prompt": "hello there"},
+                {"request_id": "r2", "session_id": "s1", "turn_index": 1, "profile": "kivi_4bit_residual32", "prompt": "different path"},
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+            patch.object(qwen2_kv_runtime, "_release_runtime_resources"),
+        ):
+            qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertEqual(rebuild_reasons, ["new_session", "prompt_mismatch"])
+
+    def test_qwen2_runtime_batch_does_not_reuse_kivi_cache_when_history_turns_are_present(self) -> None:
+        past_caches = []
+        rebuild_reasons = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __init__(self):
+                self.vocab = {"hello": 1, "user:": 2, "hi": 3, "assistant:": 4, "again": 5}
+
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor([self.vocab[token] for token in prompt.lower().split()])}
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi", "tokenizer": FakeTokenizer(), "model": SimpleNamespace(config=SimpleNamespace())}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            past_caches.append(request.get("_runtime_reusable_kivi_cache"))
+            rebuild_reasons.append(request.get("_runtime_cache_rebuild_reason"))
+            return {
+                "ok": True,
+                "measured": True,
+                "output_text": request["prompt"],
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "kv_cache_memory_mib": 2.0,
+                "runtime_cache": object(),
+                "runtime_prompt_token_ids": request["prompt"].lower().split(),
+            }
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "session_id": "s1", "turn_index": 0, "profile": "kivi_4bit_residual32", "prompt": "hello", "history_turns": []},
+                {
+                    "request_id": "r2",
+                    "session_id": "s1",
+                    "turn_index": 1,
+                    "profile": "kivi_4bit_residual32",
+                    "prompt": "User: hello\nAssistant: hi\nUser: again",
+                    "history_turns": ["User: hello", "Assistant: hi"],
+                },
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+            patch.object(qwen2_kv_runtime, "_release_runtime_resources"),
+        ):
+            result = qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(past_caches, [None, None])
+        self.assertEqual(rebuild_reasons, ["new_session", "history_turns_present"])
+
+    def test_attach_kivi_session_cache_rebuilds_when_profile_changes(self) -> None:
+        rebuild_reasons = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __init__(self):
+                self.vocab = {"hello": 1, "world": 2}
+
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor([self.vocab[token] for token in prompt.split()])}
+
+        runtime = {
+            "tokenizer": FakeTokenizer(),
+            "session_reuse": {
+                "s1": {
+                    "profile": "kivi_4bit_residual32",
+                    "cache": object(),
+                    "prompt_token_ids": ["hello"],
+                }
+            },
+        }
+        request = qwen2_kv_runtime._attach_kivi_session_cache(
+            runtime,
+            {"request_id": "r2", "session_id": "s1", "turn_index": 1, "profile": "kivi_2bit_residual32", "prompt": "hello world"},
+        )
+
+        rebuild_reasons.append(request.get("_runtime_cache_rebuild_reason"))
+        self.assertEqual(rebuild_reasons, ["profile_changed"])
+
+    def test_qwen2_runtime_batch_clears_runtime_resources_after_oom(self) -> None:
+        cleanup_calls = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor(prompt.split())}
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi", "tokenizer": FakeTokenizer(), "model": SimpleNamespace(config=SimpleNamespace())}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            if request["request_id"] == "r1":
+                return {
+                    "ok": False,
+                    "measured": False,
+                    "error": "CUDA out of memory",
+                    "failure_stage": "generate",
+                    "worker_mode": "batch",
+                }
+            raise AssertionError("later requests must not run after OOM")
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "session_id": "s1", "turn_index": 0, "profile": "kivi_4bit_residual32", "prompt": "a"},
+                {"request_id": "r2", "session_id": "s1", "turn_index": 1, "profile": "kivi_4bit_residual32", "prompt": "a b"},
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+            patch.object(qwen2_kv_runtime, "_release_runtime_resources", side_effect=lambda runtime: cleanup_calls.append(runtime)),
+        ):
+            result = qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(cleanup_calls), 1)
+
+    def test_qwen2_runtime_batch_clears_runtime_resources_when_request_raises(self) -> None:
+        cleanup_calls = []
+
+        class FakeTensor:
+            def __init__(self, values):
+                self._values = [values]
+
+            def tolist(self):
+                return self._values
+
+        class FakeTokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"input_ids": FakeTensor(prompt.split())}
+
+        def fake_prepare(request, worker_start):
+            return {"runtime": "kivi", "tokenizer": FakeTokenizer(), "model": SimpleNamespace(config=SimpleNamespace())}
+
+        def fake_run_request(runtime, request, worker_mode="batch"):
+            raise RuntimeError("boom")
+
+        payload = {
+            "requests": [
+                {"request_id": "r1", "session_id": "s1", "turn_index": 0, "profile": "kivi_4bit_residual32", "prompt": "a"},
+                {"request_id": "r2", "session_id": "s1", "turn_index": 1, "profile": "kivi_4bit_residual32", "prompt": "a b"},
+            ]
+        }
+
+        with (
+            patch.object(qwen2_kv_runtime, "_prepare_kivi_runtime", side_effect=fake_prepare),
+            patch.object(qwen2_kv_runtime, "_run_kivi_request", side_effect=fake_run_request),
+            patch.object(qwen2_kv_runtime, "_release_runtime_resources", side_effect=lambda runtime: cleanup_calls.append(runtime)),
+        ):
+            result = qwen2_kv_runtime.run_profile_batch(payload)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(cleanup_calls), 1)
 
     def test_prepare_kivi_runtime_rejects_unverified_attention_layout(self) -> None:
         class FakeTorch:
@@ -2712,7 +3178,12 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_measured_replay_pandas_mode_preserves_lookup_semantics(self) -> None:
         row = _measurement("r1", "full_gpu", 0.0)
         backend = MeasuredReplayBackend([row], use_pandas=True)
-        self.assertEqual(backend.run([Request("r1", "qa", "p")], ["full_gpu"])[0], row)
+        result = backend.run([Request("r1", "qa", "p")], ["full_gpu"])[0]
+
+        self.assertIsInstance(result, BackendResult)
+        self.assertEqual(result.request_id, row.request_id)
+        self.assertEqual(result.profile, row.profile)
+        self.assertEqual(result.ttft_ms, row.ttft_ms)
 
     def test_worst_group_uses_task_length_bucket_and_profile(self) -> None:
         records = [
@@ -2906,6 +3377,7 @@ class TailGuardCoreTest(unittest.TestCase):
         [record] = policy_runner._run_policy_matrix([FullLRUPolicy()], [request], backend, {"full_gpu"})
 
         self.assertEqual(record.kv_cache_memory_mib, 42.0)
+        self.assertEqual(record.backend_name, "measured_replay")
 
     def test_metrics_delta_slack_uses_delta_not_epsilon(self) -> None:
         records = [
@@ -3940,6 +4412,86 @@ class TailGuardCoreTest(unittest.TestCase):
         ):
             self.assertIn(field, first)
 
+    def test_summary_rows_keep_profile_and_policy_metrics_in_separate_sections(self) -> None:
+        rows = summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "epsilon": 0.05,
+                "delta": 0.05,
+                "memory_budget_mib": 4900.0,
+                "profile": {
+                    "summary": {
+                        "full_gpu": {
+                            "count": 2.0,
+                            "measured_count": 2.0,
+                            "mean_ttft_ms": 9.0,
+                        }
+                    }
+                },
+                "policy": {
+                    "summary": {
+                        "tailguard": {
+                            "count": 1.0,
+                            "mean_ttft_ms": 7.0,
+                            "mean_kv_cache_memory_mib": 44.0,
+                            "action_distribution": {"kivi": 1},
+                        }
+                    }
+                },
+            }
+        )
+
+        profile_row = next(row for row in rows if row["section"] == "profile")
+        policy_row = next(row for row in rows if row["section"] == "policy")
+
+        self.assertEqual(profile_row["name"], "full_gpu")
+        self.assertEqual(profile_row["mean_ttft_ms"], 9.0)
+        self.assertNotIn("action_distribution", profile_row)
+        self.assertEqual(policy_row["name"], "tailguard")
+        self.assertEqual(policy_row["mean_ttft_ms"], 7.0)
+        self.assertEqual(policy_row["mean_kv_cache_memory_mib"], 44.0)
+        self.assertEqual(policy_row["action_distribution"], {"kivi": 1})
+
+    def test_backend_result_from_profile_measurement_marks_replay_source(self) -> None:
+        measurement = _measurement("r1", "full_gpu", 0.0, kv_cache_memory_mib=12.0)
+
+        result = BackendResult.from_profile_measurement(measurement, backend_name="measured_replay")
+
+        self.assertEqual(result.profile, "full_gpu")
+        self.assertEqual(result.kv_cache_memory_mib, 12.0)
+        self.assertEqual(result.backend_name, "measured_replay")
+        self.assertEqual(result.replay_source, "measured_profile_table")
+
+    def test_run_policy_matrix_rejects_invalid_backend_result(self) -> None:
+        import run_util.run_policies as policy_runner
+        from policies.full_lru import FullLRUPolicy
+
+        class InvalidBackend:
+            def __init__(self) -> None:
+                self.cache_state = policy_runner.CacheState()
+
+            def run(self, requests, profiles):
+                return [
+                    BackendResult(
+                        request_id=requests[0].request_id,
+                        session_id=requests[0].session_id,
+                        turn_index=requests[0].turn_index,
+                        profile=profiles[0],
+                        ok=True,
+                        measured=True,
+                        latency_ms=10.0,
+                        peak_memory_mib=20.0,
+                    )
+                ]
+
+        request = Request("r1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
+
+        [record] = policy_runner._run_policy_matrix([FullLRUPolicy()], [request], InvalidBackend(), {"full_gpu"})
+
+        self.assertFalse(record.ok)
+        self.assertIn("kv_cache_memory_mib", record.error or "")
+
     def test_summary_reports_h0_h1_h2_lite_evidence_fields(self) -> None:
         rows = _summary_rows(
             {
@@ -3957,8 +4509,20 @@ class TailGuardCoreTest(unittest.TestCase):
                         "memory_budget_mib": 4900.0,
                         "payload": {
                             "summary": {
-                                "full_lru": {"p95_ttft_ms": 1.0, "mean_kv_cache_memory_mib": 100.0, "fallback_ratio": 0.0, "oracle": False},
-                                "tailguard": {"p95_ttft_ms": 0.8, "mean_kv_cache_memory_mib": 80.0, "fallback_ratio": 0.1, "oracle": False},
+                                "full_lru": {
+                                    "p95_ttft_ms": 1.0,
+                                    "p95_quality_loss": 0.0,
+                                    "mean_kv_cache_memory_mib": 100.0,
+                                    "fallback_ratio": 0.0,
+                                    "oracle": False,
+                                },
+                                "tailguard": {
+                                    "p95_ttft_ms": 0.8,
+                                    "worst_group_violation": 0.0,
+                                    "mean_kv_cache_memory_mib": 80.0,
+                                    "fallback_ratio": 0.1,
+                                    "oracle": False,
+                                },
                                 "quality_oracle": {"oracle": True},
                             }
                         },
@@ -3972,6 +4536,23 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertTrue(experiment["has_h1_coverage_metrics"])
         self.assertTrue(experiment["has_h2_lite_benefit_metrics"])
         self.assertEqual(experiment["deployable_baseline_names"], ["full_lru", "static_best", "static_safe", "tailguard", "utility_dynamic", "uncalibrated_dynamic"])
+
+    def test_summary_evidence_prefers_policy_metrics_when_policy_section_exists(self) -> None:
+        rows = _summary_rows(
+            {
+                "ok": True,
+                "config": "pilot.yaml",
+                "policies": ["full_lru", "tailguard"],
+                "profile": {"summary": {"full_gpu": {"p95_quality_loss": 0.2}}},
+                "policy": {"summary": {"tailguard": {"mean_ttft_ms": 8.0}}},
+            }
+        )
+
+        experiment = rows[0]
+
+        self.assertFalse(experiment["has_h0_tail_metrics"])
+        self.assertFalse(experiment["has_h1_coverage_metrics"])
+        self.assertFalse(experiment["has_h2_lite_benefit_metrics"])
 
     def test_pilot_summary_experiment_row_includes_run_dir_and_visual_outputs(self) -> None:
         rows = _summary_rows(
@@ -4642,6 +5223,62 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertIn("ttft_ms", summary_rows[0]["error"])
             self.assertEqual({row["section"] for row in summary_rows}, {"experiment", "profile"})
 
+    def test_run_profile_test_accepts_h2o_only_subset_without_full_quality_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile_path = Path(tmpdir) / "profiles.csv"
+            policy_path = Path(tmpdir) / "policy.csv"
+            summary_path = Path(tmpdir) / "profile_summary.csv"
+            config_path = Path(tmpdir) / "pilot.yaml"
+            _write_pilot_test_config(config_path, profile_path, policy_path, summary_path)
+            argv = [
+                "run_profile_test.py",
+                "--config",
+                str(config_path),
+                "--adapters",
+                "h2o",
+                "--output",
+                str(profile_path),
+                "--summary-output",
+                str(summary_path),
+            ]
+
+            def fake_build(args: argparse.Namespace) -> int:
+                rows = [
+                    ProfileMeasurement(
+                        request_id="r1",
+                        profile=profile,
+                        adapter="h2o",
+                        ok=True,
+                        measured=True,
+                        output_text="continued",
+                        latency_ms=2.0,
+                        ttft_ms=1.0,
+                        peak_memory_mib=2.0,
+                        kv_cache_memory_mib=2.0,
+                        resident_memory_mib=2.0,
+                        extra={"task": "summary", "length_bucket": "short", "split": "eval", "backend": "qwen2_h2o"},
+                    ).to_row()
+                    for profile in ("h2o_heavy10_recent10", "h2o_heavy15_recent15", "h2o_heavy20_recent20")
+                ]
+                write_csv(Path(args.output), rows)
+                print(json.dumps({"output": args.output, "rows": len(rows)}))
+                return 0
+
+            with (
+                patch("run_util.profile_test.build_profile_table", side_effect=fake_build),
+                patch("sys.argv", argv),
+            ):
+                stream = io.StringIO()
+                with redirect_stdout(stream):
+                    code = run_profile_test_main()
+
+            self.assertEqual(code, 0)
+            self.assertEqual(stream.getvalue(), "")
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                summary_rows = list(csv.DictReader(handle))
+            self.assertEqual(summary_rows[0]["section"], "experiment")
+            self.assertEqual(summary_rows[0]["ok"], "True")
+
     def test_run_policies_rejects_dry_run_replay_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "dry.csv"
@@ -5095,6 +5732,68 @@ class TailGuardCoreTest(unittest.TestCase):
         by_profile = {row["profile"]: row for row in rows}
         self.assertEqual(by_profile["kivi_4bit_residual64"]["measured"], "True")
         self.assertEqual(by_profile["kivi_4bit_residual64"]["extra_kivi_effective_mode"], "unquantized_short_request")
+
+    def test_build_profile_table_accepts_h2o_only_subset_without_full_quality_baseline(self) -> None:
+        requests = [Request("r1", "summary", "continue", reference="answer", metadata={"split": "calibration"})]
+
+        class StubH2OAdapter:
+            name = "h2o"
+
+            def profiles(self):
+                return (ProfileSpec("h2o_heavy10_recent10", "h2o", "edgekv-h2o", lossy=True),)
+
+            def profile_many(self, request_chunk, profile_name, dry_run=True):
+                return [
+                    ProfileMeasurement(
+                        request_id="r1",
+                        profile="h2o_heavy10_recent10",
+                        adapter="h2o",
+                        ok=True,
+                        measured=True,
+                        output_text="continued",
+                        latency_ms=2.0,
+                        ttft_ms=1.0,
+                        peak_memory_mib=2.0,
+                        kv_cache_memory_mib=2.0,
+                        resident_memory_mib=2.0,
+                        extra={
+                            "task": "summary",
+                            "length_bucket": "short",
+                            "split": "calibration",
+                            "reference": "answer",
+                            "backend": "qwen2_h2o",
+                            "h2o_prune_events": 3,
+                        },
+                    )
+                ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            with (
+                patch("run_util.build_profile_table.load_config", return_value={"profiles": {"adapters": ["full", "h2o"], "names": ["full_gpu", "h2o_heavy10_recent10"]}}),
+                patch("run_util.build_profile_table.config_adapters", return_value=["full", "h2o"]),
+                patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu", "h2o_heavy10_recent10"]),
+                patch("run_util.build_profile_table.config_runtime", return_value={"repeat": 1}),
+                patch("run_util.build_profile_table.build_profile_adapters", return_value=[StubH2OAdapter()]),
+                patch("run_util.build_profile_table.load_requests", return_value=(requests, False)),
+                patch("run_util.build_profile_table.exact_profiles", return_value={"full_gpu"}),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=["h2o"],
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["profile"], "h2o_heavy10_recent10")
+            self.assertEqual(rows[0]["quality_loss"], "")
 
     def test_with_quality_falls_back_to_text_similarity_when_reference_missing(self) -> None:
         rows = [

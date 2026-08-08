@@ -36,10 +36,31 @@ class VLLMAdapter(ProfileAdapter):
             versions=versions,
         )
 
-    def profile(self, request: Request, profile_name: str, dry_run: bool = True) -> ProfileMeasurement:
-        return self.profile_many([request], profile_name, dry_run=dry_run)[0]
+    def profile(
+        self,
+        request: Request,
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> ProfileMeasurement:
+        return self.profile_many(
+            [request],
+            profile_name,
+            dry_run=dry_run,
+            session_runtime=session_runtime,
+            memory_budget_mib=memory_budget_mib,
+        )[0]
 
-    def profile_many(self, requests: Sequence[Request], profile_name: str, dry_run: bool = True) -> list[ProfileMeasurement]:
+    def profile_many(
+        self,
+        requests: Sequence[Request],
+        profile_name: str,
+        dry_run: bool = True,
+        session_runtime: object | None = None,
+        memory_budget_mib: float | None = None,
+    ) -> list[ProfileMeasurement]:
+        del session_runtime, memory_budget_mib
         spec = self.get_profile(profile_name)
         if dry_run:
             return [dry_profile_measurement(self.name, request, spec, max(request.prompt_chars, 1) * 0.1, 0.0) for request in requests]

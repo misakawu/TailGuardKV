@@ -22,12 +22,12 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def read_measurements(path: Path) -> list[ProfileMeasurement]:
+def read_measurements(path: Path, *, require_quality_loss: bool = True) -> list[ProfileMeasurement]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         validate_profile_table_header(reader.fieldnames or [], path)
         measurements = [ProfileMeasurement.from_row(row) for row in reader]
-    validate_profile_measurements(measurements, path)
+    validate_profile_measurements(measurements, path, require_quality_loss=require_quality_loss)
     return measurements
 
 

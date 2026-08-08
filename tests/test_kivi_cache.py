@@ -108,6 +108,18 @@ class KIVICacheTest(unittest.TestCase):
 
         self.assertEqual(cache.kv_cache_memory_mib(), 16 / 1024 / 1024)
 
+    def test_kivi_cache_clear_releases_all_tensor_references(self) -> None:
+        cache = KIVICache(1, residual_length=32, group_size=32, k_bits=4, v_bits=4)
+        tensors = [FakeTensor([], shape=(2,), element_size=1) for _ in range(8)]
+        cache.update_quantized(0, KIVILayerState(*tensors, kv_seq_len=4))
+
+        cache.clear()
+
+        self.assertIsNone(cache[0])
+        self.assertEqual(cache.key_cache, [None])
+        self.assertEqual(cache.value_cache, [None])
+        self.assertEqual(cache.kv_cache_memory_mib(), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

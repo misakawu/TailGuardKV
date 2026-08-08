@@ -121,11 +121,11 @@ def run_h2o_request(
             "h2o_recent_size": sizes["recent_size"],
         }
     )
-    if result.get("ok") and (sizes["prompt_tokens"] <= tracker["h2o_cache_budget"] or tracker["h2o_prune_events"] <= 0):
+    if result.get("ok") and tracker["h2o_prune_events"] <= 0:
         result["ok"] = False
         result["measured"] = False
         result["error"] = (
-            "H2O proof missing: request did not exceed heavy-hitter cache budget or no prune event ran. "
+            "H2O proof missing: no prune event ran. "
             f"prompt_tokens={sizes['prompt_tokens']} budget={tracker['h2o_cache_budget']} "
             f"prune_events={tracker['h2o_prune_events']}"
         )
