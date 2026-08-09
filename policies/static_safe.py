@@ -21,17 +21,23 @@ class StaticSafePolicy(StatsPolicy):
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         candidate = self._candidate_action(request, self.profile, cache_state)
+        chosen = candidate
+        fallback_reason = ""
+        if not candidate.exact and not candidate.safe:
+            chosen = self._best_exact_candidate(request, cache_state)
+            fallback_reason = candidate.reason
         return self._finalize_action(
             ActionDecision(
-                profile=self.profile,
+                profile=chosen.profile,
                 reason="static_safe",
                 mode="static",
-                projected_memory_mib=candidate.projected_memory_mib,
-                pred_loss=candidate.pred_loss,
-                risk_upper=candidate.risk_upper,
-                safe=candidate.safe,
+                projected_memory_mib=chosen.projected_memory_mib,
+                pred_loss=chosen.pred_loss,
+                risk_upper=chosen.risk_upper,
+                safe=chosen.safe,
                 epsilon=self.epsilon,
                 delta=self.delta,
-                fallback_reason=candidate.reason,
+                fallback_reason=fallback_reason,
+                safety_reason=candidate.reason,
             )
         )

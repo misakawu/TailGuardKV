@@ -2973,6 +2973,27 @@ class TailGuardCoreTest(unittest.TestCase):
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
         self.assertEqual(action.profile, "h2o_heavy_hitter")
 
+    def test_static_safe_falls_back_to_exact_when_fixed_profile_is_request_unsafe(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0),
+            _measurement("c1", "kivi_4bit", 0.01, ttft_ms=8.0),
+            _measurement("c2", "kivi_4bit", 0.09, ttft_ms=9.0),
+        ]
+        [policy] = build_policies(
+            ["static_safe"],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit"],
+            0.05,
+            0.6,
+            {"full_gpu"},
+        )
+
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+
+        self.assertEqual(action.profile, "full_gpu")
+        self.assertEqual(action.fallback_reason, "calibrated unsafe")
+
     def test_utility_dynamic_uses_configured_utility_weights(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0, peak_memory_mib=10.0),
@@ -3013,7 +3034,30 @@ class TailGuardCoreTest(unittest.TestCase):
         request = Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"})
         action = policy.decide(request, None, None)
         self.assertEqual(action.profile, "kivi_2bit")
-        self.assertEqual(action.fallback_reason, "点预测阈值通过")
+        self.assertEqual(action.fallback_reason, "")
+
+    def test_uncalibrated_dynamic_uses_stable_sort_not_profile_order(self) -> None:
+        rows = [
+            _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0, peak_memory_mib=100.0),
+            _measurement("c1", "kivi_4bit", 0.04, ttft_ms=5.0, peak_memory_mib=15.0),
+            _measurement("c2", "kivi_4bit", 0.04, ttft_ms=6.0, peak_memory_mib=15.0),
+            _measurement("c1", "h2o_heavy_hitter", 0.02, ttft_ms=10.0, peak_memory_mib=20.0),
+            _measurement("c2", "h2o_heavy_hitter", 0.02, ttft_ms=11.0, peak_memory_mib=20.0),
+        ]
+        [policy] = build_policies(
+            ["uncalibrated_dynamic"],
+            rows,
+            rows,
+            ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
+            0.05,
+            0.05,
+            {"full_gpu"},
+        )
+
+        action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
+
+        self.assertEqual(action.profile, "h2o_heavy_hitter")
+
 
     def test_utility_dynamic_uses_lossy_candidates_before_exact_fallback(self) -> None:
         rows = [
@@ -3186,6 +3230,8 @@ class TailGuardCoreTest(unittest.TestCase):
         pilot = load_config(Path("configs/pilot.yaml"))
         pilot_50 = load_config(Path("configs/pilot_50.yaml"))
         pilot_sharegpt = load_config(Path("configs/pilot_sharegpt.yaml"))
+        pilot_phase1 = load_config(Path("configs/pilot_phase1.yaml"))
+        pilot_session_trace = load_config(Path("configs/pilot_session_trace.yaml"))
         expected_profiles = [
             "full_gpu",
             "kivi_4bit_residual32",
@@ -3202,12 +3248,17 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(config_profiles(pilot_sharegpt), expected_profiles)
         self.assertEqual(pilot["data"]["max_requests"], 200)
         self.assertEqual(pilot_50["data"]["max_requests"], 50)
-        self.assertEqual(pilot["data"]["requests"], "data/fixtures/e0_reproduce_requests.jsonl")
+        self.assertEqual(pilot["data"]["requests"], "data/fixtures/pilot_qa_summary_requests.jsonl")
         self.assertEqual(pilot["data"]["quality_mode"], "baseline")
         self.assertEqual(pilot_sharegpt["data"]["requests"], "data/fixtures/sharegpt_sessions.json")
         self.assertEqual(pilot_sharegpt["data"]["quality_mode"], "session_diagnostic")
         self.assertEqual(pilot["pilot"]["memory_budgets_mib"], [4900, 5000])
         self.assertEqual(pilot_50["pilot"]["memory_budgets_mib"], [4900, 5000])
+        self.assertEqual(pilot_phase1["data"]["requests"], "data/fixtures/pilot_qa_summary_requests.jsonl")
+        self.assertEqual(pilot_phase1["pilot"]["memory_budgets_mib"], [18, 26, 40])
+        self.assertEqual(pilot_session_trace["data"]["requests"], "data/fixtures/pilot_session_trace_requests.jsonl")
+        self.assertEqual(pilot_session_trace["data"]["quality_mode"], "session_diagnostic")
+        self.assertEqual(pilot_session_trace["pilot"]["memory_budgets_mib"], [18, 26, 40])
         self.assertNotIn("profile_smoke_model", pilot["model"])
         self.assertNotIn("profile_smoke_model", pilot_50["model"])
         self.assertTrue(pilot["policies"]["record_rejected_unsafe"])

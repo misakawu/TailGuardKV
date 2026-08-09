@@ -278,6 +278,7 @@ class Action:
     epsilon: float | None = None
     delta: float | None = None
     fallback_reason: str = ""
+    safety_reason: str = ""
     rejected_profile: str = ""
     rejected_pred_loss: float | None = None
     rejected_risk_upper: float | None = None
@@ -350,6 +351,7 @@ class ActionDecision:
     epsilon: float | None = None
     delta: float | None = None
     fallback_reason: str = ""
+    safety_reason: str = ""
     rejected_profile: str = ""
     rejected_pred_loss: float | None = None
     rejected_risk_upper: float | None = None
@@ -377,6 +379,7 @@ class ActionDecision:
             epsilon=self.epsilon,
             delta=self.delta,
             fallback_reason=self.fallback_reason,
+            safety_reason=self.safety_reason,
             rejected_profile=self.rejected_profile,
             rejected_pred_loss=self.rejected_pred_loss,
             rejected_risk_upper=self.rejected_risk_upper,
@@ -532,6 +535,7 @@ class PolicyRunRecord:
     epsilon: float | None = None
     delta: float | None = None
     fallback_reason: str = ""
+    safety_reason: str = ""
     rejected_profile: str = ""
     rejected_pred_loss: float | None = None
     rejected_risk_upper: float | None = None
@@ -544,6 +548,7 @@ class PolicyRunRecord:
     optimality_gap: float | None = None
     audit_rate: float | None = None
     drift_state: str = ""
+    active_session_count: float | None = None
 
     def to_row(self) -> dict[str, Any]:
         return asdict(self)
@@ -567,6 +572,7 @@ class PolicyRunRecord:
         epsilon: float | None = None,
         delta: float | None = None,
         fallback_reason: str = "",
+        safety_reason: str = "",
         rejected_profile: str = "",
         rejected_pred_loss: float | None = None,
         rejected_risk_upper: float | None = None,
@@ -579,6 +585,7 @@ class PolicyRunRecord:
         optimality_gap: float | None = None,
         audit_rate: float | None = None,
         drift_state: str = "",
+        active_session_count: float | None = None,
         budget_hit: bool = False,
         policy_budget_filtered: bool | None = None,
     ) -> "PolicyRunRecord":
@@ -625,6 +632,7 @@ class PolicyRunRecord:
             epsilon=epsilon,
             delta=delta,
             fallback_reason=fallback_reason,
+            safety_reason=safety_reason,
             rejected_profile=rejected_profile,
             rejected_pred_loss=rejected_pred_loss,
             rejected_risk_upper=rejected_risk_upper,
@@ -637,6 +645,7 @@ class PolicyRunRecord:
             optimality_gap=optimality_gap,
             audit_rate=audit_rate,
             drift_state=drift_state,
+            active_session_count=active_session_count,
         )
 
 

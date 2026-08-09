@@ -111,6 +111,7 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         epsilon=action.epsilon if action is not None else None,
         delta=action.delta if action is not None else None,
         fallback_reason=action.fallback_reason if action is not None else "",
+        safety_reason=action.safety_reason if action is not None else "",
         rejected_profile=action.rejected_profile if action is not None else "",
         rejected_pred_loss=action.rejected_pred_loss if action is not None else None,
         rejected_risk_upper=action.rejected_risk_upper if action is not None else None,
@@ -123,6 +124,7 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         optimality_gap=action.optimality_gap if action is not None else None,
         audit_rate=action.audit_rate if action is not None else None,
         drift_state=action.drift_state if action is not None else "",
+        active_session_count=None,
         budget_hit=action.budget_hit if action is not None else False,
         policy_budget_filtered=action.policy_budget_filtered if action is not None else False,
     )
@@ -150,6 +152,7 @@ def _record_from_backend_result(
         epsilon=action.epsilon,
         delta=action.delta,
         fallback_reason=action.fallback_reason,
+        safety_reason=action.safety_reason,
         rejected_profile=action.rejected_profile,
         rejected_pred_loss=action.rejected_pred_loss,
         rejected_risk_upper=action.rejected_risk_upper,
@@ -162,9 +165,17 @@ def _record_from_backend_result(
         optimality_gap=action.optimality_gap,
         audit_rate=action.audit_rate,
         drift_state=action.drift_state,
+        active_session_count=_active_session_count(backend_result.extra),
         budget_hit=action.budget_hit,
         policy_budget_filtered=action.policy_budget_filtered,
     )
+
+
+def _active_session_count(extra: dict[str, object]) -> float | None:
+    active = extra.get("active_sessions")
+    if isinstance(active, (list, tuple)):
+        return float(len(active))
+    return None
 
 
 def _run_policy_matrix(

@@ -295,7 +295,7 @@ def test_static_best_prefers_lossy_profile_when_lossy_is_deployable() -> None:
     assert action.profile == "kivi_4bit_residual32"
 
 
-def test_static_safe_explicitly_marks_exact_fallback_when_no_safe_lossy_exists() -> None:
+def test_static_safe_does_not_mark_fallback_when_initialized_to_exact_profile() -> None:
     calibration = [
         _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
         _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.20, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
@@ -313,7 +313,7 @@ def test_static_safe_explicitly_marks_exact_fallback_when_no_safe_lossy_exists()
     action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
 
     assert action.profile == "full_gpu"
-    assert action.fallback_reason
+    assert not action.fallback_reason
 
 
 def test_policy_run_record_keeps_policy_and_backend_budget_signals_separate() -> None:

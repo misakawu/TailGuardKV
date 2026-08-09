@@ -32,6 +32,7 @@ class StaticBestPolicy(StatsPolicy):
                 safe=candidate.safe,
                 epsilon=self.epsilon,
                 delta=self.delta,
-                fallback_reason=candidate.reason,
+                fallback_reason="",
+                safety_reason=candidate.reason,
             )
         )

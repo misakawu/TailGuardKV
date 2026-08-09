@@ -23,6 +23,7 @@ class UncalibratedDynamicPolicy(StatsPolicy):
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         candidate_safe_count = float(self._candidate_safe_count(request, cache_state))
         budget_filtered = False
+        eligible_lossy: list[tuple[float, float, float, str]] = []
         for profile in [profile for profile in self.profiles if profile not in self.exact_profiles]:
             if not self._within_memory_budget(profile, request, cache_state):
                 budget_filtered = True
@@ -30,23 +31,35 @@ class UncalibratedDynamicPolicy(StatsPolicy):
             pred_loss = self.predictor.predict_loss(request, profile)
             if pred_loss <= self.epsilon:
                 candidate = self._candidate_action(request, profile, cache_state)
-                return self._finalize_action(
-                    ActionDecision(
-                        profile=profile,
-                        reason="uncalibrated_dynamic",
-                        mode="lossy",
-                        projected_memory_mib=candidate.projected_memory_mib,
-                        pred_loss=pred_loss,
-                        risk_upper=candidate.risk_upper,
-                        safe=candidate.safe,
-                        epsilon=self.epsilon,
-                        delta=self.delta,
-                        fallback_reason="点预测阈值通过",
-                        candidate_safe_count=candidate_safe_count,
-                        budget_hit=budget_filtered,
-                        policy_budget_filtered=budget_filtered,
+                eligible_lossy.append(
+                    (
+                        pred_loss,
+                        candidate.predicted_ttft_ms,
+                        candidate.projected_memory_mib,
+                        profile,
                     )
                 )
+        if eligible_lossy:
+            _, _, _, selected_profile = min(eligible_lossy)
+            candidate = self._candidate_action(request, selected_profile, cache_state)
+            return self._finalize_action(
+                ActionDecision(
+                    profile=selected_profile,
+                    reason="uncalibrated_dynamic",
+                    mode="lossy",
+                    projected_memory_mib=candidate.projected_memory_mib,
+                    pred_loss=candidate.pred_loss,
+                    risk_upper=candidate.risk_upper,
+                    safe=candidate.safe,
+                    epsilon=self.epsilon,
+                    delta=self.delta,
+                    fallback_reason="",
+                    safety_reason="point_prediction_eligible",
+                    candidate_safe_count=candidate_safe_count,
+                    budget_hit=budget_filtered,
+                    policy_budget_filtered=budget_filtered,
+                )
+            )
         fallback = self._best_exact_candidate(request, cache_state)
         return self._finalize_action(
             ActionDecision(
@@ -60,6 +73,7 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                 epsilon=self.epsilon,
                 delta=self.delta,
                 fallback_reason=fallback.reason,
+                safety_reason="point_prediction_rejected",
                 candidate_safe_count=candidate_safe_count,
                 budget_hit=budget_filtered,
                 policy_budget_filtered=budget_filtered,

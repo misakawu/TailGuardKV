@@ -85,6 +85,7 @@ class MetricCollector:
             task_counts: Counter[str] = Counter()
             length_bucket_counts: Counter[str] = Counter()
             task_length_counts: Counter[str] = Counter()
+            session_turn_counts: Counter[str] = Counter()
             safe_count = 0
             fallback_count = 0
             exact_fallback_count = 0
@@ -103,6 +104,9 @@ class MetricCollector:
             recompute_count = 0
             previous_profile_by_session: dict[str, str] = {}
             grouped_request = defaultdict(list)
+            active_session_counts: list[float] = []
+            evict_event_count = 0
+            queue_event_count = 0
             for row in rows:
                 if row.ok:
                     ok_count += 1
@@ -143,6 +147,8 @@ class MetricCollector:
                     recompute_count += 1
                 if row.queue_delay_ms is not None:
                     queue_delays.append(row.queue_delay_ms)
+                    if row.queue_delay_ms > 0:
+                        queue_event_count += 1
                 if row.resident_kv_mib_after is not None:
                     resident_kv_after.append(row.resident_kv_mib_after)
                 if row.global_resident_kv_mib is not None:
@@ -174,6 +180,7 @@ class MetricCollector:
                 length_bucket_counts[bucket] += 1
                 task_length_counts[f"{task}/{bucket}"] += 1
                 if row.session_id:
+                    session_turn_counts[row.session_id] += 1
                     previous = previous_profile_by_session.get(row.session_id)
                     if previous is not None and row.resident_kv_mib_before is not None:
                         profile_resident_totals[previous] += row.resident_kv_mib_before
@@ -184,6 +191,10 @@ class MetricCollector:
                     profile_resident_totals[row.action_profile] += row.resident_kv_mib_after
                 elif row.resident_memory_mib is not None:
                     profile_resident_totals[row.action_profile] += row.resident_memory_mib
+                if row.evicted_kv_mib is not None and row.evicted_kv_mib > 0:
+                    evict_event_count += 1
+                if row.active_session_count is not None:
+                    active_session_counts.append(row.active_session_count)
                 group_key = (
                     row.task or "unknown",
                     row.length_bucket or "unknown",
@@ -232,6 +243,9 @@ class MetricCollector:
                 "task_distribution": dict(sorted(task_counts.items())),
                 "length_bucket_distribution": dict(sorted(length_bucket_counts.items())),
                 "task_length_distribution": dict(sorted(task_length_counts.items())),
+                "session_count": float(len(session_turn_counts)),
+                "multi_turn_session_count": float(sum(1 for count in session_turn_counts.values() if count > 1)),
+                "active_session_peak": max(active_session_counts) if active_session_counts else float("nan"),
                 "controller_overhead_ms": _mean(controller_overheads),
                 "controller_qrp_ms": _mean(qrp_overheads),
                 "controller_cg_ms": _mean(cg_overheads),
@@ -247,6 +261,10 @@ class MetricCollector:
                 "recompute_count": float(recompute_count),
                 "recompute_time_ms": _mean(recompute_times),
                 "queue_delay_ms": _mean(queue_delays),
+                "triggered_restore": bool(restore_count),
+                "triggered_recompute": bool(recompute_count),
+                "triggered_evict": bool(evict_event_count),
+                "triggered_queue": bool(queue_event_count),
                 "mean_resident_kv_mib": _mean(resident_kv_after),
                 "mean_global_resident_kv_mib": _mean(global_resident_kv),
                 "p95_global_resident_kv_mib": _percentile(global_resident_kv, 0.95),

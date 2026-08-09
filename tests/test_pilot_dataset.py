@@ -159,12 +159,82 @@ def test_metric_collector_reports_task_split_and_length_distributions() -> None:
     assert summary["task_length_distribution"] == {"qa/short": 1, "summary/nonshort": 1}
 
 
+def test_metric_collector_reports_session_diagnostics() -> None:
+    records = [
+        PolicyRunRecord(
+            policy="tailguard",
+            request_id="s1-0",
+            session_id="s1",
+            turn_index=0,
+            task="qa",
+            length_bucket="short",
+            action_profile="full_gpu",
+            ok=True,
+            measured=True,
+            quality_loss=0.0,
+            active_session_count=1.0,
+        ),
+        PolicyRunRecord(
+            policy="tailguard",
+            request_id="s2-0",
+            session_id="s2",
+            turn_index=0,
+            task="summary",
+            length_bucket="medium",
+            action_profile="kivi_4bit_residual32",
+            ok=True,
+            measured=True,
+            quality_loss=0.03,
+            evicted_kv_mib=12.0,
+            queue_delay_ms=4.0,
+            active_session_count=2.0,
+        ),
+        PolicyRunRecord(
+            policy="tailguard",
+            request_id="s1-1",
+            session_id="s1",
+            turn_index=1,
+            task="qa",
+            length_bucket="medium",
+            action_profile="full_gpu",
+            ok=True,
+            measured=True,
+            quality_loss=0.0,
+            restore_ms=6.0,
+            recompute_ms=3.0,
+            active_session_count=2.0,
+        ),
+    ]
+
+    summary = MetricCollector().summarize_policy_runs(records, epsilon=0.05, delta=0.05, exact_profiles={"full_gpu"})["tailguard"]
+
+    assert summary["session_count"] == 2.0
+    assert summary["multi_turn_session_count"] == 1.0
+    assert summary["active_session_peak"] == 2.0
+    assert summary["triggered_restore"] is True
+    assert summary["triggered_recompute"] is True
+    assert summary["triggered_evict"] is True
+    assert summary["triggered_queue"] is True
+
+
 def test_pilot_config_points_to_qa_summary_fixture() -> None:
     config = yaml.safe_load(Path("configs/pilot.yaml").read_text(encoding="utf-8"))
 
     assert config["data"]["requests"] == "data/fixtures/pilot_qa_summary_requests.jsonl"
     assert config["data"]["quality_mode"] == "baseline"
     assert config["data"]["max_requests"] == 200
+
+
+def test_phase1_and_session_trace_configs_use_separate_request_fixtures() -> None:
+    phase1 = yaml.safe_load(Path("configs/pilot_phase1.yaml").read_text(encoding="utf-8"))
+    phase2 = yaml.safe_load(Path("configs/pilot_session_trace.yaml").read_text(encoding="utf-8"))
+
+    assert phase1["data"]["requests"] == "data/fixtures/pilot_qa_summary_requests.jsonl"
+    assert phase1["data"]["quality_mode"] == "baseline"
+    assert phase1["pilot"]["memory_budgets_mib"] == [18, 26, 40]
+    assert phase2["data"]["requests"] == "data/fixtures/pilot_session_trace_requests.jsonl"
+    assert phase2["data"]["quality_mode"] == "session_diagnostic"
+    assert phase2["pilot"]["memory_budgets_mib"] == [18, 26, 40]
 
 
 def test_repo_pilot_fixture_covers_required_task_split_and_length_groups() -> None:
@@ -201,3 +271,19 @@ def test_repo_pilot_fixture_covers_required_task_split_and_length_groups() -> No
         ("summary", "short"),
         ("summary", "nonshort"),
     }
+
+
+def test_session_trace_fixture_preserves_interleaved_multi_turn_sessions() -> None:
+    requests, fallback = load_requests({"data": {"requests": "data/fixtures/pilot_session_trace_requests.jsonl"}})
+
+    assert fallback is False
+    assert len(requests) == 12
+    assert len({request.session_id for request in requests}) == 5
+    assert sum(1 for request in requests if request.turn_index > 0) >= 5
+    assert {request.task for request in requests} == {"qa", "summary"}
+    assert {request.metadata["split"] for request in requests} == {"calibration", "eval"}
+    assert [request.arrival_index for request in requests] == list(range(12))
+    assert requests[0].session_id == "session-a"
+    assert requests[2].session_id == "session-a"
+    assert requests[1].session_id == "session-b"
+    assert requests[4].session_id == "session-b"

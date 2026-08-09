@@ -50,10 +50,10 @@ class BaselineWideSweepTest(unittest.TestCase):
         config = load_config(Path("configs/baseline_wide_sweep.yaml"))
         grid = load_sweep_grid("configs/baseline_wide_sweep.yaml")
 
-        self.assertEqual(config["pilot"]["memory_budgets_mib"], [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000])
+        self.assertEqual(config["pilot"]["memory_budgets_mib"], [18, 22, 26, 30, 35, 40, 50, 60, 75])
         self.assertEqual(config["pilot"]["epsilons"], [0.02, 0.05, 0.10])
         self.assertEqual(config["pilot"]["deltas"], [0.01, 0.05, 0.10])
-        self.assertEqual(grid["memory_budgets_mib"], [1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0])
+        self.assertEqual(grid["memory_budgets_mib"], [18.0, 22.0, 26.0, 30.0, 35.0, 40.0, 50.0, 60.0, 75.0])
         self.assertEqual(grid["epsilons"], [0.02, 0.05, 0.1])
         self.assertEqual(grid["deltas"], [0.01, 0.05, 0.1])
 
