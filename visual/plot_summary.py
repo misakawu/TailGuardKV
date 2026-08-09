@@ -16,10 +16,10 @@ ChartSpec = tuple[str, str, str, str]
 
 
 POLICY_CHARTS: tuple[ChartSpec, ...] = (
-    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "Backend P95 TTFT by budget and constraint", "Backend P95 TTFT (ms)"),
-    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "Backend KV cache outcome by budget and constraint", "Backend mean KV cache memory (MiB)"),
-    ("p95_quality_loss", "summary_policy_quality_loss.png", "Backend quality outcome by budget and constraint", "Backend P95 quality loss"),
-    ("violation_rate", "summary_policy_violation_rate.png", "Backend violation rate by budget and constraint", "Backend violation rate"),
+    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "Server-side replay P95 TTFT by budget and constraint", "Replay outcome P95 TTFT (ms)"),
+    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "Server-side replay KV residency by budget and constraint", "Replay outcome mean resident KV (MiB)"),
+    ("p95_quality_loss", "summary_policy_quality_loss.png", "Server-side replay quality by budget and constraint", "Replay outcome P95 quality loss"),
+    ("violation_rate", "summary_policy_violation_rate.png", "Server-side replay violation rate by budget and constraint", "Replay violation rate"),
 )
 
 

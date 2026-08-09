@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# 有效启动命令: cd /DATACENTER3/zhenxiang.wang/work/TailGuardKV && mkdir -p out/logs && TS=$(date +%Y%m%d_%H%M%S) && LOG="out/logs/pilot_measured_${TS}.nohup.log" && PIDFILE="out/logs/pilot_measured_${TS}.pid" && nohup setsid conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml > "$LOG" 2>&1 < /dev/null & PID=$! && printf '%s\n' "$PID" > "$PIDFILE" && printf '%s\n' "$PID" > out/logs/pilot_measured.pid
 from __future__ import annotations
 
 # 常用运行命令:

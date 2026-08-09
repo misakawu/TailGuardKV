@@ -8,7 +8,7 @@ from math import inf, isfinite
 
 from calibration.conformal import ConformalGuard
 from calibration.predictor import MetadataOnlyRiskPredictor
-from run_util.core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import Action, ActionDecision, CacheState, CandidateAction, DeviceState, ProfileMeasurement, Request
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,10 @@ class Policy(ABC):
     @abstractmethod
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         ...
+
+    @staticmethod
+    def _finalize_action(decision: ActionDecision) -> Action:
+        return decision.to_action()
 
 
 class StaticProfilePolicy(Policy):
@@ -115,11 +119,15 @@ class StatsPolicy(Policy):
         *,
         include_exact: bool = True,
     ) -> list[str]:
-        candidates = [
-            profile
-            for profile in self.profiles
-            if (include_exact or profile not in self.exact_profiles) and self._within_memory_budget(profile, request, cache_state)
-        ]
+        candidates: list[str] = []
+        for profile in self.profiles:
+            if not include_exact and profile in self.exact_profiles:
+                continue
+            if profile in self.exact_profiles:
+                candidates.append(profile)
+                continue
+            if self._within_memory_budget(profile, request, cache_state):
+                candidates.append(profile)
         if candidates:
             return candidates
         return []
@@ -203,6 +211,29 @@ class StatsPolicy(Policy):
             if risk_upper <= self.epsilon or profile in self.exact_profiles:
                 count += 1
         return count
+
+    def _candidate_action(self, request: Request, profile: str, cache_state: CacheState | None = None) -> CandidateAction:
+        pred_loss, risk_upper, safe, reason = self._predict_and_guard(request, profile)
+        projected_memory = self._projected_memory(profile, request, cache_state)
+        within_memory_budget = profile in self.exact_profiles or self._within_memory_budget(profile, request, cache_state)
+        return CandidateAction(
+            profile=profile,
+            predicted_ttft_ms=self._ttft_or_inf(profile),
+            projected_memory_mib=projected_memory,
+            pred_loss=pred_loss,
+            risk_upper=risk_upper,
+            safe=safe,
+            exact=profile in self.exact_profiles,
+            within_memory_budget=within_memory_budget,
+            reason=reason,
+        )
+
+    def _best_exact_candidate(self, request: Request, cache_state: CacheState | None = None) -> CandidateAction:
+        exact_profiles = [profile for profile in self.profiles if profile in self.exact_profiles]
+        if not exact_profiles:
+            exact_profiles = [self._fallback_profile()]
+        candidates = [self._candidate_action(request, profile, cache_state) for profile in exact_profiles]
+        return min(candidates, key=lambda item: (item.predicted_ttft_ms, item.profile))
 
 
 def _profile_stats(

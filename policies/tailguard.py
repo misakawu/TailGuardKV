@@ -4,7 +4,7 @@ import time
 from collections.abc import Iterable
 from math import inf
 
-from run_util.core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import Action, ActionDecision, CacheState, DeviceState, ProfileMeasurement, Request
 from policies.base import StatsPolicy
 
 
@@ -57,41 +57,49 @@ class TailGuardPolicy(StatsPolicy):
         stc_ms = (time.perf_counter() - stc_start) * 1000
         if safe_candidates:
             _, profile, pred_loss, risk_upper = safe_candidates[0]
-            return Action(
-                profile=profile,
-                reason="tailguard calibrated safe",
-                pred_loss=pred_loss,
-                risk_upper=risk_upper,
-                safe=True,
+            candidate = self._candidate_action(request, profile, cache_state)
+            return self._finalize_action(
+                ActionDecision(
+                    profile=profile,
+                    reason="tailguard calibrated safe",
+                    mode="lossy",
+                    projected_memory_mib=candidate.projected_memory_mib,
+                    pred_loss=pred_loss,
+                    risk_upper=risk_upper,
+                    safe=True,
+                    budget_hit=budget_filtered,
+                    epsilon=self.epsilon,
+                    delta=self.delta,
+                    candidate_safe_count=float(len(safe_candidates)),
+                    controller_overhead_ms=(time.perf_counter() - start) * 1000,
+                    controller_qrp_ms=qrp_ms,
+                    controller_cg_ms=cg_ms,
+                    controller_stc_ms=stc_ms,
+                )
+            )
+
+        fallback = self._best_exact_candidate(request, cache_state)
+        rejected_profile = rejected[0] if rejected and self.record_rejected_unsafe else ""
+        return self._finalize_action(
+            ActionDecision(
+                profile=fallback.profile,
+                reason="tailguard exact fallback",
+                mode="exact",
+                projected_memory_mib=fallback.projected_memory_mib,
+                pred_loss=fallback.pred_loss,
+                risk_upper=fallback.risk_upper,
+                safe=fallback.safe,
                 budget_hit=budget_filtered,
                 epsilon=self.epsilon,
                 delta=self.delta,
-                candidate_safe_count=float(len(safe_candidates)),
+                fallback_reason="no calibrated safe lossy profile within memory budget",
+                rejected_profile=rejected_profile,
+                rejected_pred_loss=(rejected[1] if rejected_profile else None),
+                rejected_risk_upper=(rejected[2] if rejected_profile else None),
+                candidate_safe_count=float(self._candidate_safe_count(request, cache_state)),
                 controller_overhead_ms=(time.perf_counter() - start) * 1000,
                 controller_qrp_ms=qrp_ms,
                 controller_cg_ms=cg_ms,
                 controller_stc_ms=stc_ms,
             )
-
-        fallback = self._fastest_exact_profile()
-        pred_loss, risk_upper, safe, _ = self._predict_and_guard(request, fallback)
-        rejected_profile = rejected[0] if rejected and self.record_rejected_unsafe else ""
-        return Action(
-            profile=fallback,
-            reason="tailguard exact fallback",
-            pred_loss=pred_loss,
-            risk_upper=risk_upper,
-            safe=safe,
-            budget_hit=budget_filtered,
-            epsilon=self.epsilon,
-            delta=self.delta,
-            fallback_reason="no calibrated safe lossy profile within memory budget",
-            rejected_profile=rejected_profile,
-            rejected_pred_loss=(rejected[1] if rejected_profile else None),
-            rejected_risk_upper=(rejected[2] if rejected_profile else None),
-            candidate_safe_count=0.0,
-            controller_overhead_ms=(time.perf_counter() - start) * 1000,
-            controller_qrp_ms=qrp_ms,
-            controller_cg_ms=cg_ms,
-            controller_stc_ms=stc_ms,
         )

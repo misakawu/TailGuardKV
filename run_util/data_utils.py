@@ -161,7 +161,10 @@ def _load_prompt_tokenizer(config: dict[str, Any]) -> Any | None:
     model_name = model_config.get("pilot_model") or model_config.get("path") or model_config.get("name")
     if not model_name:
         return None
-    from transformers import AutoTokenizer
+    try:
+        from transformers import AutoTokenizer
+    except ModuleNotFoundError:
+        return None
 
     return AutoTokenizer.from_pretrained(
         str(model_name),
@@ -275,22 +278,36 @@ def _limit_requests_for_split(requests: list[Request], limit: int) -> list[Reque
 
 def requests_from_measurements(measurements: list[ProfileMeasurement]) -> list[Request]:
     seen: dict[tuple[str, int, str], Request] = {}
-    for measurement in sorted(measurements, key=lambda item: ((item.session_id or item.request_id), item.turn_index, item.request_id)):
+    ordered = sorted(
+        measurements,
+        key=lambda item: (
+            _measurement_arrival_index(item),
+            item.session_id or item.request_id,
+            item.turn_index,
+            item.request_id,
+        ),
+    )
+    for measurement in ordered:
         key = (measurement.session_id or "", measurement.turn_index, measurement.request_id)
         if key in seen:
             continue
         task = str(measurement.extra.get("task") or (measurement.request_id.split("_", 1)[0] if "_" in measurement.request_id else "unknown"))
+        prompt_text = str(measurement.extra.get("prompt_text") or measurement.output_text)
+        history_turns = _history_turns_from_measurement(measurement)
         seen[key] = Request(
             request_id=measurement.request_id,
             task=task,
-            prompt=measurement.output_text,
+            prompt=prompt_text,
             session_id=measurement.session_id,
             turn_index=measurement.turn_index,
+            arrival_index=_measurement_arrival_index(measurement),
+            history_turns=history_turns,
             metadata={
                 "source": "profile_measurement",
                 "split": measurement.extra.get("split", ""),
                 "task": task,
                 "length_bucket": measurement.extra.get("length_bucket", "unknown"),
+                "effective_prompt_chars": measurement.extra.get("effective_prompt_chars", ""),
             },
         )
     return list(seen.values())
@@ -325,8 +342,37 @@ def annotate_measurement(measurement: ProfileMeasurement, request: Request, fall
             "builtin_request_fallback": str(fallback_requests).lower(),
             "reference": request.reference or "",
             "primary_metric": primary_metric,
+            "arrival_index": request.arrival_index,
+            "history_turns": json.dumps(list(request.history_turns), ensure_ascii=False),
+            "prompt_text": request.prompt,
+            "effective_prompt_chars": request.prompt_chars,
         },
     )
+
+
+def _measurement_arrival_index(measurement: ProfileMeasurement) -> int:
+    raw = measurement.extra.get("arrival_index")
+    if raw in {None, ""}:
+        return measurement.turn_index
+    return int(float(raw))
+
+
+def _history_turns_from_measurement(measurement: ProfileMeasurement) -> tuple[str, ...]:
+    raw = measurement.extra.get("history_turns")
+    if raw in {None, ""}:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(str(item) for item in raw)
+    text = str(raw).strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return tuple(part for part in text.split("\n") if part)
+    if isinstance(parsed, list):
+        return tuple(str(item) for item in parsed)
+    return ()
 
 
 def expand_repeated_requests(requests: list[Request], repeat: int) -> list[Request]:

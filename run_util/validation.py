@@ -70,6 +70,22 @@ def validate_profile_measurements(
                 missing.append("length_bucket")
             if not measurement.extra.get("split"):
                 missing.append("split")
+            requires_request_context = bool(
+                measurement.session_id
+                or any(
+                    key in measurement.extra
+                    for key in ("arrival_index", "prompt_text", "history_turns", "effective_prompt_chars")
+                )
+            )
+            if requires_request_context:
+                if measurement.extra.get("arrival_index") in {None, ""}:
+                    missing.append("arrival_index")
+                if measurement.extra.get("prompt_text") in {None, ""}:
+                    missing.append("prompt_text")
+                if measurement.extra.get("history_turns") is None:
+                    missing.append("history_turns")
+                if measurement.extra.get("effective_prompt_chars") in {None, ""}:
+                    missing.append("effective_prompt_chars")
         if missing:
             raise ValueError(
                 f"profile 表第 {index} 行字段不完整，缺少 {missing}: "

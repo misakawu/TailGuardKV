@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from run_util.core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import Action, ActionDecision, CacheState, DeviceState, ProfileMeasurement, Request
 from policies.base import StatsPolicy
 
 
@@ -20,14 +20,18 @@ class StaticBestPolicy(StatsPolicy):
         self.profile = self._best_profile(use_tail_constraint=False)
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
-        pred_loss, risk_upper, safe, reason = self._predict_and_guard(request, self.profile)
-        return Action(
-            profile=self.profile,
-            reason="static_best",
-            pred_loss=pred_loss,
-            risk_upper=risk_upper,
-            safe=safe,
-            epsilon=self.epsilon,
-            delta=self.delta,
-            fallback_reason=reason,
+        candidate = self._candidate_action(request, self.profile, cache_state)
+        return self._finalize_action(
+            ActionDecision(
+                profile=self.profile,
+                reason="static_best",
+                mode="static",
+                projected_memory_mib=candidate.projected_memory_mib,
+                pred_loss=candidate.pred_loss,
+                risk_upper=candidate.risk_upper,
+                safe=candidate.safe,
+                epsilon=self.epsilon,
+                delta=self.delta,
+                fallback_reason=candidate.reason,
+            )
         )

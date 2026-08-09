@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from math import inf
 
-from run_util.core_types import Action, CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import Action, ActionDecision, CacheState, DeviceState, ProfileMeasurement, Request
 from policies.base import StatsPolicy
 
 
@@ -38,17 +38,20 @@ class UtilityDynamicPolicy(StatsPolicy):
             if score < best_score:
                 best_profile = profile
                 best_score = score
-        pred_loss, risk_upper, safe, reason = self._predict_and_guard(request, best_profile)
-        candidate_safe_count = float(self._candidate_safe_count(request))
-        return Action(
-            profile=best_profile,
-            reason="utility_dynamic",
-            pred_loss=pred_loss,
-            risk_upper=risk_upper,
-            safe=safe,
-            budget_hit=budget_filtered,
-            epsilon=self.epsilon,
-            delta=self.delta,
-            fallback_reason=reason if best_profile in self.exact_profiles else "",
-            candidate_safe_count=float(self._candidate_safe_count(request, cache_state)),
+        candidate = self._candidate_action(request, best_profile, cache_state)
+        return self._finalize_action(
+            ActionDecision(
+                profile=best_profile,
+                reason="utility_dynamic",
+                mode="exact" if best_profile in self.exact_profiles else "lossy",
+                projected_memory_mib=candidate.projected_memory_mib,
+                pred_loss=candidate.pred_loss,
+                risk_upper=candidate.risk_upper,
+                safe=candidate.safe,
+                budget_hit=budget_filtered,
+                epsilon=self.epsilon,
+                delta=self.delta,
+                fallback_reason=candidate.reason if best_profile in self.exact_profiles else "",
+                candidate_safe_count=float(self._candidate_safe_count(request, cache_state)),
+            )
         )

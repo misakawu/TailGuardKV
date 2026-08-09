@@ -245,6 +245,30 @@ def test_measured_replay_backend_keys_by_session_turn_and_updates_session_cache(
     assert switched.replay_source == "measured_profile_table"
 
 
+def test_measured_replay_emits_budget_resolution_event_fields() -> None:
+    backend = MeasuredReplayBackend(
+        [
+            _measurement("s1_t0", "kivi", session_id="s1", turn_index=0, kv_incremental_mib=30.0, kv_cumulative_mib=30.0, resident_before=0.0, resident_after=30.0),
+            _measurement("s2_t0", "kivi", session_id="s2", turn_index=0, kv_incremental_mib=30.0, kv_cumulative_mib=30.0, resident_before=0.0, resident_after=30.0),
+        ],
+        global_budget_mib=50.0,
+    )
+
+    rows = backend.run(
+        [
+            Request("s1_t0", "qa", "turn0", session_id="s1", turn_index=0, arrival_index=0),
+            Request("s2_t0", "qa", "turn0", session_id="s2", turn_index=0, arrival_index=1),
+        ],
+        ["kivi", "kivi"],
+    )
+
+    assert rows[1].budget_hit is True
+    assert rows[1].extra["event_kind"] == "evict"
+    assert rows[1].extra["event_reason"] == "global_budget_pressure"
+    assert rows[1].extra["victim_session"] == "s1"
+    assert rows[1].extra["budget_resolution"] == "evict_other_sessions"
+
+
 def test_policy_record_from_backend_result_uses_backend_runtime_fields() -> None:
     backend_result = BackendResult(
         request_id="sess-a_turn_001",

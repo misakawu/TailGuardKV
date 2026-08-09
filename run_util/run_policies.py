@@ -173,6 +173,8 @@ def _run_policy_matrix(
 ) -> list[PolicyRunRecord]:
     records: list[PolicyRunRecord] = []
     for policy in policies:
+        if hasattr(backend, "reset"):
+            backend.reset()
         cache_state = CacheState()
         for request in sorted(requests, key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index)):
             try:
@@ -201,6 +203,7 @@ def run_policies(args: argparse.Namespace) -> int:
             measurements,
             allow_dry_run=args.allow_dry_run_replay,
             use_pandas=getattr(args, "use_pandas_replay", False),
+            global_budget_mib=memory_budget_mib,
         )
         exact = exact_profiles(profiles, config)
         policies = _build_policy_set(

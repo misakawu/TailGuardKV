@@ -77,7 +77,9 @@ class MetricCollector:
             audit_rates: list[float] = []
             restore_times: list[float] = []
             recompute_times: list[float] = []
+            queue_delays: list[float] = []
             resident_kv_after: list[float] = []
+            global_resident_kv: list[float] = []
             cumulative_kv: list[float] = []
             drift_states: Counter[str] = Counter()
             safe_count = 0
@@ -135,8 +137,12 @@ class MetricCollector:
                 if row.recompute_ms is not None and row.recompute_ms > 0:
                     recompute_times.append(row.recompute_ms)
                     recompute_count += 1
+                if row.queue_delay_ms is not None:
+                    queue_delays.append(row.queue_delay_ms)
                 if row.resident_kv_mib_after is not None:
                     resident_kv_after.append(row.resident_kv_mib_after)
+                if row.global_resident_kv_mib is not None:
+                    global_resident_kv.append(row.global_resident_kv_mib)
                 if row.kv_cumulative_mib is not None:
                     cumulative_kv.append(row.kv_cumulative_mib)
                 if row.drift_state:
@@ -225,7 +231,10 @@ class MetricCollector:
                 "restore_time_ms": _mean(restore_times),
                 "recompute_count": float(recompute_count),
                 "recompute_time_ms": _mean(recompute_times),
+                "queue_delay_ms": _mean(queue_delays),
                 "mean_resident_kv_mib": _mean(resident_kv_after),
+                "mean_global_resident_kv_mib": _mean(global_resident_kv),
+                "p95_global_resident_kv_mib": _percentile(global_resident_kv, 0.95),
                 "mean_cumulative_kv_mib": _mean(cumulative_kv),
                 "profile_residence_share": _share(profile_resident_totals),
                 "drift_state": drift_states.most_common(1)[0][0] if drift_states else "",
