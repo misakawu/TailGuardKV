@@ -752,3 +752,14 @@ Two execution options:
 
 1. Subagent-Driven (recommended) - 我按任务逐个分发和审查，实现过程更稳。
 2. Inline Execution - 直接在当前会话里按这个计划继续落地修改。
+
+## Completed Tasks
+
+- 2026-08-09 已完成 `static_safe` 逐请求 exact fallback 语义修复：固定 profile 在当前请求 `safe=False` 时切到 exact；若初始化阶段已固定为 exact，则不再把它记成真实 fallback。
+- 2026-08-09 已完成 fallback 口径拆分：新增 `safety_reason` 字段，`fallback_reason` 仅保留真实动作替换原因；`static_best` 与 `uncalibrated_dynamic` 的普通判断标签不再污染 fallback 统计。
+- 2026-08-09 已完成 `uncalibrated_dynamic` 的稳定排序选择：不再依赖 profile 配置顺序，而是按 `pred_loss -> p95_ttft_ms -> projected_memory_mib -> profile name` 选择。
+- 2026-08-09 已新增 phase 1 独立配置 `configs/pilot_phase1.yaml`，保留 `pilot_qa_summary_requests.jsonl` 主夹具，并将预算 sweep 缩到与当前 profile `p95_kv_cache_memory_mib` 同量级的 `[18, 26, 40]` MiB。
+- 2026-08-09 已将 `configs/baseline_wide_sweep.yaml` 的预算 sweep 收敛到真实量级，当前网格为 `[18, 22, 26, 30, 35, 40, 50, 60, 75]` MiB。
+- 2026-08-09 已新增 phase 2 session-aware trace 夹具 `data/fixtures/pilot_session_trace_requests.jsonl` 与独立配置 `configs/pilot_session_trace.yaml`，覆盖多 session 交错、multi-turn session、`qa/summary` 混合和显式 `arrival_index`。
+- 2026-08-09 已扩展 summary 诊断字段：新增 `session_count`、`multi_turn_session_count`、`active_session_peak`、`triggered_restore`、`triggered_recompute`、`triggered_evict`、`triggered_queue`。
+- 2026-08-09 已补齐并通过相关单测：覆盖 `static_safe` fallback、新的 fallback 统计语义、`uncalibrated_dynamic` 稳定排序、phase 1/phase 2 config、session trace loader、session summary 诊断。
