@@ -39,9 +39,18 @@ class FullLRUPolicy(StaticProfilePolicy):
         if not request.session_id:
             return cache_state.global_resident_kv_mib
         current_profile = cache_state.get_current_profile(request.session_id) or self.profile
-        current_cumulative = cache_state.get_cumulative_kv(request.session_id, current_profile)
         current_resident = cache_state.get_resident_kv(request.session_id, current_profile)
-        if current_cumulative <= 0.0:
+        incremental = current_resident
+        if incremental <= 0.0:
+            cumulative = cache_state.get_cumulative_kv(request.session_id, current_profile)
+            incremental = cumulative if cumulative > 0.0 else 0.0
+        if incremental <= 0.0:
             return cache_state.global_resident_kv_mib
-        projected_resident = current_cumulative + max(current_resident, current_cumulative)
-        return max(0.0, cache_state.global_resident_kv_mib - current_resident + projected_resident)
+        projected_resident = current_resident + incremental
+        global_resident = cache_state.global_resident_kv_mib
+        if global_resident <= 0.0:
+            global_resident = sum(
+                cache_state.get_resident_kv(session_id, profile)
+                for session_id, profile in cache_state.session_current_profile.items()
+            )
+        return max(0.0, global_resident - current_resident + projected_resident)

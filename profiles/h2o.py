@@ -98,6 +98,7 @@ class H2OAdapter(ProfileAdapter):
         dry_run: bool = True,
         session_runtime: object | None = None,
         memory_budget_mib: float | None = None,
+        persistent_worker: object | None = None,
     ) -> list[ProfileMeasurement]:
         if dry_run:
             return super().profile_many(
@@ -122,6 +123,7 @@ class H2OAdapter(ProfileAdapter):
                 "h2o_heavy_ratio": spec.metadata.get("h2o_heavy_ratio", ""),
                 "h2o_recent_ratio": spec.metadata.get("h2o_recent_ratio", ""),
             },
+            persistent_worker=persistent_worker,
         )
         repaired = []
         for row in rows:

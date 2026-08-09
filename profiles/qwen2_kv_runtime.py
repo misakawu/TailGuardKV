@@ -52,6 +52,8 @@ def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
         return _run_dry_session_profile(payload)
     profile = str(payload.get("profile") or "")
     try:
+        if profile == "full_gpu":
+            return _sanitize_public_result(_run_full_profile(payload))
         if profile.startswith("kivi_"):
             return _sanitize_public_result(_run_kivi_profile(payload))
         if profile.startswith("h2o_heavy"):
@@ -144,7 +146,9 @@ def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
     profile = next(iter(profiles))
     state = _session_state_from_payload(payload.get("session_runtime_state"))
     try:
-        if profile.startswith("kivi_"):
+        if profile == "full_gpu":
+            results, state = _run_full_profile_batch(requests, worker_start, state)
+        elif profile.startswith("kivi_"):
             results, state = _run_kivi_profile_batch(requests, worker_start, state)
         elif profile.startswith("h2o_heavy"):
             results, state = _run_h2o_profile_batch(requests, worker_start, state)
@@ -172,6 +176,70 @@ def main() -> int:
     return 0 if result.get("ok") else 1
 
 
+def worker_init(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
+    worker_state.clear()
+    worker_state["adapter"] = str(payload.get("adapter") or "")
+    worker_state["runtime_config"] = dict(payload.get("runtime_config") or {})
+    return {
+        "ok": True,
+        "worker": {
+            "mode": "persistent",
+            "adapter": worker_state["adapter"],
+        },
+    }
+
+
+def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
+    requests = list(payload.get("requests") or [])
+    if not requests:
+        return {
+            "ok": True,
+            "results": [],
+            "worker": {"mode": "persistent"},
+            "session_runtime_state": SessionRuntimeState().to_payload(),
+        }
+    state = _session_state_from_payload(payload.get("session_runtime_state"))
+    profile = str(payload.get("profile") or requests[0].get("profile") or "")
+    try:
+        runtime = _ensure_worker_runtime(worker_state, profile, requests[0])
+        if profile == "full_gpu":
+            results, state = _run_full_profile_batch_with_runtime(runtime, requests, state)
+        elif profile.startswith("kivi_"):
+            results, state = _run_kivi_profile_batch_with_runtime(runtime, requests, state)
+        elif profile.startswith("h2o_heavy"):
+            results, state = _run_h2o_profile_batch_with_runtime(runtime, requests, state)
+        else:
+            results = [_failure(request, f"unsupported Qwen2 KV profile: {profile}") for request in requests]
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {str(exc)[:1200]}\n{traceback.format_exc()[-3000:]}"
+        _clear_worker_runtime(worker_state)
+        results = [_failure(request, detail) for request in requests]
+        return {
+            "ok": False,
+            "results": [_sanitize_public_result(item) for item in results],
+            "worker": {"mode": "persistent"},
+            "session_runtime_state": state.to_payload(),
+            "fatal_error": detail,
+        }
+
+    fatal_error = _persistent_worker_fatal_error(results)
+    if fatal_error:
+        _clear_worker_runtime(worker_state)
+    return {
+        "ok": all(item.get("ok") for item in results),
+        "results": [_sanitize_public_result(item) for item in results],
+        "worker": {"mode": "persistent"},
+        "session_runtime_state": state.to_payload(),
+        **({"fatal_error": fatal_error} if fatal_error else {}),
+    }
+
+
+def worker_shutdown(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    _clear_worker_runtime(worker_state)
+    return {"ok": True, "worker": {"mode": "persistent"}}
+
+
 def _kivi_proof_error(
     *,
     prompt_tokens: int,
@@ -194,6 +262,14 @@ def _run_kivi_profile(payload: dict[str, Any]) -> dict[str, Any]:
     return _sanitize_public_result(_run_kivi_request(runtime, payload, worker_mode="single"))
 
 
+def _run_full_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    runtime = _prepare_full_runtime(payload, worker_start=time.perf_counter())
+    try:
+        return _sanitize_public_result(_run_full_request(runtime, payload, worker_mode="single"))
+    finally:
+        _release_runtime_resources(runtime)
+
+
 def _run_h2o_profile(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = _prepare_h2o_runtime(payload, worker_start=time.perf_counter())
     return _sanitize_public_result(_run_h2o_request(runtime, payload, worker_mode="single"))
@@ -212,6 +288,25 @@ def _run_kivi_profile_batch(
             session_request = _attach_kivi_session_cache(runtime, request)
             result, state = _run_request_with_session(state, session_request, lambda item: _run_kivi_request(runtime, item, worker_mode="batch"))
             _update_kivi_session_cache(runtime, session_request, result)
+            results.append(result)
+            if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
+                results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+                break
+        return results, state
+    finally:
+        _release_runtime_resources(runtime)
+
+
+def _run_full_profile_batch(
+    requests: list[dict[str, Any]],
+    worker_start: float,
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
+    runtime = _prepare_full_runtime(requests[0], worker_start=worker_start)
+    results = []
+    try:
+        for index, request in enumerate(requests):
+            result, state = _run_request_with_session(state, request, lambda item: _run_full_request(runtime, item, worker_mode="batch"))
             results.append(result)
             if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
                 results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
@@ -249,6 +344,23 @@ def _prepare_kivi_runtime(payload: dict[str, Any], *, worker_start: float) -> di
     )
 
 
+def _prepare_full_runtime(payload: dict[str, Any], *, worker_start: float) -> dict[str, Any]:
+    modules = _import_runtime_modules(use_kivi=False)
+    torch = modules["torch"]
+    _require_cuda(torch)
+    startup_ms = (time.perf_counter() - worker_start) * 1000
+    load_start = time.perf_counter()
+    model, tokenizer, device = _load_qwen2_model(payload, torch, modules["AutoModelForCausalLM"], modules["AutoTokenizer"])
+    return {
+        "torch": torch,
+        "model": model,
+        "tokenizer": tokenizer,
+        "device": device,
+        "startup_ms": startup_ms,
+        "model_load_ms": (time.perf_counter() - load_start) * 1000,
+    }
+
+
 def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dict[str, Any]:
     return _prepare_h2o_runtime_impl(
         payload,
@@ -258,6 +370,19 @@ def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dic
         load_qwen2_model=_load_qwen2_model,
         install_qwen2_attention=_install_qwen2_attention,
         attention_cls=Qwen2H2OAttention,
+    )
+
+
+def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
+    return _invoke_generate_decode(
+        runtime["model"],
+        runtime["tokenizer"],
+        runtime["device"],
+        payload,
+        runtime["torch"],
+        stage_startup_ms=float(runtime.get("startup_ms") or 0.0),
+        stage_model_load_ms=float(runtime.get("model_load_ms") or 0.0),
+        worker_mode=worker_mode,
     )
 
 
@@ -307,7 +432,7 @@ def _sanitize_public_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _release_runtime_resources(runtime: dict[str, Any]) -> None:
-    session_reuse = runtime.get("session_reuse")
+    session_reuse = runtime.pop("session_reuse", None)
     if isinstance(session_reuse, dict):
         for cached in session_reuse.values():
             cache = cached.get("cache") if isinstance(cached, dict) else None
@@ -315,9 +440,94 @@ def _release_runtime_resources(runtime: dict[str, Any]) -> None:
                 cache.clear()
         session_reuse.clear()
     torch = runtime.get("torch")
+    # Drop strong references before empty_cache so CUDA memory can actually be reclaimed.
+    for key in ("model", "tokenizer", "device", "modules", "tracker"):
+        runtime.pop(key, None)
     if torch is not None:
         _release_runtime_cuda_resources(torch, *(session_reuse.values() if isinstance(session_reuse, dict) else ()))
     runtime.clear()
+
+
+def _ensure_worker_runtime(worker_state: dict[str, Any], profile: str, request: dict[str, Any]) -> dict[str, Any]:
+    runtime = worker_state.get("runtime")
+    if isinstance(runtime, dict) and str(worker_state.get("runtime_profile") or "") == profile:
+        return runtime
+    _clear_worker_runtime(worker_state)
+    worker_start = time.perf_counter()
+    if profile == "full_gpu":
+        runtime = _prepare_full_runtime(request, worker_start=worker_start)
+    elif profile.startswith("kivi_"):
+        runtime = _prepare_kivi_runtime(request, worker_start=worker_start)
+        runtime["session_reuse"] = {}
+    elif profile.startswith("h2o_heavy"):
+        runtime = _prepare_h2o_runtime(request, worker_start=worker_start)
+    else:
+        raise ValueError(f"unsupported Qwen2 KV profile: {profile}")
+    worker_state["runtime"] = runtime
+    worker_state["runtime_profile"] = profile
+    return runtime
+
+
+def _clear_worker_runtime(worker_state: dict[str, Any]) -> None:
+    runtime = worker_state.pop("runtime", None)
+    worker_state.pop("runtime_profile", None)
+    if isinstance(runtime, dict):
+        _release_runtime_resources(runtime)
+
+
+def _persistent_worker_fatal_error(results: list[dict[str, Any]]) -> str:
+    for item in results:
+        error = str(item.get("error") or "")
+        if _is_oom_result(item) or _is_fatal_cuda_error(error):
+            return error or "fatal runtime error"
+    return ""
+
+
+def _run_kivi_profile_batch_with_runtime(
+    runtime: dict[str, Any],
+    requests: list[dict[str, Any]],
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
+    results = []
+    for index, request in enumerate(requests):
+        session_request = _attach_kivi_session_cache(runtime, request)
+        result, state = _run_request_with_session(state, session_request, lambda item: _run_kivi_request(runtime, item, worker_mode="persistent"))
+        _update_kivi_session_cache(runtime, session_request, result)
+        results.append(result)
+        if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
+            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+            break
+    return results, state
+
+
+def _run_full_profile_batch_with_runtime(
+    runtime: dict[str, Any],
+    requests: list[dict[str, Any]],
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
+    results = []
+    for index, request in enumerate(requests):
+        result, state = _run_request_with_session(state, request, lambda item: _run_full_request(runtime, item, worker_mode="persistent"))
+        results.append(result)
+        if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
+            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+            break
+    return results, state
+
+
+def _run_h2o_profile_batch_with_runtime(
+    runtime: dict[str, Any],
+    requests: list[dict[str, Any]],
+    state: SessionRuntimeState,
+) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
+    results = []
+    for index, request in enumerate(requests):
+        result, state = _run_request_with_session(state, request, lambda item: _run_h2o_request(runtime, item, worker_mode="persistent"))
+        results.append(result)
+        if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
+            results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
+            break
+    return results, state
 
 
 def _attach_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:

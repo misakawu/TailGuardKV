@@ -5,10 +5,12 @@ import json
 from backends.measured_replay import MeasuredReplayBackend
 from policies.full_lru import FullLRUPolicy
 from policies.quality_oracle import QualityOraclePolicy
+from policies.static_best import StaticBestPolicy
+from policies.static_safe import StaticSafePolicy
 from policies.tailguard import TailGuardPolicy
 from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
-from run_util.core_types import CacheState, DeviceState, ProfileMeasurement, Request
+from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
 from run_util.data_utils import requests_from_measurements
 
 
@@ -271,3 +273,74 @@ def test_full_lru_reports_state_aware_budget_projection() -> None:
     assert action.profile == "full_gpu"
     assert action.budget_hit is True
     assert action.reason == "full precision exact profile"
+
+
+def test_static_best_prefers_lossy_profile_when_lossy_is_deployable() -> None:
+    calibration = [
+        _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
+        _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.01, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
+        _measurement("s1_t0", "kivi_2bit_residual32", quality_loss=0.03, kv_incremental_mib=12.0, kv_cumulative_mib=12.0),
+    ]
+    policy = StaticBestPolicy(
+        calibration_measurements=calibration,
+        profiles=["full_gpu", "kivi_4bit_residual32", "kivi_2bit_residual32"],
+        epsilon=0.05,
+        delta=0.05,
+        exact_profiles={"full_gpu"},
+        memory_budget_mib=32.0,
+    )
+
+    action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
+
+    assert action.profile == "kivi_4bit_residual32"
+
+
+def test_static_safe_explicitly_marks_exact_fallback_when_no_safe_lossy_exists() -> None:
+    calibration = [
+        _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
+        _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.20, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
+        _measurement("s2_t0", "kivi_4bit_residual32", quality_loss=0.20, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
+    ]
+    policy = StaticSafePolicy(
+        calibration_measurements=calibration,
+        profiles=["full_gpu", "kivi_4bit_residual32"],
+        epsilon=0.05,
+        delta=0.05,
+        exact_profiles={"full_gpu"},
+        memory_budget_mib=32.0,
+    )
+
+    action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
+
+    assert action.profile == "full_gpu"
+    assert action.fallback_reason
+
+
+def test_policy_run_record_keeps_policy_and_backend_budget_signals_separate() -> None:
+    request = Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1)
+    backend_result = BackendResult(
+        request_id="s1_t1",
+        session_id="s1",
+        turn_index=1,
+        profile="full_gpu",
+        ok=True,
+        measured=True,
+        budget_hit=False,
+        backend_name="measured_replay",
+    )
+
+    record = PolicyRunRecord.from_action_and_backend_result(
+        policy_name="uncalibrated_dynamic",
+        request=request,
+        action_profile="full_gpu",
+        action_reason="fallback",
+        placeholder=False,
+        exact_profiles={"full_gpu"},
+        oracle=False,
+        backend_result=backend_result,
+        budget_hit=True,
+    )
+
+    assert record.policy_budget_filtered is True
+    assert record.backend_budget_hit is False
+    assert record.budget_hit is False

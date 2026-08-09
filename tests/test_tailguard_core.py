@@ -828,6 +828,58 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertEqual(len(rows), 10)
 
+    def test_transformers_profile_many_forwards_session_runtime_and_budget(self) -> None:
+        requests = [
+            Request(request_id="r1", task="summary", prompt="hello", session_id="s1", turn_index=0),
+        ]
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+        runtime_state = {"sessions": {"s1": {"current_profile": "full_gpu"}}}
+
+        def fake_run(command, **kwargs):
+            payload = json.loads(kwargs["env"]["TRANSFORMERS_PROFILE_PAYLOAD"])
+            self.assertEqual(payload["session_runtime_state"], runtime_state)
+            self.assertEqual(payload["memory_budget_mib"], 64.0)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "results": [
+                            {
+                                "ok": True,
+                                "measured": True,
+                                "output_text": "x",
+                                "ttft_ms": 1,
+                                "latency_ms": 2,
+                                "peak_memory_mib": 3,
+                                "resident_memory_mib": 4,
+                                "kv_incremental_mib": 3,
+                                "kv_cumulative_mib": 3,
+                                "resident_kv_mib_before": 0,
+                                "resident_kv_mib_after": 3,
+                                "budget_hit": False,
+                            }
+                        ],
+                        "session_runtime_state": runtime_state,
+                    }
+                ),
+                stderr="",
+            )
+
+        with patch("profiles.base.subprocess.run", side_effect=fake_run):
+            rows = transformers_profile_many_measurements(
+                "full",
+                "tailguardkv-base",
+                requests,
+                spec,
+                {"max_new_tokens": 4, "pilot_model": "/tmp/model"},
+                session_runtime=runtime_state,
+                memory_budget_mib=64.0,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].ok)
+
     def test_batch_runtime_timeout_returns_structured_failure_rows(self) -> None:
         requests = [
             Request(request_id="r1", task="summary", prompt="a"),
@@ -875,7 +927,7 @@ class TailGuardCoreTest(unittest.TestCase):
         adapter = FullKVAdapter({"max_new_tokens": 4})
         requests = [Request(request_id="r1", task="summary", prompt="a")]
 
-        with patch("profiles.full.transformers_profile_many_measurements") as many:
+        with patch("profiles.full.qwen2_exact_profile_many_measurements") as many:
             many.return_value = [_measurement("r1", "full_gpu", 0.0)]
             rows = adapter.profile_many(requests, "full_gpu", dry_run=False)
 
@@ -3133,6 +3185,7 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_pilot_configs_use_full_gpu_only_formal_grid(self) -> None:
         pilot = load_config(Path("configs/pilot.yaml"))
         pilot_50 = load_config(Path("configs/pilot_50.yaml"))
+        pilot_sharegpt = load_config(Path("configs/pilot_sharegpt.yaml"))
         expected_profiles = [
             "full_gpu",
             "kivi_4bit_residual32",
@@ -3146,8 +3199,13 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(config_adapters(pilot), ["full", "kivi", "h2o"])
         self.assertEqual(config_profiles(pilot), expected_profiles)
         self.assertEqual(config_profiles(pilot_50), expected_profiles)
+        self.assertEqual(config_profiles(pilot_sharegpt), expected_profiles)
         self.assertEqual(pilot["data"]["max_requests"], 200)
         self.assertEqual(pilot_50["data"]["max_requests"], 50)
+        self.assertEqual(pilot["data"]["requests"], "data/fixtures/e0_reproduce_requests.jsonl")
+        self.assertEqual(pilot["data"]["quality_mode"], "baseline")
+        self.assertEqual(pilot_sharegpt["data"]["requests"], "data/fixtures/sharegpt_sessions.json")
+        self.assertEqual(pilot_sharegpt["data"]["quality_mode"], "session_diagnostic")
         self.assertEqual(pilot["pilot"]["memory_budgets_mib"], [4900, 5000])
         self.assertEqual(pilot_50["pilot"]["memory_budgets_mib"], [4900, 5000])
         self.assertNotIn("profile_smoke_model", pilot["model"])
@@ -5553,6 +5611,10 @@ class TailGuardCoreTest(unittest.TestCase):
     def test_select_primary_loss_uses_f1_for_qa_long_context(self) -> None:
         self.assertEqual(select_primary_loss("qa_long_context"), "f1")
 
+    def test_select_primary_loss_rejects_unknown_task_in_strict_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            select_primary_loss("unknown", strict=True)
+
     def test_quality_metrics_normalize_case_whitespace_and_punctuation_noise(self) -> None:
         loss, metrics = compute_quality_loss("summary", " The baselines!!!! ", "the baselines")
         self.assertEqual(loss, 0.0)
@@ -5577,7 +5639,7 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertEqual(updated["full_gpu"].extra["primary_metric"], "f1")
         self.assertEqual(updated["kivi_4bit"].extra["primary_metric"], "f1")
-        self.assertAlmostEqual(updated["kivi_4bit"].extra["metric_f1"], 1.0 / 3.0)
+        self.assertAlmostEqual(updated["kivi_4bit"].extra["metric_loss_f1"], 1.0 / 3.0)
 
     def test_dry_profile_measurement_marks_synthetic_source(self) -> None:
         row = profiles_base.dry_profile_measurement(
@@ -5795,16 +5857,81 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertEqual(rows[0]["profile"], "h2o_heavy10_recent10")
             self.assertEqual(rows[0]["quality_loss"], "")
 
-    def test_with_quality_falls_back_to_text_similarity_when_reference_missing(self) -> None:
+    def test_with_quality_skips_lossy_quality_when_reference_missing_in_session_mode(self) -> None:
         rows = [
             ProfileMeasurement("r1", "full_gpu", "full", True, True, output_text="The baselines", extra={"task": "summary"}),
             ProfileMeasurement("r1", "h2o_heavy10_recent10", "h2o", True, True, output_text="the baselines!!!!", extra={"task": "summary"}),
         ]
 
-        updated = {row.profile: row for row in with_quality(rows, {"full_gpu"})}
+        updated = {row.profile: row for row in with_quality(rows, {"full_gpu"}, quality_mode="session_diagnostic")}
 
-        self.assertEqual(updated["h2o_heavy10_recent10"].quality_loss, 0.0)
-        self.assertEqual(updated["h2o_heavy10_recent10"].quality_score, 1.0)
+        self.assertIsNone(updated["h2o_heavy10_recent10"].quality_loss)
+        self.assertIsNone(updated["h2o_heavy10_recent10"].quality_score)
+
+    def test_with_quality_rejects_missing_reference_in_baseline_mode(self) -> None:
+        rows = [
+            ProfileMeasurement("r1", "full_gpu", "full", True, True, output_text="The baselines", extra={"task": "summary"}),
+            ProfileMeasurement("r1", "h2o_heavy10_recent10", "h2o", True, True, output_text="the baselines!!!!", extra={"task": "summary"}),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "baseline quality smoke"):
+            with_quality(rows, {"full_gpu"}, quality_mode="baseline")
+
+    def test_build_profile_table_rejects_chat_without_reference_for_baseline_quality(self) -> None:
+        requests = [Request("s1_t0", "chat", "hello", metadata={"split": "eval"})]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            with (
+                patch("run_util.build_profile_table.load_config", return_value={
+                    "profiles": {"adapters": ["full"], "names": ["full_gpu"]},
+                    "data": {"quality_mode": "baseline"},
+                }),
+                patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_util.build_profile_table.config_runtime", return_value={"repeat": 1, "max_requests": 0}),
+                patch("run_util.build_profile_table.config_adapters", return_value=["full"]),
+                patch("run_util.build_profile_table.build_profile_adapters", return_value=[]),
+                patch("run_util.build_profile_table.load_requests", return_value=(requests, False)),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+        self.assertEqual(code, 2)
+
+    def test_build_profile_table_rejects_unknown_task_for_baseline_quality(self) -> None:
+        requests = [Request("r1", "classification", "label this", reference="positive", metadata={"split": "eval"})]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            with (
+                patch("run_util.build_profile_table.load_config", return_value={
+                    "profiles": {"adapters": ["full"], "names": ["full_gpu"]},
+                    "data": {"quality_mode": "baseline"},
+                }),
+                patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu"]),
+                patch("run_util.build_profile_table.config_runtime", return_value={"repeat": 1, "max_requests": 0}),
+                patch("run_util.build_profile_table.config_adapters", return_value=["full"]),
+                patch("run_util.build_profile_table.build_profile_adapters", return_value=[]),
+                patch("run_util.build_profile_table.load_requests", return_value=(requests, False)),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+        self.assertEqual(code, 2)
 
     def test_with_quality_marks_missing_candidate_as_full_loss_and_requires_full_gpu_baseline(self) -> None:
         rows = [

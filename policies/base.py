@@ -170,12 +170,37 @@ class StatsPolicy(Policy):
     def _projected_memory(self, profile: str, request: Request | None, cache_state: CacheState | None) -> float:
         if request is None or cache_state is None or not request.session_id:
             return self._memory_or_inf(profile)
-        current = cache_state.get_cumulative_kv(request.session_id, profile)
-        if current <= 0.0:
-            current_profile = cache_state.get_current_profile(request.session_id)
-            if current_profile:
-                current = cache_state.get_cumulative_kv(request.session_id, current_profile)
-        return current + self._incremental_memory_or_zero(profile)
+        current_profile = cache_state.get_current_profile(request.session_id)
+        current_resident = cache_state.get_resident_kv(request.session_id, current_profile or profile)
+        projected_session = self._projected_session_resident(profile, request, cache_state)
+        global_resident = self._global_resident(cache_state)
+        return max(0.0, global_resident - current_resident + projected_session)
+
+    def _projected_session_resident(self, profile: str, request: Request | None, cache_state: CacheState | None) -> float:
+        if request is None or cache_state is None or not request.session_id:
+            memory = self._memory_or_inf(profile)
+            return 0.0 if memory is inf else memory
+        current_profile = cache_state.get_current_profile(request.session_id)
+        current_resident = cache_state.get_resident_kv(request.session_id, current_profile or profile)
+        session_history = cache_state.get_cumulative_kv(request.session_id, current_profile or profile)
+        if current_profile == profile:
+            return current_resident + self._incremental_memory_or_zero(profile)
+        if session_history <= 0.0:
+            measured_cumulative = cache_state.get_cumulative_kv(request.session_id, profile)
+            if measured_cumulative > 0.0:
+                session_history = measured_cumulative
+            else:
+                stat = self.stats.get(profile)
+                if stat and stat.p95_kv_cumulative_mib is not None:
+                    session_history = float(stat.p95_kv_cumulative_mib)
+        return max(0.0, session_history) + self._incremental_memory_or_zero(profile)
+
+    @staticmethod
+    def _global_resident(cache_state: CacheState) -> float:
+        derived = 0.0
+        for session_id, current_profile in cache_state.session_current_profile.items():
+            derived += cache_state.get_resident_kv(session_id, current_profile)
+        return max(cache_state.global_resident_kv_mib, derived)
 
     def _best_profile(self, use_tail_constraint: bool) -> str:
         best_profile = ""

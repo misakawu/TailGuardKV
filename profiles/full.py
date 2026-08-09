@@ -7,9 +7,8 @@ from run_util.core_types import ProfileMeasurement, ProfileSpec, Request, SmokeR
 from profiles.base import (
     ProfileAdapter,
     dry_profile_measurement,
+    qwen2_exact_profile_many_measurements,
     run_conda_probe,
-    transformers_profile_many_measurements,
-    transformers_profile_measurement,
 )
 
 
@@ -49,14 +48,13 @@ class FullKVAdapter(ProfileAdapter):
         del session_runtime, memory_budget_mib
         spec = self.get_profile(profile_name)
         if not dry_run:
-            row = transformers_profile_measurement(
-                self.name,
-                self.env,
-                request,
-                spec,
-                self.runtime_config,
-                extra={"family": spec.family, "profile_note": "full/exact transformers smoke"},
-            )
+            row = self.profile_many(
+                [request],
+                profile_name,
+                dry_run=False,
+                session_runtime=session_runtime,
+                memory_budget_mib=memory_budget_mib,
+            )[0]
             if not row.ok:
                 return replace(row, error=f"full transformers profile failed ({profile_name}): {row.error or ''}")
             return row
@@ -70,18 +68,27 @@ class FullKVAdapter(ProfileAdapter):
         dry_run: bool = True,
         session_runtime: object | None = None,
         memory_budget_mib: float | None = None,
+        persistent_worker: object | None = None,
     ) -> list[ProfileMeasurement]:
-        del session_runtime, memory_budget_mib
         if dry_run:
-            return super().profile_many(requests, profile_name, dry_run=dry_run)
+            return super().profile_many(
+                requests,
+                profile_name,
+                dry_run=dry_run,
+                session_runtime=session_runtime,
+                memory_budget_mib=memory_budget_mib,
+            )
         spec = self.get_profile(profile_name)
-        rows = transformers_profile_many_measurements(
+        rows = qwen2_exact_profile_many_measurements(
             self.name,
             self.env,
             requests,
             spec,
             self.runtime_config,
-            extra={"family": spec.family, "profile_note": "full/exact transformers smoke"},
+            session_runtime=session_runtime,
+            memory_budget_mib=memory_budget_mib,
+            extra={"family": spec.family, "profile_note": "full/exact qwen2 runtime"},
+            persistent_worker=persistent_worker,
         )
         repaired = []
         for row in rows:

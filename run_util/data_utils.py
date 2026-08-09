@@ -10,6 +10,10 @@ from typing import Any
 from run_util.core_types import ProfileMeasurement, Request
 from metrics.quality import compute_quality_loss, select_primary_loss
 
+QUALITY_MODE_BASELINE = "baseline"
+QUALITY_MODE_SESSION_DIAGNOSTIC = "session_diagnostic"
+QUALITY_MODE_COMPAT = "compat"
+
 
 def default_requests() -> list[Request]:
     """没有正式数据集前，先用固定 smoke 请求验证表结构和执行链路。"""
@@ -57,18 +61,18 @@ def load_requests(config: dict[str, Any]) -> tuple[list[Request], bool]:
     requests: list[Request] = []
     for index, row in enumerate(rows):
         request_id = str(row.get("request_id") or row.get("id") or f"request_{index:06d}")
-        metadata = {
-            key: value
-            for key, value in row.items()
-            if key not in {"request_id", "id", "task", "prompt", "reference"}
-        }
-        metadata.setdefault("source", str(path))
+        metadata = _request_metadata(row, path, index)
+        task = _normalized_request_task(row.get("task") or metadata.get("task") or "unknown")
+        arrival_index = _request_arrival_index(row, metadata, index)
         requests.append(
             Request(
                 request_id=request_id,
-                task=str(row.get("task") or "unknown"),
+                task=task,
                 prompt=str(row.get("prompt") or ""),
                 reference=(None if row.get("reference") in {None, ""} else str(row.get("reference"))),
+                session_id=_optional_text(row.get("session_id")),
+                turn_index=_optional_int(row.get("turn_index")),
+                arrival_index=arrival_index,
                 metadata=metadata,
             )
         )
@@ -196,6 +200,44 @@ def length_bucket(prompt_chars: int) -> str:
     if prompt_chars < 8192:
         return "long"
     return "xl"
+
+
+def _request_metadata(row: dict[str, Any], path: Path, index: int) -> dict[str, Any]:
+    nested = row.get("metadata")
+    metadata = dict(nested) if isinstance(nested, dict) else {}
+    for key, value in row.items():
+        if key in {"request_id", "id", "task", "prompt", "reference", "metadata", "session_id", "turn_index", "arrival_index"}:
+            continue
+        metadata.setdefault(key, value)
+    metadata.setdefault("source", str(path))
+    metadata.setdefault("source_dataset", metadata.get("dataset_config") or row.get("source") or str(path))
+    if "task" in metadata:
+        metadata["task"] = _normalized_request_task(metadata["task"])
+    return metadata
+
+
+def _request_arrival_index(row: dict[str, Any], metadata: dict[str, Any], default: int) -> int:
+    raw = row.get("arrival_index", metadata.get("arrival_index", default))
+    return _optional_int(raw, default=default)
+
+
+def _normalized_request_task(value: Any) -> str:
+    task = str(value or "unknown").strip()
+    if task == "qa_long_context":
+        return "qa"
+    return task
+
+
+def _optional_text(value: Any) -> str | None:
+    if value in {None, ""}:
+        return None
+    return str(value)
+
+
+def _optional_int(value: Any, *, default: int = 0) -> int:
+    if value in {None, ""}:
+        return default
+    return int(float(value))
 
 
 def _ensure_request_splits(requests: list[Request], calibration_fraction: float) -> list[Request]:
@@ -395,7 +437,27 @@ def expand_repeated_requests(requests: list[Request], repeat: int) -> list[Reque
     return repeated
 
 
-def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> list[ProfileMeasurement]:
+def validate_requests_for_quality_mode(requests: list[Request], quality_mode: str, exact_profiles: set[str]) -> None:
+    if quality_mode != QUALITY_MODE_BASELINE or not exact_profiles:
+        return
+    for request in requests:
+        task = str(request.task or "unknown")
+        select_primary_loss(task, strict=True)
+        reference = (request.reference or "").strip()
+        if reference:
+            continue
+        raise ValueError(
+            "baseline quality smoke 不接受缺少 reference 的请求；"
+            f"request={request.request_id} task={task} 只适合 session/cache 诊断，不适合 baseline quality smoke。"
+        )
+
+
+def with_quality(
+    measurements: list[ProfileMeasurement],
+    exact: set[str],
+    *,
+    quality_mode: str = QUALITY_MODE_COMPAT,
+) -> list[ProfileMeasurement]:
     full_gpu_by_request = {
         row.request_id: row
         for row in measurements
@@ -404,7 +466,7 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
     updated: list[ProfileMeasurement] = []
     for row in measurements:
         task = str(row.extra.get("task") or "unknown")
-        primary_metric = select_primary_loss(task)
+        primary_metric = select_primary_loss(task, strict=quality_mode == QUALITY_MODE_BASELINE)
         if row.profile in exact and row.ok and row.measured:
             updated.append(
                 replace(
@@ -414,9 +476,9 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
                     extra={
                         **row.extra,
                         "primary_metric": primary_metric,
-                        "metric_em": 0.0,
-                        "metric_f1": 0.0,
-                        "metric_rouge_l": 0.0,
+                        "metric_loss_em": 0.0,
+                        "metric_loss_f1": 0.0,
+                        "metric_loss_rouge_l": 0.0,
                     },
                 )
             )
@@ -429,14 +491,35 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
             updated.append(replace(row, quality_loss=None, quality_score=None, extra={**row.extra, "primary_metric": primary_metric}))
             continue
         task = str(row.extra.get("task") or baseline.extra.get("task") or "unknown")
-        primary_metric = select_primary_loss(task)
+        primary_metric = select_primary_loss(task, strict=quality_mode == QUALITY_MODE_BASELINE)
         reference = str(row.extra.get("reference") or baseline.extra.get("reference") or "").strip()
         if reference:
             baseline_loss, _ = compute_quality_loss(task, baseline.output_text, reference)
             candidate_loss, metrics = compute_quality_loss(task, row.output_text, reference)
             loss = max(0.0, min(1.0, candidate_loss - baseline_loss))
         else:
-            loss, metrics = compute_quality_loss(task, row.output_text, baseline.output_text)
+            if quality_mode == QUALITY_MODE_BASELINE:
+                raise ValueError(
+                    "baseline quality smoke 不接受 chat/无 reference 或其他无参考答案请求；"
+                    f"request={row.request_id} task={task} 只适合 session/cache 诊断，不适合 baseline quality smoke。"
+                )
+            if quality_mode == QUALITY_MODE_COMPAT:
+                loss, metrics = compute_quality_loss(task, row.output_text, baseline.output_text)
+                updated.append(
+                    replace(
+                        row,
+                        quality_loss=loss,
+                        quality_score=1.0 - loss,
+                        extra={
+                            **row.extra,
+                            "primary_metric": primary_metric,
+                            **{f"metric_loss_{key}": value for key, value in metrics.items()},
+                        },
+                    )
+                )
+                continue
+            updated.append(replace(row, quality_loss=None, quality_score=None, extra={**row.extra, "primary_metric": primary_metric}))
+            continue
         updated.append(
             replace(
                 row,
@@ -445,7 +528,7 @@ def with_quality(measurements: list[ProfileMeasurement], exact: set[str]) -> lis
                 extra={
                     **row.extra,
                     "primary_metric": primary_metric,
-                    **{f"metric_{key}": value for key, value in metrics.items()},
+                    **{f"metric_loss_{key}": value for key, value in metrics.items()},
                 },
             )
         )

@@ -11,7 +11,6 @@ from typing import Any
 from profiles.cache_common import legacy_kv_cache_memory_mib
 from profiles.generation_timing import generate_with_first_token_timing
 
-QWEN2_RUNTIME_GPU_INDICES = (0, 1)
 QWEN2_RUNTIME_GPU_MEMORY_LIMIT_MIB = 10_240
 QWEN2_RUNTIME_GPU_MEMORY_RESERVE_MIB = {
     0: 2_560,
@@ -53,15 +52,19 @@ def require_cuda(torch: Any) -> None:
         raise RuntimeError("CUDA is required for true Qwen2 KIVI/H2O profile execution")
 
 
-def _managed_gpu_indices(torch: Any) -> tuple[int, int]:
+def _managed_gpu_indices(torch: Any, *, require_two: bool = False) -> tuple[int, ...]:
     device_count_fn = getattr(torch.cuda, "device_count", None)
-    device_count = int(device_count_fn()) if callable(device_count_fn) else len(QWEN2_RUNTIME_GPU_INDICES)
-    if device_count < len(QWEN2_RUNTIME_GPU_INDICES):
+    device_count = int(device_count_fn()) if callable(device_count_fn) else 2
+    if device_count <= 0:
+        raise RuntimeError("Qwen2 measured runtime requires at least one CUDA device")
+    if require_two and device_count < 2:
         raise RuntimeError(
-            f"Qwen2 measured runtime requires GPUs {QWEN2_RUNTIME_GPU_INDICES}, "
+            "Qwen2 measured runtime requires at least two CUDA devices for balanced_two_gpu, "
             f"but only detected {device_count} CUDA device(s)"
         )
-    return QWEN2_RUNTIME_GPU_INDICES
+    if device_count == 1:
+        return (0,)
+    return (0, 1)
 
 
 def _gpu_memory_reserve_mib(gpu_index: int) -> int:
@@ -79,19 +82,28 @@ def _safe_max_memory_mib(torch: Any, gpu_index: int) -> int:
     return allowed_mib
 
 
-def _build_two_gpu_max_memory(torch: Any) -> dict[int, str]:
-    return {gpu_index: f"{_safe_max_memory_mib(torch, gpu_index)}MiB" for gpu_index in _managed_gpu_indices(torch)}
+def _build_visible_gpu_max_memory(torch: Any, gpu_indices: tuple[int, ...]) -> dict[int, str]:
+    return {gpu_index: f"{_safe_max_memory_mib(torch, gpu_index)}MiB" for gpu_index in gpu_indices}
 
 
-def _build_qwen2_device_map(num_hidden_layers: int) -> dict[str, int]:
+def _build_qwen2_device_map(num_hidden_layers: int, gpu_indices: tuple[int, ...] = (0, 1)) -> dict[str, int]:
     if num_hidden_layers <= 0:
         raise ValueError(f"invalid Qwen2 hidden layer count: {num_hidden_layers}")
+    if len(gpu_indices) == 1:
+        only_gpu = gpu_indices[0]
+        device_map = {"model.embed_tokens": only_gpu}
+        for layer_idx in range(num_hidden_layers):
+            device_map[f"model.layers.{layer_idx}"] = only_gpu
+        device_map["model.norm"] = only_gpu
+        device_map["lm_head"] = only_gpu
+        return device_map
     split_index = int(ceil(num_hidden_layers / 2))
-    device_map = {"model.embed_tokens": 0}
+    left_gpu, right_gpu = gpu_indices[0], gpu_indices[1]
+    device_map = {"model.embed_tokens": left_gpu}
     for layer_idx in range(num_hidden_layers):
-        device_map[f"model.layers.{layer_idx}"] = 0 if layer_idx < split_index else 1
-    device_map["model.norm"] = 1
-    device_map["lm_head"] = 1
+        device_map[f"model.layers.{layer_idx}"] = left_gpu if layer_idx < split_index else right_gpu
+    device_map["model.norm"] = right_gpu
+    device_map["lm_head"] = right_gpu
     return device_map
 
 
@@ -128,11 +140,10 @@ def _reset_peak_memory_stats(torch: Any) -> None:
 
 def _peak_memory_fields(torch: Any) -> dict[str, float]:
     peaks = _peak_memory_by_gpu_mib(torch)
-    return {
-        "peak_memory_mib": sum(peaks.values()),
-        "gpu0_peak_memory_mib": peaks[0],
-        "gpu1_peak_memory_mib": peaks[1],
-    }
+    fields: dict[str, float] = {"peak_memory_mib": sum(peaks.values())}
+    for gpu_index, peak in peaks.items():
+        fields[f"gpu{gpu_index}_peak_memory_mib"] = peak
+    return fields
 
 
 def _oom_extra_fields(torch: Any, error: str) -> dict[str, float]:
@@ -183,12 +194,14 @@ def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_
         local_files_only=local_files_only,
         trust_remote_code=True,
     )
+    device_strategy = str(payload.get("device_strategy") or "balanced_two_gpu")
     num_hidden_layers = int(payload.get("num_hidden_layers") or 0) or _load_qwen2_num_hidden_layers(
         model_name,
         cache_dir,
         local_files_only,
     )
-    device_map = _build_qwen2_device_map(num_hidden_layers)
+    gpu_indices = _managed_gpu_indices(torch, require_two=device_strategy == "balanced_two_gpu")
+    device_map = _build_qwen2_device_map(num_hidden_layers, gpu_indices)
     model = auto_model.from_pretrained(
         model_name,
         cache_dir=cache_dir,
@@ -197,7 +210,7 @@ def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_
         torch_dtype=torch.float16,
         attn_implementation="eager",
         device_map=device_map,
-        max_memory=_build_two_gpu_max_memory(torch),
+        max_memory=_build_visible_gpu_max_memory(torch, gpu_indices),
         low_cpu_mem_usage=True,
     )
     model.hf_device_map = device_map

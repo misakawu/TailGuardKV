@@ -310,7 +310,9 @@ def test_policy_record_from_backend_result_uses_backend_runtime_fields() -> None
     assert record.ttft_ms == 20.0
     assert record.kv_cache_memory_mib == 70.0
     assert record.restore_ms == 4.0
-    assert record.budget_hit is True
+    assert record.policy_budget_filtered is True
+    assert record.backend_budget_hit is False
+    assert record.budget_hit is False
 
 
 def test_validate_backend_results_does_not_require_profile_sampling_fields() -> None:

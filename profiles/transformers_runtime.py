@@ -10,13 +10,18 @@ from typing import Any
 
 from profiles.cache_common import legacy_kv_cache_memory_mib
 from profiles.generation_timing import generate_with_first_token_timing
-from profiles.session_runtime import SessionRuntimeState
+from profiles.session_runtime import SessionRuntimeState, apply_budget_policy
 
 
 def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
     requests = list(payload.get("requests") or [])
     if not requests:
-        return {"ok": True, "results": [], "worker": {"mode": "batch"}}
+        return {
+            "ok": True,
+            "results": [],
+            "worker": {"mode": "batch"},
+            "session_runtime_state": SessionRuntimeState().to_payload(),
+        }
 
     worker_start = time.perf_counter()
     try:
@@ -34,11 +39,13 @@ def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "results": [dict(failure) for _ in requests],
             "worker": {"mode": "batch"},
+            "session_runtime_state": SessionRuntimeState.from_payload(payload.get("session_runtime_state")).to_payload(),
         }
 
     results = []
+    state = SessionRuntimeState.from_payload(payload.get("session_runtime_state"))
     for index, request in enumerate(requests):
-        result = _run_one_request(runtime, request)
+        result, state = _run_measured_request_with_session(runtime, request, state)
         results.append(result)
         if _is_cuda_oom(result.get("error")):
             for _ in requests[index + 1 :]:
@@ -48,6 +55,7 @@ def run_profile_batch(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": all(item.get("ok") for item in results),
         "results": results,
         "worker": {"mode": "batch"},
+        "session_runtime_state": state.to_payload(),
     }
 
 
@@ -119,6 +127,69 @@ def _run_one_request_with_session(runtime: dict[str, Any], payload: dict[str, An
         )
         return result, rebuilt_state
     return _append_with_existing_kv(runtime, payload, state)
+
+
+def _run_measured_request_with_session(runtime: dict[str, Any], payload: dict[str, Any], state: SessionRuntimeState) -> tuple[dict[str, Any], SessionRuntimeState]:
+    result = _run_one_request(runtime, payload)
+    if not bool(result.get("ok")):
+        return result, state
+
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return result, state
+
+    profile = str(payload.get("profile") or "")
+    turn_index = int(payload.get("turn_index") or 0)
+    previous = state.sessions.get(session_id)
+    next_state = state
+    events: list[dict[str, object]] = []
+    resident_before = previous.resident_gpu_mib if previous else 0.0
+    restore_ms = 0.0
+    recompute_ms = 0.0
+
+    if previous and previous.current_profile and previous.current_profile != profile:
+        next_state = next_state.reset_session(session_id, profile)
+        resident_before = 0.0
+        recompute_ms = max(1.0, float(result.get("stage_prefill_ms") or result.get("latency_ms") or 1.0))
+        events.append({"event": "recompute", "session_id": session_id, "profile": profile, "turn_index": turn_index})
+    elif previous and previous.offloaded_cpu_mib > 0:
+        restore_amount = previous.offloaded_cpu_mib
+        next_state = next_state.record_restore(session_id, profile, kv_mib=restore_amount)
+        resident_before = next_state.sessions[session_id].resident_gpu_mib
+        restore_ms = max(1.0, restore_amount)
+        events.append({"event": "restore", "session_id": session_id, "profile": profile, "turn_index": turn_index, "kv_mib": restore_amount})
+    elif previous and previous.dropped_mib > 0:
+        next_state = next_state.reset_session(session_id, profile)
+        resident_before = 0.0
+        recompute_ms = max(1.0, float(result.get("stage_prefill_ms") or result.get("latency_ms") or 1.0))
+        events.append({"event": "recompute", "session_id": session_id, "profile": profile, "turn_index": turn_index})
+
+    measured_total = float(result.get("kv_cache_memory_mib") or result.get("peak_memory_mib") or 0.0)
+    kv_incremental_mib = measured_total if turn_index <= 0 else max(0.0, measured_total - resident_before)
+    next_state, budget_events, budget_hit, budget_restore_ms = apply_budget_policy(
+        next_state,
+        session_id=session_id,
+        profile=profile,
+        turn_index=turn_index,
+        kv_incremental_mib=kv_incremental_mib,
+        memory_budget_mib=float(payload.get("memory_budget_mib")) if payload.get("memory_budget_mib") is not None else None,
+        prefer_restore=False,
+    )
+    session = next_state.sessions[session_id]
+    result.update(
+        {
+            "kv_incremental_mib": kv_incremental_mib,
+            "kv_cumulative_mib": session.resident_gpu_mib + session.offloaded_cpu_mib,
+            "resident_kv_mib_before": resident_before,
+            "resident_kv_mib_after": session.resident_gpu_mib,
+            "restore_ms": restore_ms + budget_restore_ms,
+            "recompute_ms": recompute_ms,
+            "evicted_kv_mib": session.offloaded_cpu_mib,
+            "budget_hit": budget_hit,
+            "event_trace": [*events, *budget_events],
+        }
+    )
+    return result, next_state
 
 
 def main() -> int:

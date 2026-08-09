@@ -4,6 +4,12 @@ import re
 import unicodedata
 from collections.abc import Iterable, Sequence
 
+SUPPORTED_PRIMARY_LOSS = {
+    "qa": "f1",
+    "qa_long_context": "f1",
+    "summary": "rouge_l",
+}
+
 
 def normalized_exact_match_loss(candidate: str | None, reference: str | None) -> float:
     return 0.0 if _normalize_text(candidate) == _normalize_text(reference) else 1.0
@@ -45,11 +51,12 @@ def _rouge_l_loss(candidate_tokens: Sequence[str], reference_tokens: Sequence[st
     return 1.0 - score
 
 
-def select_primary_loss(task: str) -> str:
-    if task in {"qa", "qa_long_context"}:
-        return "f1"
-    if task == "summary":
-        return "rouge_l"
+def select_primary_loss(task: str, *, strict: bool = False) -> str:
+    metric = SUPPORTED_PRIMARY_LOSS.get(task)
+    if metric is not None:
+        return metric
+    if strict:
+        raise ValueError(f"baseline quality smoke 不支持 task={task!r}；请改用带 reference 的 qa/summary 请求，或将该输入放到 session/cache 诊断链路。")
     return "em"
 
 

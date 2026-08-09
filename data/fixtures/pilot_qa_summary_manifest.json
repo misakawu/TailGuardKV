@@ -1,0 +1,26 @@
+{
+  "note": "Baseline pilot main data only covers independent QA + summary requests. Session-heavy traces stay in separate ShareGPT configs.",
+  "request_path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/data/fixtures/pilot_qa_summary_requests.jsonl",
+  "splits": {
+    "calibration": 250,
+    "eval": 250
+  },
+  "tasks": {
+    "qa": {
+      "nonshort": 100,
+      "short": 100,
+      "sources": [
+        "RAGhot_QA validation",
+        "LongBench qasper"
+      ]
+    },
+    "summary": {
+      "nonshort": 268,
+      "short": 32,
+      "sources": [
+        "XSum validation"
+      ]
+    }
+  },
+  "total_requests": 500
+}

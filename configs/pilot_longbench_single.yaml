@@ -41,7 +41,7 @@ pilot:
   memory_budgets_mib: [2000, 2500]
 
 data:
-  requests: /DATACENTER3/zhenxiang.wang/resource/tailguardkv_pilot/requests/longbench_xsum_pilot.jsonl
+  requests: data/fixtures/pilot_qa_summary_requests.jsonl
   calibration_fraction: 0.5
   max_requests: 200
 

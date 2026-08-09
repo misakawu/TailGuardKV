@@ -4,6 +4,7 @@ from run_util.config_loader import (
     config_adapters,
     config_policies,
     config_profiles,
+    config_quality_mode,
     config_runtime,
     exact_profiles,
     load_config,
@@ -17,6 +18,7 @@ from run_util.data_utils import (
     load_requests,
     requests_from_measurements,
     split_measurements,
+    validate_requests_for_quality_mode,
     with_quality,
 )
 from run_util.io_utils import json_ready, read_measurements, write_csv
@@ -34,6 +36,7 @@ __all__ = [
     "config_adapters",
     "config_policies",
     "config_profiles",
+    "config_quality_mode",
     "config_runtime",
     "default_requests",
     "exact_profiles",
@@ -47,6 +50,7 @@ __all__ = [
     "read_measurements",
     "requests_from_measurements",
     "split_measurements",
+    "validate_requests_for_quality_mode",
     "validate_backend_results",
     "validate_profile_measurements",
     "validate_profile_table_header",

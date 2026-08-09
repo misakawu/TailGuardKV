@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
+import shutil
 import subprocess
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from profiles.session_runtime import SessionRuntimeState
@@ -68,6 +71,166 @@ class ProfileAdapter(ABC):
             if spec.name == profile_name:
                 return spec
         raise KeyError(f"{self.name} 没有 profile: {profile_name}")
+
+
+class PersistentWorkerFatalError(RuntimeError):
+    def __init__(self, message: str, measurements: list[ProfileMeasurement]) -> None:
+        super().__init__(message)
+        self.measurements = measurements
+
+
+class PersistentProfileWorker:
+    def __init__(
+        self,
+        *,
+        adapter: str,
+        env_name: str,
+        runtime_module: str,
+        runtime_config: dict[str, object],
+        pythonpath: Sequence[str] = (),
+    ) -> None:
+        self.adapter = adapter
+        self.env_name = env_name
+        self.runtime_module = runtime_module
+        self.runtime_config = dict(runtime_config)
+        self.pythonpath = tuple(pythonpath)
+        self._proc: subprocess.Popen[str] | None = None
+
+    def start(self) -> None:
+        if self._proc is not None:
+            return
+        env = os.environ.copy()
+        repo_root = str(Path(__file__).resolve().parents[1])
+        path_parts = [repo_root, *[os.path.abspath(path) for path in self.pythonpath]]
+        if env.get("PYTHONPATH"):
+            path_parts.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(path_parts)
+        env["PYTHONUNBUFFERED"] = "1"
+        command = [
+            _conda_env_python(self.env_name),
+            "-m",
+            "profiles.persistent_worker",
+            "--runtime-module",
+            self.runtime_module,
+        ]
+        self._proc = subprocess.Popen(
+            command,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self.request(
+            {
+                "op": "init",
+                "adapter": self.adapter,
+                "runtime_config": self.runtime_config,
+            },
+            timeout_s=max(30, int(self.runtime_config.get("timeout_s", 180))),
+        )
+
+    def request(self, payload: dict[str, object], *, timeout_s: int) -> dict[str, object]:
+        self.start()
+        proc = self._require_proc()
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        proc.stdin.flush()
+        line = self._readline(timeout_s)
+        try:
+            result = json.loads(line)
+        except Exception as exc:
+            raise RuntimeError(f"persistent worker returned invalid JSON: {exc}; line={line[-800:]}") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError(f"persistent worker returned invalid payload: {result!r}")
+        return result
+
+    def close(self) -> None:
+        proc = self._proc
+        if proc is None:
+            return
+        try:
+            self.request({"op": "shutdown", "adapter": self.adapter}, timeout_s=10)
+        except Exception:
+            pass
+        finally:
+            if proc.stdin:
+                proc.stdin.close()
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            self._proc = None
+
+    def _readline(self, timeout_s: int) -> str:
+        proc = self._require_proc()
+        assert proc.stdout is not None
+        selector = selectors.DefaultSelector()
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        try:
+            events = selector.select(timeout_s)
+            if not events:
+                raise TimeoutError(f"persistent worker timed out after {timeout_s}s")
+            line = proc.stdout.readline()
+        finally:
+            selector.close()
+        if line:
+            return line.strip()
+        stderr_tail = ""
+        if proc.stderr is not None:
+            try:
+                stderr_tail = proc.stderr.read()[-1200:]
+            except Exception:
+                stderr_tail = ""
+        raise RuntimeError(f"persistent worker exited unexpectedly: returncode={proc.poll()}; stderr={stderr_tail}")
+
+    def _require_proc(self) -> subprocess.Popen[str]:
+        if self._proc is None:
+            raise RuntimeError("persistent worker is not started")
+        return self._proc
+
+
+def create_persistent_profile_worker(
+    *,
+    adapter: str,
+    env_name: str,
+    runtime_module: str,
+    runtime_config: dict[str, object],
+    pythonpath: Sequence[str] = (),
+) -> PersistentProfileWorker:
+    worker = PersistentProfileWorker(
+        adapter=adapter,
+        env_name=env_name,
+        runtime_module=runtime_module,
+        runtime_config=runtime_config,
+        pythonpath=pythonpath,
+    )
+    worker.start()
+    return worker
+
+
+def _conda_env_python(env_name: str) -> str:
+    conda_exe = os.environ.get("CONDA_EXE") or os.environ.get("MAMBA_EXE") or shutil.which("conda")
+    if not conda_exe:
+        raise FileNotFoundError("无法定位 conda 可执行文件，不能解析常驻 worker Python 路径")
+    conda_path = Path(conda_exe).resolve()
+    conda_root = conda_path.parents[1]
+    if env_name in {"base", str(conda_root)}:
+        python_path = conda_root / "bin" / "python"
+    else:
+        python_path = conda_root / "envs" / env_name / "bin" / "python"
+    if not python_path.exists():
+        raise FileNotFoundError(f"常驻 worker Python 不存在: {python_path}")
+    return str(python_path)
 
 
 def run_conda_probe(
@@ -178,6 +341,8 @@ def transformers_profile_many_measurements(
     *,
     timeout_s: int | None = None,
     pythonpath: Sequence[str] = (),
+    session_runtime: object | None = None,
+    memory_budget_mib: float | None = None,
     extra: dict[str, object] | None = None,
 ) -> list[ProfileMeasurement]:
     request_list = list(requests)
@@ -193,8 +358,23 @@ def transformers_profile_many_measurements(
             {"backend": "transformers", **(extra or {})},
         )
     payload = {
-        "requests": [_transformers_payload(request, spec, runtime_config, model_name) for request in request_list],
+        "requests": [
+            _transformers_payload(
+                request,
+                spec,
+                runtime_config,
+                model_name,
+                memory_budget_mib=memory_budget_mib,
+            )
+            for request in request_list
+        ],
     }
+    state = _session_runtime_state(session_runtime)
+    state_payload = _session_runtime_payload(session_runtime, state)
+    if state_payload is not None:
+        payload["session_runtime_state"] = state_payload
+    if memory_budget_mib is not None:
+        payload["memory_budget_mib"] = memory_budget_mib
     proc, result, error = _run_runtime_batch(
         env_name,
         "profiles.transformers_runtime",
@@ -211,6 +391,7 @@ def transformers_profile_many_measurements(
             error,
             {"backend": "transformers", "model": model_name, **(extra or {})},
         )
+    _update_session_runtime_container(session_runtime, result)
     return _measurements_from_batch_result(
         adapter,
         request_list,
@@ -233,6 +414,7 @@ def qwen2_kv_profile_many_measurements(
     session_runtime: object | None = None,
     memory_budget_mib: float | None = None,
     extra: dict[str, object] | None = None,
+    persistent_worker: PersistentProfileWorker | None = None,
 ) -> list[ProfileMeasurement]:
     request_list = list(requests)
     if not request_list:
@@ -259,16 +441,27 @@ def qwen2_kv_profile_many_measurements(
         ],
     }
     state = _session_runtime_state(session_runtime)
-    if state.sessions:
-        payload["session_runtime_state"] = state.to_payload()
-    proc, result, error = _run_runtime_batch(
-        env_name,
-        "profiles.qwen2_kv_runtime",
-        "QWEN2_KV_PAYLOAD",
-        payload,
-        timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
-        pythonpath=pythonpath,
-    )
+    state_payload = _session_runtime_payload(session_runtime, state)
+    if state_payload is not None:
+        payload["session_runtime_state"] = state_payload
+    if persistent_worker is not None:
+        proc, result, error = _run_persistent_runtime_batch(
+            persistent_worker,
+            payload,
+            adapter=adapter,
+            profile=spec.name,
+            runtime_config=runtime_config,
+            timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
+        )
+    else:
+        proc, result, error = _run_runtime_batch(
+            env_name,
+            "profiles.qwen2_kv_runtime",
+            "QWEN2_KV_PAYLOAD",
+            payload,
+            timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
+            pythonpath=pythonpath,
+        )
     if error is not None:
         return _worker_failure_measurements(
             adapter,
@@ -285,6 +478,85 @@ def qwen2_kv_profile_many_measurements(
         proc,
         result,
         default_extra={"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
+    )
+
+
+def qwen2_exact_profile_many_measurements(
+    adapter: str,
+    env_name: str,
+    requests: Sequence[Request],
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+    *,
+    timeout_s: int | None = None,
+    pythonpath: Sequence[str] = (),
+    session_runtime: object | None = None,
+    memory_budget_mib: float | None = None,
+    extra: dict[str, object] | None = None,
+    persistent_worker: PersistentProfileWorker | None = None,
+) -> list[ProfileMeasurement]:
+    request_list = list(requests)
+    if not request_list:
+        return []
+    model_name = _runtime_model_name(runtime_config)
+    if not model_name:
+        return _missing_model_measurements(
+            adapter,
+            request_list,
+            spec,
+            "未配置 model.pilot_model，无法执行 Qwen2 exact runtime。",
+            {"backend": "qwen2_exact_runtime", "env": env_name, **(extra or {})},
+        )
+    payload = {
+        "requests": [
+            _qwen2_payload(
+                request,
+                spec,
+                runtime_config,
+                model_name,
+                memory_budget_mib=memory_budget_mib,
+            )
+            for request in request_list
+        ],
+    }
+    state = _session_runtime_state(session_runtime)
+    state_payload = _session_runtime_payload(session_runtime, state)
+    if state_payload is not None:
+        payload["session_runtime_state"] = state_payload
+    if persistent_worker is not None:
+        proc, result, error = _run_persistent_runtime_batch(
+            persistent_worker,
+            payload,
+            adapter=adapter,
+            profile=spec.name,
+            runtime_config=runtime_config,
+            timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
+        )
+    else:
+        proc, result, error = _run_runtime_batch(
+            env_name,
+            "profiles.qwen2_kv_runtime",
+            "QWEN2_KV_PAYLOAD",
+            payload,
+            timeout_s=timeout_s or _batch_timeout_s(runtime_config, len(request_list)),
+            pythonpath=pythonpath,
+        )
+    if error is not None:
+        return _worker_failure_measurements(
+            adapter,
+            request_list,
+            spec,
+            error,
+            {"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})},
+        )
+    _update_session_runtime_container(session_runtime, result)
+    return _measurements_from_batch_result(
+        adapter,
+        request_list,
+        spec,
+        proc,
+        result,
+        default_extra={"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})},
     )
 
 
@@ -504,6 +776,8 @@ def _transformers_payload(
     spec: ProfileSpec,
     runtime_config: dict[str, object],
     model_name: str,
+    *,
+    memory_budget_mib: float | None = None,
 ) -> dict[str, object]:
     return {
         "profile": spec.name,
@@ -513,11 +787,12 @@ def _transformers_payload(
         "turn_index": request.turn_index,
         "history_turns": list(request.history_turns),
         "execution_mode": "append",
-        "memory_budget_mib": runtime_config.get("memory_budget_mib"),
+        "memory_budget_mib": runtime_config.get("memory_budget_mib") if memory_budget_mib is None else memory_budget_mib,
         "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
         "cache_dir": runtime_config.get("model_cache_dir"),
         "local_files_only": bool(runtime_config.get("local_files_only", True)),
-        "device_mode": spec.metadata.get("device_mode", "auto"),
+        "device_mode": str(spec.metadata.get("device_mode", _runtime_binding_value(spec, runtime_config, "device_mode", "auto"))),
+        "cuda_visible_devices": str(spec.metadata.get("cuda_visible_devices", _runtime_binding_value(spec, runtime_config, "cuda_visible_devices", ""))),
         "use_cache": bool(spec.metadata.get("use_cache", True)),
     }
 
@@ -551,6 +826,8 @@ def _qwen2_payload(
         "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
         "cache_dir": runtime_config.get("model_cache_dir"),
         "local_files_only": bool(runtime_config.get("local_files_only", True)),
+        "device_strategy": str(spec.metadata.get("device_strategy", _runtime_binding_value(spec, runtime_config, "device_strategy", "balanced_two_gpu"))),
+        "cuda_visible_devices": str(spec.metadata.get("cuda_visible_devices", _runtime_binding_value(spec, runtime_config, "cuda_visible_devices", ""))),
         "bits": spec.metadata.get("bits"),
         "kivi_group_size": int(spec.metadata.get("kivi_group_size", runtime_config.get("kivi_group_size", 32))),
         "kivi_residual_length": int(spec.metadata.get("kivi_residual_length", runtime_config.get("kivi_residual_length", 32))),
@@ -559,12 +836,31 @@ def _qwen2_payload(
     }
 
 
+def _runtime_binding_value(spec: ProfileSpec, runtime_config: dict[str, object], field: str, default: object) -> object:
+    family = str(spec.family or "")
+    family_key = f"{family}_{field}" if family else field
+    return runtime_config.get(family_key, runtime_config.get(field, default))
+
+
 def _session_runtime_state(session_runtime: object | None) -> SessionRuntimeState:
     if isinstance(session_runtime, SessionRuntimeState):
         return session_runtime
     if isinstance(session_runtime, dict):
-        return SessionRuntimeState.from_payload(session_runtime.get("state"))
+        return SessionRuntimeState.from_payload(session_runtime.get("state", session_runtime))
     return SessionRuntimeState()
+
+
+def _session_runtime_payload(session_runtime: object | None, state: SessionRuntimeState) -> dict[str, object] | None:
+    if isinstance(session_runtime, dict):
+        if "state" in session_runtime:
+            raw_state = session_runtime.get("state")
+            if isinstance(raw_state, dict):
+                return raw_state
+        if session_runtime:
+            return dict(session_runtime)
+    if state.sessions:
+        return state.to_payload()
+    return None
 
 
 def _update_session_runtime_container(session_runtime: object | None, result: dict[str, object] | None) -> None:
@@ -573,7 +869,11 @@ def _update_session_runtime_container(session_runtime: object | None, result: di
     payload = result.get("session_runtime_state")
     if payload is None:
         return
-    session_runtime["state"] = payload
+    if "state" in session_runtime:
+        session_runtime["state"] = payload
+    else:
+        session_runtime.clear()
+        session_runtime.update(payload)
 
 
 def _run_runtime_batch(
@@ -591,6 +891,9 @@ def _run_runtime_batch(
     if env.get("PYTHONPATH"):
         path_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(path_parts)
+    cuda_visible_devices = _payload_cuda_visible_devices(payload)
+    if cuda_visible_devices:
+        env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
     env[payload_env_key] = json.dumps(payload, ensure_ascii=False)
     command = ["conda", "run", "-n", env_name, "python", "-m", module_name]
     try:
@@ -616,6 +919,44 @@ def _run_runtime_batch(
         return proc, json.loads(output.splitlines()[-1]), None
     except Exception as exc:
         return proc, None, f"无法解析 {module_name} 输出: {exc}; stderr={(proc.stderr or '')[-800:]}; stdout={proc.stdout[-800:]}"
+
+
+def _run_persistent_runtime_batch(
+    worker: PersistentProfileWorker,
+    payload: dict[str, object],
+    *,
+    adapter: str,
+    profile: str,
+    runtime_config: dict[str, object],
+    timeout_s: int,
+) -> tuple[subprocess.CompletedProcess[str] | None, dict[str, object] | None, str | None]:
+    message = {
+        "op": "run_batch",
+        "adapter": adapter,
+        "profile": profile,
+        "requests": payload.get("requests"),
+        "runtime_config": runtime_config,
+        "session_runtime_state": payload.get("session_runtime_state"),
+        "memory_budget_mib": payload.get("memory_budget_mib"),
+    }
+    try:
+        result = worker.request(message, timeout_s=timeout_s)
+    except TimeoutError as exc:
+        return None, None, f"persistent worker timeout: {exc}"
+    except Exception as exc:
+        return None, None, f"persistent worker request failed: {type(exc).__name__}: {exc}"
+    proc = SimpleNamespace(returncode=0, stdout=json.dumps(result, ensure_ascii=False), stderr="")
+    return proc, result, None
+
+
+def _payload_cuda_visible_devices(payload: dict[str, object]) -> str:
+    requests = payload.get("requests")
+    if isinstance(requests, list) and requests:
+        values = {str(request.get("cuda_visible_devices") or "") for request in requests if isinstance(request, dict)}
+        if len(values) == 1:
+            return next(iter(values))
+        return ""
+    return str(payload.get("cuda_visible_devices") or "")
 
 
 def _measurements_from_batch_result(
@@ -664,6 +1005,9 @@ def _measurements_from_batch_result(
             worker_mode=worker_mode,
         )
         rows.append(row)
+    fatal_error = str(result.get("fatal_error") or "") if isinstance(result, dict) else ""
+    if fatal_error:
+        raise PersistentWorkerFatalError(fatal_error, rows)
     return rows
 
 

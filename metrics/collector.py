@@ -82,6 +82,9 @@ class MetricCollector:
             global_resident_kv: list[float] = []
             cumulative_kv: list[float] = []
             drift_states: Counter[str] = Counter()
+            task_counts: Counter[str] = Counter()
+            length_bucket_counts: Counter[str] = Counter()
+            task_length_counts: Counter[str] = Counter()
             safe_count = 0
             fallback_count = 0
             exact_fallback_count = 0
@@ -94,6 +97,7 @@ class MetricCollector:
             profile_resident_totals: Counter[str] = Counter()
             candidate_safe_counts: list[float] = []
             budget_hit_count = 0
+            policy_budget_filter_count = 0
             switch_count = 0
             restore_count = 0
             recompute_count = 0
@@ -155,13 +159,20 @@ class MetricCollector:
                     candidate_safe_counts.append(row.candidate_safe_count)
                 if row.fallback_reason:
                     fallback_count += 1
-                if row.budget_hit:
+                if row.backend_budget_hit or row.budget_hit:
                     budget_hit_count += 1
+                if row.policy_budget_filtered:
+                    policy_budget_filter_count += 1
                 if row.action_profile in exact_profiles:
                     exact_count += 1
                     if row.fallback_reason:
                         exact_fallback_count += 1
                 actions[row.action_profile] += 1
+                task = row.task or "unknown"
+                bucket = row.length_bucket or "unknown"
+                task_counts[task] += 1
+                length_bucket_counts[bucket] += 1
+                task_length_counts[f"{task}/{bucket}"] += 1
                 if row.session_id:
                     previous = previous_profile_by_session.get(row.session_id)
                     if previous is not None and row.resident_kv_mib_before is not None:
@@ -218,6 +229,9 @@ class MetricCollector:
                 "delta_slack": _delta_slack(rows, epsilon, delta),
                 "worst_group_violation": worst_group_violation,
                 "action_distribution": dict(actions),
+                "task_distribution": dict(sorted(task_counts.items())),
+                "length_bucket_distribution": dict(sorted(length_bucket_counts.items())),
+                "task_length_distribution": dict(sorted(task_length_counts.items())),
                 "controller_overhead_ms": _mean(controller_overheads),
                 "controller_qrp_ms": _mean(qrp_overheads),
                 "controller_cg_ms": _mean(cg_overheads),
@@ -227,6 +241,7 @@ class MetricCollector:
                 "audit_rate": _mean(audit_rates),
                 "switch_count": float(switch_count),
                 "budget_hit_rate": budget_hit_count / len(rows) if rows else float("nan"),
+                "policy_budget_filter_rate": policy_budget_filter_count / len(rows) if rows else float("nan"),
                 "restore_count": float(restore_count),
                 "restore_time_ms": _mean(restore_times),
                 "recompute_count": float(recompute_count),

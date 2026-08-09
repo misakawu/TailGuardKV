@@ -114,6 +114,58 @@ def test_load_qwen2_model_builds_explicit_two_gpu_device_map_for_even_layers() -
     assert set(captured["device_map"].values()) == {0, 1}
 
 
+def test_load_qwen2_model_supports_single_gpu_device_strategy() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCuda:
+        @staticmethod
+        def device_count() -> int:
+            return 1
+
+        @staticmethod
+        def get_device_properties(index: int) -> SimpleNamespace:
+            return SimpleNamespace(total_memory=11_264 * 1024**2)
+
+    class FakeTorch:
+        float16 = "float16"
+        cuda = FakeCuda()
+
+    class FakeTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return object()
+
+    class FakeModel:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            captured.update(kwargs)
+
+            class _Model:
+                config = SimpleNamespace(num_hidden_layers=4)
+                model = SimpleNamespace(embed_tokens=SimpleNamespace(weight=SimpleNamespace(device="cuda:0")))
+
+                @staticmethod
+                def eval() -> None:
+                    return None
+
+            return _Model()
+
+    load_qwen2_model(
+        {
+            "model_name": "/tmp/model",
+            "local_files_only": True,
+            "num_hidden_layers": 4,
+            "device_strategy": "single_gpu",
+        },
+        FakeTorch(),
+        FakeModel,
+        FakeTokenizer,
+    )
+
+    assert captured["max_memory"] == {0: "8704MiB"}
+    assert set(captured["device_map"].values()) == {0}
+
+
 def test_safe_max_memory_mib_uses_asymmetric_dual_gpu_reserves() -> None:
     class FakeCuda:
         @staticmethod

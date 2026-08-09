@@ -64,6 +64,8 @@ def test_metric_collector_reports_server_side_replay_metrics() -> None:
             recompute_ms=0.0,
             resident_kv_mib_after=20.0,
             budget_hit=False,
+            backend_budget_hit=False,
+            policy_budget_filtered=True,
             backend_name="measured_replay",
             reason="safe",
         ),
@@ -82,6 +84,8 @@ def test_metric_collector_reports_server_side_replay_metrics() -> None:
             evicted_kv_mib=12.0,
             resident_kv_mib_after=18.0,
             budget_hit=True,
+            backend_budget_hit=True,
+            policy_budget_filtered=False,
             backend_name="measured_replay",
             reason="safe",
         ),
@@ -100,6 +104,8 @@ def test_metric_collector_reports_server_side_replay_metrics() -> None:
             evicted_kv_mib=0.0,
             resident_kv_mib_after=45.0,
             budget_hit=True,
+            backend_budget_hit=True,
+            policy_budget_filtered=False,
             backend_name="measured_replay",
             reason="fallback",
         ),
@@ -111,6 +117,7 @@ def test_metric_collector_reports_server_side_replay_metrics() -> None:
     assert "p95_global_resident_kv_mib" in summary["tailguard"]
     assert "queue_delay_ms" in summary["tailguard"]
     assert summary["tailguard"]["budget_hit_rate"] > 0.0
+    assert summary["tailguard"]["policy_budget_filter_rate"] > 0.0
 
 
 def test_plot_summary_creates_subplot_grid_by_constraint(tmp_path: Path) -> None:

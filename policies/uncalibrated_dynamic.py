@@ -44,6 +44,7 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                         fallback_reason="点预测阈值通过",
                         candidate_safe_count=candidate_safe_count,
                         budget_hit=budget_filtered,
+                        policy_budget_filtered=budget_filtered,
                     )
                 )
         fallback = self._best_exact_candidate(request, cache_state)
@@ -61,5 +62,6 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                 fallback_reason=fallback.reason,
                 candidate_safe_count=candidate_safe_count,
                 budget_hit=budget_filtered,
+                policy_budget_filtered=budget_filtered,
             )
         )

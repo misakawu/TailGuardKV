@@ -124,6 +124,7 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         audit_rate=action.audit_rate if action is not None else None,
         drift_state=action.drift_state if action is not None else "",
         budget_hit=action.budget_hit if action is not None else False,
+        policy_budget_filtered=action.policy_budget_filtered if action is not None else False,
     )
 
 
@@ -162,6 +163,7 @@ def _record_from_backend_result(
         audit_rate=action.audit_rate,
         drift_state=action.drift_state,
         budget_hit=action.budget_hit,
+        policy_budget_filtered=action.policy_budget_filtered,
     )
 
 

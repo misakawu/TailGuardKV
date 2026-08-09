@@ -41,8 +41,9 @@ pilot:
   memory_budgets_mib: [4900, 5000]
 
 data:
-  source: sharegpt
-  requests: data/fixtures/sharegpt_sessions.json
+  source: fixture
+  quality_mode: baseline
+  requests: data/fixtures/pilot_qa_summary_requests.jsonl
   calibration_fraction: 0.5
   max_requests: 50
 

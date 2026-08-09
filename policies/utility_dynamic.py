@@ -49,6 +49,7 @@ class UtilityDynamicPolicy(StatsPolicy):
                 risk_upper=candidate.risk_upper,
                 safe=candidate.safe,
                 budget_hit=budget_filtered,
+                policy_budget_filtered=budget_filtered,
                 epsilon=self.epsilon,
                 delta=self.delta,
                 fallback_reason=candidate.reason if best_profile in self.exact_profiles else "",

@@ -87,6 +87,7 @@ class KIVIAdapter(ProfileAdapter):
         dry_run: bool = True,
         session_runtime: object | None = None,
         memory_budget_mib: float | None = None,
+        persistent_worker: object | None = None,
     ) -> list[ProfileMeasurement]:
         if dry_run:
             return super().profile_many(
@@ -110,6 +111,7 @@ class KIVIAdapter(ProfileAdapter):
                 "bits": spec.metadata.get("bits", ""),
                 "kivi_residual_length": spec.metadata.get("kivi_residual_length", ""),
             },
+            persistent_worker=persistent_worker,
         )
         repaired = []
         for row in rows:

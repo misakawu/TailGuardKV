@@ -291,6 +291,7 @@ class Action:
     audit_rate: float | None = None
     drift_state: str = ""
     budget_hit: bool = False
+    policy_budget_filtered: bool = False
 
 
 @dataclass(frozen=True)
@@ -362,6 +363,7 @@ class ActionDecision:
     audit_rate: float | None = None
     drift_state: str = ""
     budget_hit: bool = False
+    policy_budget_filtered: bool = False
 
     def to_action(self) -> Action:
         return Action(
@@ -388,6 +390,7 @@ class ActionDecision:
             audit_rate=self.audit_rate,
             drift_state=self.drift_state,
             budget_hit=self.budget_hit,
+            policy_budget_filtered=self.policy_budget_filtered or self.budget_hit,
         )
 
 
@@ -516,6 +519,8 @@ class PolicyRunRecord:
     queue_delay_ms: float | None = None
     evicted_kv_mib: float | None = None
     budget_hit: bool = False
+    policy_budget_filtered: bool = False
+    backend_budget_hit: bool = False
     global_resident_kv_mib: float | None = None
     global_budget_mib: float | None = None
     quality_loss: float | None = None
@@ -575,7 +580,10 @@ class PolicyRunRecord:
         audit_rate: float | None = None,
         drift_state: str = "",
         budget_hit: bool = False,
+        policy_budget_filtered: bool | None = None,
     ) -> "PolicyRunRecord":
+        policy_filtered = budget_hit if policy_budget_filtered is None else policy_budget_filtered
+        backend_budget_hit = bool(backend_result.budget_hit)
         return cls(
             policy=policy_name,
             request_id=request.request_id,
@@ -603,7 +611,9 @@ class PolicyRunRecord:
             recompute_ms=backend_result.recompute_ms,
             queue_delay_ms=backend_result.queue_delay_ms,
             evicted_kv_mib=backend_result.evicted_kv_mib,
-            budget_hit=backend_result.budget_hit or budget_hit,
+            budget_hit=backend_budget_hit,
+            policy_budget_filtered=policy_filtered,
+            backend_budget_hit=backend_budget_hit,
             global_resident_kv_mib=backend_result.global_resident_kv_mib,
             global_budget_mib=backend_result.global_budget_mib,
             quality_loss=backend_result.quality_loss,

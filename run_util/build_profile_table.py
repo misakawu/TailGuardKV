@@ -12,6 +12,7 @@ from run_util.experiment_common import (
     annotate_measurement,
     config_adapters,
     config_profiles,
+    config_quality_mode,
     config_runtime,
     exact_profiles,
     expand_repeated_requests,
@@ -22,16 +23,18 @@ from run_util.experiment_common import (
     load_config,
     load_requests,
     read_measurements,
+    validate_requests_for_quality_mode,
     validate_profile_measurements,
     with_quality,
     write_csv,
 )
 from metrics import MetricCollector
+from profiles.base import PersistentWorkerFatalError, create_persistent_profile_worker
 from profiles.registry import build_profile_adapters
 from run_util.cli_common import add_profile_table_arguments, print_error, run_command
 
 
-PROFILE_CHUNK_SIZE = 10
+DEFAULT_PROFILE_CHUNK_SIZE = 10
 PROFILE_TABLE_FIELDNAMES = [
     "adapter",
     "error",
@@ -78,9 +81,9 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_kivi_group_size",
     "extra_kivi_quantization_triggered",
     "extra_kivi_residual_length",
-    "extra_metric_em",
-    "extra_metric_f1",
-    "extra_metric_rouge_l",
+    "extra_metric_loss_em",
+    "extra_metric_loss_f1",
+    "extra_metric_loss_rouge_l",
     "extra_model",
     "extra_arrival_index",
     "extra_history_turns",
@@ -147,7 +150,7 @@ def _pilot_epsilons(config: dict) -> list[float]:
     return [float(item) for item in items] or [0.05, 0.10]
 
 
-def _request_chunks(requests: list, chunk_size: int = PROFILE_CHUNK_SIZE):
+def _request_chunks(requests: list, chunk_size: int = DEFAULT_PROFILE_CHUNK_SIZE):
     for start in range(0, len(requests), chunk_size):
         yield start // chunk_size + 1, requests[start : start + chunk_size]
 
@@ -259,6 +262,7 @@ def _profile_many_compat(
     dry_run: bool,
     session_runtime: object | None,
     memory_budget_mib: float | None,
+    persistent_worker: object | None,
 ):
     profile_many = getattr(adapter, "profile_many")
     parameters = inspect.signature(profile_many).parameters
@@ -267,7 +271,23 @@ def _profile_many_compat(
         kwargs["session_runtime"] = session_runtime
     if "memory_budget_mib" in parameters:
         kwargs["memory_budget_mib"] = memory_budget_mib
+    if "persistent_worker" in parameters:
+        kwargs["persistent_worker"] = persistent_worker
     return profile_many(request_chunk, profile_name, **kwargs)
+
+
+def create_persistent_worker(adapter: object, runtime_config: dict[str, object]):
+    adapter_name = str(getattr(adapter, "name", "") or "")
+    env_name = str(getattr(adapter, "env", "") or "")
+    if adapter_name not in {"full", "kivi", "h2o"} or not env_name:
+        return None
+    return create_persistent_profile_worker(
+        adapter=adapter_name,
+        env_name=env_name,
+        runtime_module="profiles.qwen2_kv_runtime",
+        runtime_config=runtime_config,
+        pythonpath=tuple(getattr(adapter, "pythonpath", ()) or ()),
+    )
 
 
 def build_profile_table(args: argparse.Namespace) -> int:
@@ -305,11 +325,12 @@ def build_profile_table(args: argparse.Namespace) -> int:
         return 0 if all(measurement.ok and measurement.measured for measurement in measurements) else 1
     try:
         profiles = config_profiles(config)
+        quality_mode = config_quality_mode(config)
         runtime = config_runtime(config)
         require_ttft = bool(runtime.get("require_ttft", False))
         adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
         active_profiles = _active_profile_names(adapters, profiles)
-        require_quality_loss = "full_gpu" in active_profiles
+        require_quality_loss = quality_mode == "baseline" and "full_gpu" in active_profiles
         requests, fallback_requests = load_requests(config)
         max_requests = int(runtime.get("max_requests", 0) or 0)
         requests = limit_requests_by_split(requests, max_requests)
@@ -317,7 +338,11 @@ def build_profile_table(args: argparse.Namespace) -> int:
         requests = [
             replace(
                 request,
-                metadata={**request.metadata, "task": request.task, "length_bucket": length_bucket(request.prompt_chars)},
+                metadata={
+                    **request.metadata,
+                    "task": request.task,
+                    "length_bucket": str(request.metadata.get("length_bucket") or length_bucket(request.prompt_chars)),
+                },
             )
             for request in requests
         ]
@@ -329,63 +354,87 @@ def build_profile_table(args: argparse.Namespace) -> int:
             diagnostic_output.unlink()
         measurements = []
         exact = exact_profiles(active_profiles, config)
+        validate_requests_for_quality_mode(requests, quality_mode, exact)
         session_runtime_by_profile: dict[str, dict[str, object]] = {}
         memory_budget_mib = runtime.get("memory_budget_mib")
-        for adapter in adapters:
-            for spec in adapter.profiles():
-                if spec.name not in profiles:
-                    continue
-                session_runtime = session_runtime_by_profile.setdefault(spec.name, {})
-                for chunk_index, request_chunk in _request_chunks(requests):
-                    chunk_measurements = [
-                        annotate_measurement(measurement, request, fallback_requests)
-                        for measurement, request in zip(
-                            _profile_many_compat(
-                                adapter,
-                                request_chunk,
-                                spec.name,
-                                dry_run=args.dry_run,
-                                session_runtime=session_runtime,
-                                memory_budget_mib=memory_budget_mib,
-                            ),
-                            request_chunk,
-                            strict=True,
-                        )
-                    ]
-                    updated = with_quality(measurements + chunk_measurements, exact)
-                    chunk_measurements = updated[-len(chunk_measurements) :]
-                    try:
-                        validate_profile_measurements(
-                            chunk_measurements,
-                            output,
-                            required_profiles=[spec.name],
-                            require_measured=not args.dry_run,
-                            require_ttft=require_ttft and not args.dry_run,
-                            require_quality_loss=require_quality_loss,
-                        )
-                    except ValueError as exc:
-                        diagnostic_output = _failed_chunks_output(output)
-                        write_csv(diagnostic_output, [measurement.to_row() for measurement in chunk_measurements])
-                        print(json.dumps(json_ready({
-                            "ok": False,
-                            "output": output,
-                            "diagnostic_output": str(diagnostic_output),
-                            "error": str(exc),
-                            "failures": failed_measurement_summary(chunk_measurements),
-                        }), ensure_ascii=False, indent=2))
-                        return 2
-                    measurements = updated
-                    _append_profile_rows(output_path, [measurement.to_row() for measurement in chunk_measurements])
-                    completed_requests = min(chunk_index * PROFILE_CHUNK_SIZE, len(requests))
-                    _print_chunk_progress(
-                        adapter=adapter.name,
-                        profile=spec.name,
-                        chunk_index=chunk_index,
-                        completed_requests=completed_requests,
-                        total_requests=len(requests),
-                        rows=len(measurements),
-                        output=output,
-                    )
+        profile_chunk_size = max(1, int(runtime.get("profile_chunk_size", DEFAULT_PROFILE_CHUNK_SIZE) or DEFAULT_PROFILE_CHUNK_SIZE))
+        try:
+            for adapter in adapters:
+                persistent_worker = None
+                try:
+                    if not args.dry_run and bool(runtime.get("use_persistent_workers", True)):
+                        persistent_worker = create_persistent_worker(adapter, runtime)
+                    for spec in adapter.profiles():
+                        if spec.name not in profiles:
+                            continue
+                        session_runtime = session_runtime_by_profile.setdefault(spec.name, {})
+                        for chunk_index, request_chunk in _request_chunks(requests, profile_chunk_size):
+                            try:
+                                raw_measurements = _profile_many_compat(
+                                    adapter,
+                                    request_chunk,
+                                    spec.name,
+                                    dry_run=args.dry_run,
+                                    session_runtime=session_runtime,
+                                    memory_budget_mib=memory_budget_mib,
+                                    persistent_worker=persistent_worker,
+                                )
+                            except PersistentWorkerFatalError as exc:
+                                diagnostic_output = _failed_chunks_output(output)
+                                write_csv(diagnostic_output, [measurement.to_row() for measurement in exc.measurements])
+                                print(json.dumps(json_ready({
+                                    "ok": False,
+                                    "output": output,
+                                    "diagnostic_output": str(diagnostic_output),
+                                    "error": str(exc),
+                                    "failures": failed_measurement_summary(exc.measurements),
+                                }), ensure_ascii=False, indent=2))
+                                return 2
+                            chunk_measurements = [
+                                annotate_measurement(measurement, request, fallback_requests)
+                                for measurement, request in zip(raw_measurements, request_chunk, strict=True)
+                            ]
+                            updated = with_quality(measurements + chunk_measurements, exact, quality_mode=quality_mode)
+                            chunk_measurements = updated[-len(chunk_measurements) :]
+                            try:
+                                validate_profile_measurements(
+                                    chunk_measurements,
+                                    output,
+                                    required_profiles=[spec.name],
+                                    require_measured=not args.dry_run,
+                                    require_ttft=require_ttft and not args.dry_run,
+                                    require_quality_loss=require_quality_loss,
+                                )
+                            except ValueError as exc:
+                                diagnostic_output = _failed_chunks_output(output)
+                                write_csv(diagnostic_output, [measurement.to_row() for measurement in chunk_measurements])
+                                print(json.dumps(json_ready({
+                                    "ok": False,
+                                    "output": output,
+                                    "diagnostic_output": str(diagnostic_output),
+                                    "error": str(exc),
+                                    "failures": failed_measurement_summary(chunk_measurements),
+                                }), ensure_ascii=False, indent=2))
+                                return 2
+                            measurements = updated
+                            _append_profile_rows(output_path, [measurement.to_row() for measurement in chunk_measurements])
+                            completed_requests = min(chunk_index * profile_chunk_size, len(requests))
+                            _print_chunk_progress(
+                                adapter=adapter.name,
+                                profile=spec.name,
+                                chunk_index=chunk_index,
+                                completed_requests=completed_requests,
+                                total_requests=len(requests),
+                                rows=len(measurements),
+                                output=output,
+                            )
+                finally:
+                    if persistent_worker is not None:
+                        close = getattr(persistent_worker, "close", None)
+                        if callable(close):
+                            close()
+        finally:
+            pass
     except (FileNotFoundError, ValueError) as exc:
         print_error(exc, output=output)
         return 2
@@ -393,7 +442,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
         print_error(exc, output=output)
         return 1
 
-    measurements = with_quality(measurements, exact)
+    measurements = with_quality(measurements, exact, quality_mode=quality_mode)
     try:
         validate_profile_measurements(
             measurements,
