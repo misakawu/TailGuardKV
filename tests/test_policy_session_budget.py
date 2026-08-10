@@ -167,6 +167,78 @@ def test_requests_from_measurements_restores_original_request_flow() -> None:
     assert requests[1].effective_prompt == "User: hello\nAssistant: hi\nHow are you?"
 
 
+def test_session_replay_preserves_history_across_calibration_eval_split() -> None:
+    measurements = [
+        ProfileMeasurement(
+            request_id="session_a_turn_000",
+            session_id="session_a",
+            turn_index=0,
+            profile="full_gpu",
+            adapter="test",
+            ok=True,
+            measured=True,
+            output_text="turn0",
+            ttft_ms=10.0,
+            latency_ms=18.0,
+            peak_memory_mib=20.0,
+            kv_cache_memory_mib=20.0,
+            resident_memory_mib=20.0,
+            kv_incremental_mib=20.0,
+            kv_cumulative_mib=20.0,
+            resident_kv_mib_before=0.0,
+            resident_kv_mib_after=20.0,
+            quality_loss=0.0,
+            extra={
+                "task": "chat",
+                "length_bucket": "short",
+                "split": "calibration",
+                "arrival_index": 0,
+                "prompt_text": "turn0",
+                "history_turns": json.dumps([]),
+                "effective_prompt_chars": 5,
+            },
+        ),
+        ProfileMeasurement(
+            request_id="session_a_turn_001",
+            session_id="session_a",
+            turn_index=1,
+            profile="full_gpu",
+            adapter="test",
+            ok=True,
+            measured=True,
+            output_text="turn1",
+            ttft_ms=12.0,
+            latency_ms=20.0,
+            peak_memory_mib=35.0,
+            kv_cache_memory_mib=35.0,
+            resident_memory_mib=35.0,
+            kv_incremental_mib=15.0,
+            kv_cumulative_mib=35.0,
+            resident_kv_mib_before=20.0,
+            resident_kv_mib_after=35.0,
+            quality_loss=0.0,
+            extra={
+                "task": "chat",
+                "length_bucket": "short",
+                "split": "eval",
+                "arrival_index": 1,
+                "prompt_text": "turn1",
+                "history_turns": json.dumps(["User: turn0", "Assistant: reply0"]),
+                "effective_prompt_chars": 11,
+            },
+        ),
+    ]
+
+    requests = requests_from_measurements(measurements)
+    backend = MeasuredReplayBackend(measurements)
+
+    results = backend.run(requests, ["full_gpu"])
+
+    assert [request.request_id for request in requests] == ["session_a_turn_000", "session_a_turn_001"]
+    assert results[1].resident_kv_mib_before == 20.0
+    assert results[1].global_resident_kv_mib == 35.0
+
+
 def test_measured_replay_applies_cross_session_budget_pressure() -> None:
     backend = MeasuredReplayBackend(
         [

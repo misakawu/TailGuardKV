@@ -8,6 +8,7 @@ from backends.measured_replay import MeasuredReplayBackend
 from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
 from run_util.experiment_common import (
     config_policies,
+    config_experiment_type,
     config_profiles,
     exact_profiles,
     json_ready,
@@ -16,6 +17,7 @@ from run_util.experiment_common import (
     requests_from_measurements,
     split_measurements,
     validate_backend_results,
+    validate_experiment_policy_records,
     validate_profile_measurements,
     write_csv,
 )
@@ -47,21 +49,29 @@ def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str
 def _load_replay_inputs(
     args: argparse.Namespace,
     profiles: list[str],
-) -> tuple[list, list, list]:
+    experiment_type: str,
+) -> tuple[list, list, list[Request], set[tuple[str, int, str]]]:
     measurements = read_measurements(Path(args.measurements))
     validate_profile_measurements(
         measurements,
         args.measurements,
         required_profiles=profiles,
         require_measured=not args.allow_dry_run_replay,
+        experiment_type=experiment_type,
     )
     if not args.allow_dry_run_replay and any(not measurement.measured for measurement in measurements):
         raise ValueError("run-policies 默认拒绝 dry-run replay；请提供 measured=True 的 profile 表。")
     calibration_measurements, evaluation_measurements = split_measurements(measurements)
-    requests = requests_from_measurements(evaluation_measurements)
-    if not requests:
+    replay_measurements = measurements if experiment_type == "baseline_session" else evaluation_measurements
+    replay_requests = requests_from_measurements(replay_measurements)
+    evaluation_requests = requests_from_measurements(evaluation_measurements)
+    if not replay_requests:
         raise ValueError(f"profile 表没有可评估 request: {args.measurements}")
-    return measurements, calibration_measurements, requests
+    evaluation_request_keys = {
+        (request.session_id or "", request.turn_index, request.request_id)
+        for request in evaluation_requests
+    }
+    return measurements, calibration_measurements, replay_requests, evaluation_request_keys
 
 
 def _build_policy_set(
@@ -180,38 +190,53 @@ def _active_session_count(extra: dict[str, object]) -> float | None:
 
 def _run_policy_matrix(
     policies: list[Policy],
-    requests: list[Request],
+    replay_requests: list[Request],
     backend: MeasuredReplayBackend,
     exact: set[str],
+    evaluation_request_keys: set[tuple[str, int, str]] | None = None,
 ) -> list[PolicyRunRecord]:
     records: list[PolicyRunRecord] = []
+    eval_only = evaluation_request_keys is not None
     for policy in policies:
         if hasattr(backend, "reset"):
             backend.reset()
         cache_state = CacheState()
-        for request in sorted(requests, key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index)):
+        for request in sorted(
+            replay_requests,
+            key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index),
+        ):
+            request_key = (request.session_id or "", request.turn_index, request.request_id)
+            emit_record = (not eval_only) or (request_key in evaluation_request_keys)
             try:
                 action = policy.decide(request, cache_state, DeviceState())
             except Exception as exc:
-                records.append(_failure_record(policy, request, exc, exact=exact))
+                if emit_record:
+                    records.append(_failure_record(policy, request, exc, exact=exact))
                 continue
             try:
                 backend_result = backend.run([request], [action.profile])[0]
                 validate_backend_results([backend_result], path=f"{policy.name}:{request.request_id}")
                 cache_state = backend.cache_state
-                records.append(_record_from_backend_result(policy, request, action, backend_result, exact))
+                if emit_record:
+                    records.append(_record_from_backend_result(policy, request, action, backend_result, exact))
             except Exception as exc:
-                records.append(_failure_record(policy, request, exc, action=action, exact=exact))
+                if emit_record:
+                    records.append(_failure_record(policy, request, exc, action=action, exact=exact))
     return records
 
 
 def run_policies(args: argparse.Namespace) -> int:
     try:
         config = load_config(Path(args.config))
+        experiment_type = config_experiment_type(config)
         output, profiles, policy_names, epsilon, delta, memory_budget_mib = _run_settings(args, config)
         policy_config = config.get("policies", {})
         record_rejected_unsafe = bool(policy_config.get("record_rejected_unsafe", False)) if isinstance(policy_config, dict) else False
-        measurements, calibration_measurements, requests = _load_replay_inputs(args, profiles)
+        measurements, calibration_measurements, replay_requests, evaluation_request_keys = _load_replay_inputs(
+            args,
+            profiles,
+            experiment_type,
+        )
         backend = MeasuredReplayBackend(
             measurements,
             allow_dry_run=args.allow_dry_run_replay,
@@ -236,11 +261,24 @@ def run_policies(args: argparse.Namespace) -> int:
     except Exception as exc:
         print_error(exc)
         return 1
-    records = _run_policy_matrix(policies, requests, backend, exact)
+    records = _run_policy_matrix(
+        policies,
+        replay_requests,
+        backend,
+        exact,
+        evaluation_request_keys if experiment_type == "baseline_session" else None,
+    )
 
     try:
         write_csv(Path(output), [record.to_row() for record in records])
-        summary = MetricCollector().summarize_policy_runs(records, epsilon=epsilon, delta=delta, exact_profiles=exact)
+        validate_experiment_policy_records(records, experiment_type, output)
+        summary = MetricCollector().summarize_policy_runs(
+            records,
+            epsilon=epsilon,
+            delta=delta,
+            exact_profiles=exact,
+            experiment_type=experiment_type,
+        )
         print(
             json.dumps(
                 json_ready({
@@ -249,6 +287,7 @@ def run_policies(args: argparse.Namespace) -> int:
                     "epsilon": epsilon,
                     "delta": delta,
                     "memory_budget_mib": memory_budget_mib,
+                    "experiment_type": experiment_type,
                     "summary": summary,
                 }),
                 ensure_ascii=False,

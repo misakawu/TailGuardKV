@@ -83,6 +83,31 @@ def config_quality_mode(config: dict[str, Any]) -> str:
     return mode
 
 
+def config_experiment_type(config: dict[str, Any]) -> str:
+    """Return the explicit dual-track experiment type, with legacy compatibility."""
+    experiment = config.get("experiment", {})
+    if isinstance(experiment, dict) and experiment.get("type"):
+        experiment_type = str(experiment["type"]).strip().lower()
+    else:
+        data = config.get("data", {})
+        quality_mode = (
+            str(data.get("quality_mode", "baseline")).strip().lower()
+            if isinstance(data, dict)
+            else "baseline"
+        )
+        experiment_type = (
+            "baseline_quality"
+            if quality_mode == "baseline"
+            else "baseline_session"
+        )
+    if experiment_type not in {"baseline_quality", "baseline_session"}:
+        raise ValueError(
+            "experiment.type 仅支持 baseline_quality 或 baseline_session: "
+            f"{experiment_type}"
+        )
+    return experiment_type
+
+
 def exact_profiles(profiles: list[str], config: dict[str, Any] | None = None) -> set[str]:
     if config is not None:
         profiles_config = config.get("profiles", {})

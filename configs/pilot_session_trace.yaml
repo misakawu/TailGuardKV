@@ -2,6 +2,9 @@ model:
   pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
   cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
 
+experiment:
+  type: baseline_session
+
 profiles:
   adapters:
     - full
@@ -58,7 +61,7 @@ profile_smoke:
 
 outputs:
   smoke_profiles: out/profile_tables/pilot_session_trace_measured_profiles.csv
-  smoke_profile_trace: out/profile_tables/pilot_session_trace_measured_session_trace.csv
+  smoke_session_trace: out/session_traces/pilot_session_trace_pressure_trace.csv
   smoke_profile_checks: out/profile_tables/pilot_session_trace_profile_smoke.csv
   smoke_policy: out/policy_tables/pilot_session_trace_measured_policy.csv
   smoke_summary: out/policy_tables/pilot_session_trace_measured_summary.csv

@@ -31,6 +31,7 @@ class H2OPayload(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class ExperimentConfig:
+    experiment: dict[str, Any] = field(default_factory=dict)
     profiles: dict[str, Any] = field(default_factory=dict)
     policies: dict[str, Any] = field(default_factory=dict)
     pilot: dict[str, Any] = field(default_factory=dict)
@@ -46,6 +47,7 @@ class ExperimentConfig:
             return value if isinstance(value, dict) else {}
 
         return cls(
+            experiment=section("experiment"),
             profiles=section("profiles"),
             policies=section("policies"),
             pilot=section("pilot"),

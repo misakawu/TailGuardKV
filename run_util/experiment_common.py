@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from run_util.config_loader import (
     config_adapters,
+    config_experiment_type,
     config_policies,
     config_profiles,
     config_quality_mode,
@@ -19,13 +20,16 @@ from run_util.data_utils import (
     requests_from_measurements,
     split_measurements,
     validate_requests_for_quality_mode,
+    validate_requests_for_experiment_type,
     with_quality,
 )
 from run_util.io_utils import json_ready, read_measurements, write_csv
+from run_util.session_trace import synthesize_pressure_trace
 from run_util.validation import (
     REQUIRED_PROFILE_FIELDS,
     failed_measurement_summary,
     validate_backend_results,
+    validate_experiment_policy_records,
     validate_profile_measurements,
     validate_profile_table_header,
 )
@@ -34,6 +38,7 @@ __all__ = [
     "REQUIRED_PROFILE_FIELDS",
     "annotate_measurement",
     "config_adapters",
+    "config_experiment_type",
     "config_policies",
     "config_profiles",
     "config_quality_mode",
@@ -50,8 +55,11 @@ __all__ = [
     "read_measurements",
     "requests_from_measurements",
     "split_measurements",
+    "synthesize_pressure_trace",
     "validate_requests_for_quality_mode",
+    "validate_requests_for_experiment_type",
     "validate_backend_results",
+    "validate_experiment_policy_records",
     "validate_profile_measurements",
     "validate_profile_table_header",
     "with_quality",

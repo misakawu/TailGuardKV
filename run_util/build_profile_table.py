@@ -11,6 +11,7 @@ from pathlib import Path
 from run_util.experiment_common import (
     annotate_measurement,
     config_adapters,
+    config_experiment_type,
     config_profiles,
     config_quality_mode,
     config_runtime,
@@ -24,6 +25,7 @@ from run_util.experiment_common import (
     load_requests,
     read_measurements,
     validate_requests_for_quality_mode,
+    validate_requests_for_experiment_type,
     validate_profile_measurements,
     with_quality,
     write_csv,
@@ -153,6 +155,22 @@ def _pilot_epsilons(config: dict) -> list[float]:
 def _request_chunks(requests: list, chunk_size: int = DEFAULT_PROFILE_CHUNK_SIZE):
     for start in range(0, len(requests), chunk_size):
         yield start // chunk_size + 1, requests[start : start + chunk_size]
+
+
+def _limit_requests_for_experiment(requests: list, max_requests: int, experiment_type: str) -> list:
+    if experiment_type == "baseline_session":
+        if max_requests <= 0 or len(requests) <= max_requests:
+            return requests
+        return sorted(
+            requests,
+            key=lambda request: (
+                request.arrival_index,
+                request.session_id or request.request_id,
+                request.turn_index,
+                request.request_id,
+            ),
+        )[:max_requests]
+    return limit_requests_by_split(requests, max_requests)
 
 
 def _active_profile_names(adapters: list, configured_profiles: list[str]) -> list[str]:
@@ -308,6 +326,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
                 args.import_measurements,
                 required_profiles=config_profiles(config),
                 require_measured=not args.dry_run,
+                experiment_type=config_experiment_type(config),
             )
         except ValueError as exc:
             print_error(exc, output=output)
@@ -325,15 +344,21 @@ def build_profile_table(args: argparse.Namespace) -> int:
         return 0 if all(measurement.ok and measurement.measured for measurement in measurements) else 1
     try:
         profiles = config_profiles(config)
+        experiment_type = config_experiment_type(config)
         quality_mode = config_quality_mode(config)
         runtime = config_runtime(config)
         require_ttft = bool(runtime.get("require_ttft", False))
         adapters = build_profile_adapters(args.adapters or config_adapters(config), runtime)
         active_profiles = _active_profile_names(adapters, profiles)
         require_quality_loss = quality_mode == "baseline" and "full_gpu" in active_profiles
-        requests, fallback_requests = load_requests(config)
-        max_requests = int(runtime.get("max_requests", 0) or 0)
-        requests = limit_requests_by_split(requests, max_requests)
+        preloaded_requests = getattr(args, "preloaded_requests", None)
+        if preloaded_requests is None:
+            requests, fallback_requests = load_requests(config)
+            max_requests = int(runtime.get("max_requests", 0) or 0)
+            requests = _limit_requests_for_experiment(requests, max_requests, experiment_type)
+        else:
+            requests = list(preloaded_requests)
+            fallback_requests = bool(getattr(args, "fallback_requests", False))
         requests = expand_repeated_requests(requests, int(runtime.get("repeat", 1)))
         requests = [
             replace(
@@ -355,6 +380,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
         measurements = []
         exact = exact_profiles(active_profiles, config)
         validate_requests_for_quality_mode(requests, quality_mode, exact)
+        validate_requests_for_experiment_type(requests, experiment_type)
         session_runtime_by_profile: dict[str, dict[str, object]] = {}
         memory_budget_mib = runtime.get("memory_budget_mib")
         profile_chunk_size = max(1, int(runtime.get("profile_chunk_size", DEFAULT_PROFILE_CHUNK_SIZE) or DEFAULT_PROFILE_CHUNK_SIZE))
@@ -404,6 +430,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
                                     require_measured=not args.dry_run,
                                     require_ttft=require_ttft and not args.dry_run,
                                     require_quality_loss=require_quality_loss,
+                                    experiment_type=experiment_type,
                                 )
                             except ValueError as exc:
                                 diagnostic_output = _failed_chunks_output(output)
@@ -451,6 +478,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
             require_measured=not args.dry_run,
             require_ttft=bool(config_runtime(config).get("require_ttft", False)) and not args.dry_run,
             require_quality_loss=require_quality_loss,
+            experiment_type=experiment_type,
         )
     except ValueError as exc:
         print(json.dumps({

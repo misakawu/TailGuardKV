@@ -1,0 +1,109 @@
+request_id,session_id,turn_index,arrival_index,task,prompt,reference,history_turns,split,original_request_id,original_session_id,pressure_round,pressure_copy,pressure_budget_mib
+session_a_turn_000__pressure_r1_c1,session-a__pressure_r1_c1,0,0,qa,"Context:
+TailGuardKV keeps per-session KV state.
+
+Question:
+What does resident KV mean?
+Answer:",resident KV is the portion of cached key/value state still kept in memory,[],calibration,session_a_turn_000,session-a,1,1,18.0
+session_a_turn_000__pressure_r1_c2,session-a__pressure_r1_c2,0,1,qa,"Context:
+TailGuardKV keeps per-session KV state.
+
+Question:
+What does resident KV mean?
+Answer:",resident KV is the portion of cached key/value state still kept in memory,[],calibration,session_a_turn_000,session-a,1,2,18.0
+session_b_turn_000__pressure_r1_c1,session-b__pressure_r1_c1,0,2,summary,"Summarize:
+Session B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.
+Summary:",Offloading reduces memory pressure but can add restore latency when the session resumes.,[],calibration,session_b_turn_000,session-b,1,1,18.0
+session_b_turn_000__pressure_r1_c2,session-b__pressure_r1_c2,0,3,summary,"Summarize:
+Session B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.
+Summary:",Offloading reduces memory pressure but can add restore latency when the session resumes.,[],calibration,session_b_turn_000,session-b,1,2,18.0
+session_a_turn_001__pressure_r1_c1,session-a__pressure_r1_c1,1,4,qa,"Context:
+TailGuardKV tracks offloaded and dropped state separately.
+
+Question:
+Which one causes recompute?
+Answer:",dropped state causes recompute when the session returns,"[""User: Context:\nTailGuardKV keeps per-session KV state.\n\nQuestion:\nWhat does resident KV mean?\nAnswer:"", ""Assistant: resident KV is the portion of cached key/value state still kept in memory""]",calibration,session_a_turn_001,session-a,1,1,18.0
+session_a_turn_001__pressure_r1_c2,session-a__pressure_r1_c2,1,5,qa,"Context:
+TailGuardKV tracks offloaded and dropped state separately.
+
+Question:
+Which one causes recompute?
+Answer:",dropped state causes recompute when the session returns,"[""User: Context:\nTailGuardKV keeps per-session KV state.\n\nQuestion:\nWhat does resident KV mean?\nAnswer:"", ""Assistant: resident KV is the portion of cached key/value state still kept in memory""]",calibration,session_a_turn_001,session-a,1,2,18.0
+session_c_turn_000__pressure_r1_c1,session-c__pressure_r1_c1,0,6,summary,"Summarize:
+Session C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.
+Summary:",The report distinguishes policy budget filtering from real backend budget hits under concurrency.,[],calibration,session_c_turn_000,session-c,1,1,18.0
+session_c_turn_000__pressure_r1_c2,session-c__pressure_r1_c2,0,7,summary,"Summarize:
+Session C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.
+Summary:",The report distinguishes policy budget filtering from real backend budget hits under concurrency.,[],calibration,session_c_turn_000,session-c,1,2,18.0
+session_b_turn_001__pressure_r1_c1,session-b__pressure_r1_c1,1,8,summary,"Summarize:
+The follow-up for session B discusses how restore events can increase TTFT even when average memory drops.
+Summary:",Restore events can raise TTFT even if average memory usage goes down.,"[""User: Summarize:\nSession B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.\nSummary:"", ""Assistant: Offloading reduces memory pressure but can add restore latency when the session resumes.""]",calibration,session_b_turn_001,session-b,1,1,18.0
+session_b_turn_001__pressure_r1_c2,session-b__pressure_r1_c2,1,9,summary,"Summarize:
+The follow-up for session B discusses how restore events can increase TTFT even when average memory drops.
+Summary:",Restore events can raise TTFT even if average memory usage goes down.,"[""User: Summarize:\nSession B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.\nSummary:"", ""Assistant: Offloading reduces memory pressure but can add restore latency when the session resumes.""]",calibration,session_b_turn_001,session-b,1,2,18.0
+session_d_turn_000__pressure_r1_c1,session-d__pressure_r1_c1,0,10,qa,"Context:
+Session D arrives while other sessions are still active.
+
+Question:
+Why can that trigger eviction?
+Answer:",because the global resident KV budget may be exceeded when multiple sessions overlap,[],calibration,session_d_turn_000,session-d,1,1,18.0
+session_d_turn_000__pressure_r1_c2,session-d__pressure_r1_c2,0,11,qa,"Context:
+Session D arrives while other sessions are still active.
+
+Question:
+Why can that trigger eviction?
+Answer:",because the global resident KV budget may be exceeded when multiple sessions overlap,[],calibration,session_d_turn_000,session-d,1,2,18.0
+session_a_turn_002__pressure_r1_c1,session-a__pressure_r1_c1,2,12,qa,"Context:
+Session A returns after other sessions have occupied memory.
+
+Question:
+What happens if its state was offloaded?
+Answer:",the system performs a restore before continuing,"[""User: Context:\nTailGuardKV keeps per-session KV state.\n\nQuestion:\nWhat does resident KV mean?\nAnswer:"", ""Assistant: resident KV is the portion of cached key/value state still kept in memory"", ""User: Context:\nTailGuardKV tracks offloaded and dropped state separately.\n\nQuestion:\nWhich one causes recompute?\nAnswer:"", ""Assistant: dropped state causes recompute when the session returns""]",eval,session_a_turn_002,session-a,1,1,18.0
+session_a_turn_002__pressure_r1_c2,session-a__pressure_r1_c2,2,13,qa,"Context:
+Session A returns after other sessions have occupied memory.
+
+Question:
+What happens if its state was offloaded?
+Answer:",the system performs a restore before continuing,"[""User: Context:\nTailGuardKV keeps per-session KV state.\n\nQuestion:\nWhat does resident KV mean?\nAnswer:"", ""Assistant: resident KV is the portion of cached key/value state still kept in memory"", ""User: Context:\nTailGuardKV tracks offloaded and dropped state separately.\n\nQuestion:\nWhich one causes recompute?\nAnswer:"", ""Assistant: dropped state causes recompute when the session returns""]",eval,session_a_turn_002,session-a,1,2,18.0
+session_c_turn_001__pressure_r1_c1,session-c__pressure_r1_c1,1,14,summary,"Summarize:
+The second turn of session C explains that a resident trace should show global resident KV near the configured budget and expose queueing if pressure remains too high.
+Summary:",A good trace shows resident KV near budget and may expose queueing under sustained pressure.,"[""User: Summarize:\nSession C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.\nSummary:"", ""Assistant: The report distinguishes policy budget filtering from real backend budget hits under concurrency.""]",eval,session_c_turn_001,session-c,1,1,18.0
+session_c_turn_001__pressure_r1_c2,session-c__pressure_r1_c2,1,15,summary,"Summarize:
+The second turn of session C explains that a resident trace should show global resident KV near the configured budget and expose queueing if pressure remains too high.
+Summary:",A good trace shows resident KV near budget and may expose queueing under sustained pressure.,"[""User: Summarize:\nSession C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.\nSummary:"", ""Assistant: The report distinguishes policy budget filtering from real backend budget hits under concurrency.""]",eval,session_c_turn_001,session-c,1,2,18.0
+session_e_turn_000__pressure_r1_c1,session-e__pressure_r1_c1,0,16,qa,"Context:
+Session E is another concurrent request stream.
+
+Question:
+What metric should increase when global pressure rises?
+Answer:",budget hit rate should increase as global pressure rises,[],eval,session_e_turn_000,session-e,1,1,18.0
+session_e_turn_000__pressure_r1_c2,session-e__pressure_r1_c2,0,17,qa,"Context:
+Session E is another concurrent request stream.
+
+Question:
+What metric should increase when global pressure rises?
+Answer:",budget hit rate should increase as global pressure rises,[],eval,session_e_turn_000,session-e,1,2,18.0
+session_b_turn_002__pressure_r1_c1,session-b__pressure_r1_c1,2,18,summary,"Summarize:
+Session B comes back after partial eviction. The system may need to restore or recompute part of its KV cache before generating the next answer.
+Summary:","When session B returns after eviction, the backend may restore or recompute cached state.","[""User: Summarize:\nSession B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.\nSummary:"", ""Assistant: Offloading reduces memory pressure but can add restore latency when the session resumes."", ""User: Summarize:\nThe follow-up for session B discusses how restore events can increase TTFT even when average memory drops.\nSummary:"", ""Assistant: Restore events can raise TTFT even if average memory usage goes down.""]",eval,session_b_turn_002,session-b,1,1,18.0
+session_b_turn_002__pressure_r1_c2,session-b__pressure_r1_c2,2,19,summary,"Summarize:
+Session B comes back after partial eviction. The system may need to restore or recompute part of its KV cache before generating the next answer.
+Summary:","When session B returns after eviction, the backend may restore or recompute cached state.","[""User: Summarize:\nSession B starts with a medium-length document about cache eviction and restore costs. The important point is that offloading saves memory but may add restore latency later.\nSummary:"", ""Assistant: Offloading reduces memory pressure but can add restore latency when the session resumes."", ""User: Summarize:\nThe follow-up for session B discusses how restore events can increase TTFT even when average memory drops.\nSummary:"", ""Assistant: Restore events can raise TTFT even if average memory usage goes down.""]",eval,session_b_turn_002,session-b,1,2,18.0
+session_d_turn_001__pressure_r1_c1,session-d__pressure_r1_c1,1,20,qa,"Context:
+Session D continues after a crowded interval.
+
+Question:
+What backend behavior should differ from independent requests?
+Answer:","interleaved sessions should trigger eviction, restore, recompute, or queue behavior that independent requests do not show","[""User: Context:\nSession D arrives while other sessions are still active.\n\nQuestion:\nWhy can that trigger eviction?\nAnswer:"", ""Assistant: because the global resident KV budget may be exceeded when multiple sessions overlap""]",eval,session_d_turn_001,session-d,1,1,18.0
+session_d_turn_001__pressure_r1_c2,session-d__pressure_r1_c2,1,21,qa,"Context:
+Session D continues after a crowded interval.
+
+Question:
+What backend behavior should differ from independent requests?
+Answer:","interleaved sessions should trigger eviction, restore, recompute, or queue behavior that independent requests do not show","[""User: Context:\nSession D arrives while other sessions are still active.\n\nQuestion:\nWhy can that trigger eviction?\nAnswer:"", ""Assistant: because the global resident KV budget may be exceeded when multiple sessions overlap""]",eval,session_d_turn_001,session-d,1,2,18.0
+session_c_turn_002__pressure_r1_c1,session-c__pressure_r1_c1,2,22,summary,"Summarize:
+The final session C turn closes the trace by comparing action distributions under different budgets and checking whether backend events align with the raw CSV.
+Summary:",The final turn checks that budget-dependent action shifts align with backend events in the raw CSV.,"[""User: Summarize:\nSession C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.\nSummary:"", ""Assistant: The report distinguishes policy budget filtering from real backend budget hits under concurrency."", ""User: Summarize:\nThe second turn of session C explains that a resident trace should show global resident KV near the configured budget and expose queueing if pressure remains too high.\nSummary:"", ""Assistant: A good trace shows resident KV near budget and may expose queueing under sustained pressure.""]",eval,session_c_turn_002,session-c,1,1,18.0
+session_c_turn_002__pressure_r1_c2,session-c__pressure_r1_c2,2,23,summary,"Summarize:
+The final session C turn closes the trace by comparing action distributions under different budgets and checking whether backend events align with the raw CSV.
+Summary:",The final turn checks that budget-dependent action shifts align with backend events in the raw CSV.,"[""User: Summarize:\nSession C carries a longer report about memory budgeting across many concurrent conversations. It emphasizes that the system should separate policy-level filtering from backend budget hits.\nSummary:"", ""Assistant: The report distinguishes policy budget filtering from real backend budget hits under concurrency."", ""User: Summarize:\nThe second turn of session C explains that a resident trace should show global resident KV near the configured budget and expose queueing if pressure remains too high.\nSummary:"", ""Assistant: A good trace shows resident KV near budget and may expose queueing under sustained pressure.""]",eval,session_c_turn_002,session-c,1,2,18.0

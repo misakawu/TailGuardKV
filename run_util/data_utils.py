@@ -76,6 +76,7 @@ def load_requests(config: dict[str, Any]) -> tuple[list[Request], bool]:
                 metadata=metadata,
             )
         )
+    requests = _with_session_histories(requests)
     return _ensure_request_splits(requests, float(data_config.get("calibration_fraction", 0.5))), False
 
 
@@ -279,6 +280,61 @@ def _ensure_session_splits(requests: list[Request], calibration_fraction: float)
     ]
 
 
+def _with_session_histories(requests: list[Request]) -> list[Request]:
+    if not any(request.session_id for request in requests):
+        return requests
+    grouped: dict[str, list[Request]] = {}
+    for request in requests:
+        if request.session_id:
+            grouped.setdefault(request.session_id, []).append(request)
+
+    updated: dict[tuple[str, int, str], Request] = {}
+    for session_id, session_requests in grouped.items():
+        ordered = sorted(
+            session_requests,
+            key=lambda request: (request.turn_index, request.arrival_index, request.request_id),
+        )
+        history: list[str] = []
+        expected_turn = 0
+        previous_arrival = -1
+        for request in ordered:
+            if request.turn_index != expected_turn:
+                raise ValueError(
+                    "session 请求 turn_index 必须从 0 连续递增；"
+                    f"session={session_id} expected={expected_turn} actual={request.turn_index}"
+                )
+            if request.arrival_index < previous_arrival:
+                raise ValueError(
+                    "session 请求 arrival_index 必须随 turn_index 非递减；"
+                    f"session={session_id} turn_index={request.turn_index}"
+                )
+            updated[(session_id, request.turn_index, request.request_id)] = replace(
+                request,
+                history_turns=tuple(history),
+            )
+            history.append(f"User: {request.prompt}")
+            if request.reference:
+                history.append(f"Assistant: {request.reference}")
+            previous_arrival = request.arrival_index
+            expected_turn += 1
+
+    normalized: list[Request] = []
+    for request in requests:
+        if not request.session_id:
+            normalized.append(request)
+            continue
+        normalized.append(updated[(request.session_id, request.turn_index, request.request_id)])
+    return sorted(
+        normalized,
+        key=lambda request: (
+            request.arrival_index,
+            request.session_id or request.request_id,
+            request.turn_index,
+            request.request_id,
+        ),
+    )
+
+
 def limit_requests_by_split(requests: list[Request], max_requests: int) -> list[Request]:
     if max_requests <= 0 or len(requests) <= max_requests:
         return requests
@@ -450,6 +506,68 @@ def validate_requests_for_quality_mode(requests: list[Request], quality_mode: st
             "baseline quality smoke 不接受缺少 reference 的请求；"
             f"request={request.request_id} task={task} 只适合 session/cache 诊断，不适合 baseline quality smoke。"
         )
+
+
+def validate_requests_for_experiment_type(
+    requests: list[Request],
+    experiment_type: str,
+) -> None:
+    if experiment_type != "baseline_session":
+        return
+    if not requests:
+        raise ValueError("baseline_session 要求非空 session-aware 请求输入")
+    ordered = sorted(
+        requests,
+        key=lambda request: (
+            request.arrival_index,
+            request.session_id or request.request_id,
+            request.turn_index,
+            request.request_id,
+        ),
+    )
+    if ordered != requests:
+        raise ValueError("baseline_session 要求请求按 arrival_index 排序")
+    missing_session = [request.request_id for request in requests if not request.session_id]
+    if missing_session:
+        raise ValueError(
+            "baseline_session 要求每条请求有非空 session_id；"
+            f"缺少: {missing_session[:3]}"
+        )
+    session_order: dict[str, list[Request]] = {}
+    for request in requests:
+        session_order.setdefault(request.session_id or "", []).append(request)
+    for session_id, session_requests in session_order.items():
+        previous_arrival = -1
+        seen_turns: set[int] = set()
+        for expected_turn, request in enumerate(
+            sorted(session_requests, key=lambda item: (item.turn_index, item.arrival_index, item.request_id))
+        ):
+            if request.turn_index in seen_turns:
+                raise ValueError(
+                    "baseline_session 不允许重复 turn_index；"
+                    f"session_id={session_id} turn_index={request.turn_index}"
+                )
+            if request.turn_index != expected_turn:
+                raise ValueError(
+                    "baseline_session 要求每个 session 的 turn_index 从 0 连续递增；"
+                    f"session_id={session_id} expected={expected_turn} actual={request.turn_index}"
+                )
+            if request.arrival_index < previous_arrival:
+                raise ValueError(
+                    "baseline_session 要求同一 session 的 arrival_index 随 turn_index 递增；"
+                    f"session_id={session_id} turn_index={request.turn_index}"
+                )
+            seen_turns.add(request.turn_index)
+            previous_arrival = request.arrival_index
+    if not any(request.turn_index > 0 for request in requests):
+        raise ValueError("baseline_session 要求至少一个 session 的 turn_index > 0")
+    session_counts: dict[str, int] = {}
+    for request in requests:
+        session_counts[request.session_id or ""] = session_counts.get(request.session_id or "", 0) + 1
+    if len(session_counts) < 2:
+        raise ValueError("baseline_session 要求至少两个交错 session")
+    if not any(count > 1 for count in session_counts.values()):
+        raise ValueError("baseline_session 要求至少一个 session 包含多 turn")
 
 
 def with_quality(

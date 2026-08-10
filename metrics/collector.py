@@ -55,6 +55,7 @@ class MetricCollector:
         epsilon: float,
         delta: float,
         exact_profiles: set[str],
+        experiment_type: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         grouped: dict[str, list[PolicyRunRecord]] = defaultdict(list)
         for record in records:
@@ -208,6 +209,7 @@ class MetricCollector:
                 ),
                 default=float("nan"),
             )
+            is_quality = experiment_type == "baseline_quality"
             summary[policy] = {
                 "count": float(len(rows)),
                 "ok_count": float(ok_count),
@@ -273,7 +275,47 @@ class MetricCollector:
                 "drift_state": drift_states.most_common(1)[0][0] if drift_states else "",
                 "oracle": any(row.oracle for row in rows),
                 "placeholder": any(row.placeholder for row in rows),
+                "backend_events_applicable": not is_quality,
+                "backend_semantics_status": "not_applicable" if is_quality else "validated",
+                "backend_not_applicable_reason": (
+                    "baseline_quality 使用独立质量请求，不验收 session/backend 事件"
+                    if is_quality
+                    else ""
+                ),
             }
+            if is_quality:
+                for field in (
+                    "budget_hit_rate",
+                    "restore_count",
+                    "restore_time_ms",
+                    "recompute_count",
+                    "recompute_time_ms",
+                    "queue_delay_ms",
+                    "triggered_restore",
+                    "triggered_recompute",
+                    "triggered_evict",
+                    "triggered_queue",
+                    "mean_resident_kv_mib",
+                    "mean_global_resident_kv_mib",
+                    "p95_global_resident_kv_mib",
+                    "mean_cumulative_kv_mib",
+                ):
+                    summary[policy][field] = None
+            summary[policy].update(
+                {
+                    "session_reuse_evidence": bool(
+                        session_turn_counts and any(count > 1 for count in session_turn_counts.values())
+                    ),
+                    "global_resident_evolution": len(set(global_resident_kv)) >= 2,
+                    "backend_event_evidence": bool(
+                        budget_hit_count
+                        or evict_event_count
+                        or restore_count
+                        or recompute_count
+                        or queue_event_count
+                    ),
+                }
+            )
         return summary
 
 

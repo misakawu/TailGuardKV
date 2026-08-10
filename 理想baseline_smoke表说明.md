@@ -1,15 +1,24 @@
 # 理想 baseline smoke 表说明
 
-这份说明不是在复述某次具体实验结果，而是在定义一张“看起来正常、能解释问题、能区分 baseline”的 smoke 表应该长什么样。
+这份说明不是在复述某次具体实验结果，而是在定义两张正式 baseline 表应该长什么样：
 
-我这里关心两件事：
+- `baseline_quality`：质量参照表。
+- `baseline_session`：backend 语义表。
 
-1. 表里的数字有没有基本语义。
-2. 5 条 baseline 曲线有没有拉开，而不是全都挤成一条。
+我这里关心三件事：
+
+1. 质量表里的数字有没有基本语义。
+2. session/backend 表里的事件链能不能自洽。
+3. 5 条 baseline 曲线有没有拉开，而不是全都挤成一条。
 
 ## 先说结论
 
-一张理想的 baseline smoke 表，至少要让人一眼看出下面这些关系：
+先区分职责。
+
+- `baseline_quality` 表不要求 `restore/recompute/queue/global_resident`，这些字段应该是空值或 `N/A` 语义，不能拿 0 冒充“没发生”。
+- `baseline_session` 表必须能解释 `resident/global resident/budget hit/restore/recompute/evict/queue`，缺任一关键链路时应该直接失败，而不是出表后再口头解释。
+
+在此基础上，一张理想的 baseline quality smoke 表，至少要让人一眼看出下面这些关系：
 
 - `full_lru` 是 exact 参照线，质量最好，内存最高，动作最单一。
 - `static_best` 会吃掉一部分 tail 风险，换来更低的平均 TTFT 或更低的平均 KV。

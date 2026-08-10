@@ -34,6 +34,7 @@ def validate_profile_measurements(
     require_measured: bool = False,
     require_ttft: bool = False,
     require_quality_loss: bool = True,
+    experiment_type: str | None = None,
 ) -> None:
     if not measurements:
         raise ValueError(f"profile 表为空: {path}")
@@ -91,6 +92,21 @@ def validate_profile_measurements(
                 f"profile 表第 {index} 行字段不完整，缺少 {missing}: "
                 f"request={measurement.request_id} profile={measurement.profile} path={path}"
             )
+        if experiment_type == "baseline_session" and measurement.ok and measurement.measured:
+            session_missing: list[str] = []
+            if not measurement.session_id:
+                session_missing.append("session_id")
+            if measurement.resident_kv_mib_before is None:
+                session_missing.append("resident_kv_mib_before")
+            if measurement.resident_kv_mib_after is None:
+                session_missing.append("resident_kv_mib_after")
+            if measurement.kv_cumulative_mib is None:
+                session_missing.append("kv_cumulative_mib")
+            if session_missing:
+                raise ValueError(
+                    "baseline_session profile 表缺少 backend resident 字段 "
+                    f"{session_missing}: request={measurement.request_id} path={path}"
+                )
         if require_measured and (not measurement.measured or not measurement.ok):
             raise ValueError(
                 "profile 运行失败: "
@@ -140,6 +156,48 @@ def validate_backend_results(
                 f"backend 结果第 {index} 行字段不完整，缺少 {missing}: "
                 f"request={result.request_id} profile={result.profile} path={path}"
             )
+
+
+def validate_experiment_policy_records(
+    records: list,
+    experiment_type: str,
+    path: str = "<memory>",
+) -> None:
+    if experiment_type != "baseline_session":
+        return
+    if not records:
+        raise ValueError(f"baseline_session policy 结果为空: {path}")
+    missing_session = [record.request_id for record in records if not record.session_id]
+    if missing_session:
+        raise ValueError(
+            "baseline_session policy 结果缺少 session_id；"
+            f"requests={missing_session[:3]} path={path}"
+        )
+    if not any(record.turn_index > 0 for record in records):
+        raise ValueError(f"baseline_session policy 结果没有 session 复用 turn: {path}")
+    global_values = [
+        record.global_resident_kv_mib
+        for record in records
+        if record.global_resident_kv_mib is not None
+    ]
+    if not global_values:
+        raise ValueError(f"baseline_session policy 结果缺少 global_resident_kv_mib: {path}")
+    if len(set(global_values)) < 2:
+        raise ValueError(f"baseline_session global_resident_kv_mib 没有演化: {path}")
+    has_backend_event = any(
+        bool(record.backend_budget_hit or record.budget_hit)
+        or bool(record.evicted_kv_mib and record.evicted_kv_mib > 0)
+        or bool(record.restore_ms and record.restore_ms > 0)
+        or bool(record.recompute_ms and record.recompute_ms > 0)
+        or bool(record.queue_delay_ms and record.queue_delay_ms > 0)
+        for record in records
+    )
+    if not has_backend_event:
+        raise ValueError(
+            "baseline_session policy 结果缺少真实 backend 压力事件 "
+            "(budget_hit/evict/restore/recompute/queue): "
+            f"{path}"
+        )
 
 
 def failed_measurement_summary(measurements: list[ProfileMeasurement]) -> list[dict[str, object]]:

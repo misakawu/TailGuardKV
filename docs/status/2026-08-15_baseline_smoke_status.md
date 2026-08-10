@@ -4,7 +4,7 @@
 
 As of August 9, 2026, the baseline pilot main dataset has been switched to `QA + 摘要` independent requests in `data/fixtures/pilot_qa_summary_requests.jsonl`. `configs/pilot.yaml` and the main baseline sweep configs now use this fixture instead of `e0_reproduce_requests.jsonl`.
 
-This pilot main dataset only covers independent `qa/summary` requests with explicit `reference` and `metadata.split`. Session-heavy backend behavior remains in `configs/pilot_sharegpt.yaml` and is not part of the baseline quality table.
+This pilot main dataset only covers independent `qa/summary` requests with explicit `reference` and `metadata.split`. As of August 10, 2026, this path is formally treated as `baseline_quality`; session-heavy backend behavior is validated separately in `configs/pilot_session_trace.yaml` and `configs/pilot_sharegpt.yaml` under the `baseline_session` track and is not part of the baseline quality table.
 
 The 5-baseline smoke table referenced below was generated under the older fixture path and should be treated as historical output until rerun on the new pilot main dataset.
 

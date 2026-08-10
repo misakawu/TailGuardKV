@@ -2,6 +2,9 @@ model:
   pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
   cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
 
+experiment:
+  type: baseline_quality
+
 profiles:
   adapters:
     - full

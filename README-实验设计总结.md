@@ -160,11 +160,41 @@ MetricCollector
 Result Tables / Figures / Logs / Audit Records
 ```
 
-这里面有两层特别关键，就是 `Backend` 和 `Policy`。
+这套框架里真正要讲清楚的，不只是“有哪些模块”，而是三层边界：`ProfileAdapter` 负责把不同 profile 做成统一动作接口，`Policy` 负责在当前状态下选动作，`Backend` 负责把动作在具体系统里执行出来。三层分清以后，TailGuardKV 和 baseline 才能放进同一条实验管线里公平比较。
+
+#### ProfileAdapter 层做什么
+
+`ProfileAdapter` 处理的是动作空间本身。文档里把 profile 定义成对象的表示、放置和恢复方式，初始动作空间包括 `full@GPU`、`KIVI4@GPU`、`KIVI2@GPU`、`pruned50@GPU`、`full@CPU` 和 `recompute`。这一层的任务，不是决定该选哪个 profile，而是把这些动作封装成统一接口，并为上层提供可比较的数据。
+
+它至少做三件事：
+
+- 统一封装不同 profile 的执行入口，屏蔽 KIVI、H2O/SnapKV、CPU offload 和 recompute 在底层实现上的差异；
+- 实际运行或测量这些 profile，产出每请求 × profile 的质量、显存和延迟数据；
+- 把这些结果整理成标准化表格，供 QRP 训练、CG 校准和 measured-replay backend 回放使用。
+
+这层的输入主要有三类：请求和对象信息，例如任务类型、对象 token 数、上下文长度和是否可复用；profile 标识，也就是“要把这个对象变成什么表示和放置方式”；执行环境信息，例如设备类型、batch、并发和带宽，这些量会影响量化、恢复和重算代价。
+
+它的输出不是策略结论，而是动作后果。最核心的产物是每请求 × profile 的质量、延迟、显存表，以及与 profile 切换相关的成本数据，例如 bytes/token、量化时间、restore 时间和 recompute 时间。上层并不直接碰各家 kernel，而是通过这层拿到“这个 profile 真跑起来会是什么样”。
+
+所以 `ProfileAdapter` 回答的问题是：如果把同一个对象变成不同 profile，各自会带来什么真实后果。
+
+#### Policy 层做什么
+
+`Policy` 是决策层。它负责根据当前请求、对象状态、缓存状态和设备状态，选出一个具体动作交给 `Backend` 执行。所有 baseline 和 TailGuardKV 主方法都应该挂在这一层上，这样同一 runner 才能公平比较不同策略。
+
+它的输入一般包括：请求信息，例如任务类型、prompt 长度、上下文长度、历史长度、RAG chunk 数和到达时间；对象信息，例如对象 token 数、当前 profile、当前位置、age、reuse 次数和是否保留 full shadow；系统状态，例如当前 GPU/CPU 占用、剩余预算、并发、队列状态和带宽估计；以及策略依赖的辅助量，例如 QRP 预测损失、CG 风险上界、reuse 概率和切换成本预测。
+
+它的输出是一个明确动作，例如把某个对象从 `full@GPU` 切到 `KIVI4@GPU`，把某个对象切到 `pruned50@GPU`，把某个对象 offload 到 `full@CPU`，或者直接丢弃并在后续访问时 `recompute`。
+
+不同策略得到动作的方式不同。`full_lru` 基本不做质量预测，默认全精度，显存超限时按 LRU 或引擎默认规则换出；`static_best` 和 `static_safe` 先离线选出固定 profile，线上按固定规则执行；`utility_dynamic` 根据平均质量和系统收益构造 utility 分数；`uncalibrated_dynamic` 利用预测损失，但不做 conformal 校准；`tailguard` 则先经 QRP 预测，再经 CG 生成安全集合，最后由 STC 在安全集合里做成本优化。
+
+对 TailGuardKV 来说，这一层内部其实是一条三段式决策链：QRP 先预测每个 profile 的质量损失，CG 再把点预测变成风险上界并筛出安全 profile，最后 STC 只在安全集合里做系统成本优化，必要时退回 `full@CPU` 或 `recompute`。
+
+所以 `Policy` 回答的问题是：在当前状态下，系统应该做什么。
 
 #### Backend 层做什么
 
-`Backend` 是执行层。它不决定该选什么动作，只负责在当前环境里真正执行动作，并返回动作执行后的系统结果。
+`Backend` 是执行层。它不决定该选什么动作，只负责在当前环境里真正执行动作，并返回动作执行后的系统结果。换句话说，`Policy` 给它一个动作，`Backend` 把这个动作落到具体系统上，再把后果量出来。
 
 它主要做三件事：
 
@@ -172,105 +202,264 @@ Result Tables / Figures / Logs / Audit Records
 - 执行上层给出的动作，例如压缩、剪枝、offload、restore、drop 或 recompute；
 - 返回这次动作带来的真实结果，包括动作耗时、显存变化、TTFT 变化、是否触发 restore/recompute，以及在 replay 或 shadow 模式下对应的质量信息。
 
-`Backend` 的输入通常包括：
+`Backend` 的输入通常包括：当前请求或当前对象；当前 cache state 和 device state；实验配置，例如显存预算、带宽设定和是否允许某类迁移；上层 `Policy` 给出的明确动作；以及来自 `ProfileAdapter` 的 profile 执行参数和成本表。
 
-- 当前请求或当前对象；
-- 当前 cache state 和 device state；
-- 实验配置，例如显存预算、带宽设定、是否允许某类迁移；
-- 上层 `Policy` 给出的明确动作。
+它的输出是执行结果，而不是策略判断。至少要包含动作是否成功执行、执行后的 profile 和位置、动作代价、请求 TTFT、GPU/CPU 内存变化、是否发生 restore 或 recompute，以及在 replay 或 audit 模式下可关联的质量结果。
 
-可以抽象成下面这个接口：
+输出的来源取决于 backend 类型。`Measured-Replay Backend` 不需要每次都真实跑完整模型，而是基于预先测好的 profile 数据和 trace 回放；`VLLMBackend` 或 `LMCacheBackend` 这类真实系统 backend 则直接操作真实推理系统，动作代价、TTFT、显存变化和 restore/offload 行为都来自实时测量。
 
-```python
-Backend.execute(action, request, cache_state, device_state, config) -> ExecutionResult
+所以 `Backend` 回答的问题是：如果上层真的这样做了，系统会发生什么。
+
+下面这两张图把三层接口和一次完整调用链压缩成近代码草图。正文负责交代边界，图负责把接口关系画清楚。
+
+#### 类图
+
+```mermaid
+classDiagram
+    class Request {
+      +request_id: str
+      +task_type: str
+      +prompt_tokens: int
+      +history_tokens: int
+      +chunk_count: int
+      +arrival_ts: float
+    }
+
+    class CacheObject {
+      +object_id: str
+      +token_count: int
+      +object_type: str
+      +current_profile: str
+      +location: str
+      +reuse_count: int
+      +age: float
+      +has_full_shadow: bool
+    }
+
+    class DeviceState {
+      +gpu_bytes_used: int
+      +cpu_bytes_used: int
+      +bandwidth_g2c: float
+      +bandwidth_c2g: float
+      +concurrency: int
+      +queue_depth: int
+    }
+
+    class ExperimentConfig {
+      +epsilon: float
+      +delta: float
+      +gpu_budget_bytes: int
+      +allow_restore: bool
+      +allow_recompute: bool
+    }
+
+    class ProfileSpec {
+      +profile_id: str
+      +representation: str
+      +placement: str
+      +lossless: bool
+      +bytes_per_token: float
+    }
+
+    class ProfileMeasurement {
+      +request_id: str
+      +object_id: str
+      +profile_id: str
+      +quality_loss: float
+      +ttft_ms: float
+      +memory_bytes: int
+      +switch_cost_ms: float
+      +restore_cost_ms: float
+      +recompute_cost_ms: float
+    }
+
+    class ProfileAdapter {
+      <<interface>>
+      +list_profiles() List~ProfileSpec~
+      +measure(request, object, profile, env) ProfileMeasurement
+      +load_measurement_table() MeasurementTable
+      +estimate_cost(object, profile, env) ProfileMeasurement
+    }
+
+    class KIVIAdapter
+    class H2OAdapter
+    class FullGPUAdapter
+    class FullCPUAdapter
+    class RecomputeAdapter
+
+    class PolicyContext {
+      +request: Request
+      +objects: List~CacheObject~
+      +device_state: DeviceState
+      +config: ExperimentConfig
+    }
+
+    class ActionCandidate {
+      +object_id: str
+      +profile_id: str
+      +pred_loss: float
+      +risk_upper_bound: float
+      +estimated_cost_ms: float
+      +memory_delta_bytes: int
+      +is_safe: bool
+    }
+
+    class Action {
+      +object_id: str
+      +from_profile: str
+      +to_profile: str
+      +op_type: str
+      +reason: str
+    }
+
+    class Policy {
+      <<interface>>
+      +decide(ctx) List~Action~
+    }
+
+    class TailGuardPolicy {
+      -qrp: QRP
+      -cg: ConformalGuard
+      -stc: SafeTierController
+      +decide(ctx) List~Action~
+    }
+
+    class FullLRUPolicy
+    class StaticBestPolicy
+    class UtilityDynamicPolicy
+
+    class QRP {
+      +predict(ctx, profile) float
+    }
+
+    class ConformalGuard {
+      +bound(ctx, profile, pred_loss) float
+      +safe_set(candidates, epsilon) List~ActionCandidate~
+    }
+
+    class SafeTierController {
+      +select(candidates, budget) List~Action~
+    }
+
+    class ExecutionRequest {
+      +request: Request
+      +actions: List~Action~
+      +device_state: DeviceState
+      +config: ExperimentConfig
+    }
+
+    class ExecutionResult {
+      +request_id: str
+      +profile_before: str
+      +profile_after: str
+      +action_cost_ms: float
+      +ttft_ms: float
+      +gpu_bytes_delta: int
+      +cpu_bytes_delta: int
+      +cache_hit: bool
+      +did_restore: bool
+      +did_recompute: bool
+      +quality_loss: float
+    }
+
+    class Backend {
+      <<interface>>
+      +execute(exec_req) List~ExecutionResult~
+    }
+
+    class MeasuredReplayBackend
+    class VLLMBackend
+    class LMCacheBackend
+
+    class MetricCollector {
+      +record(results) void
+      +emit_tables() void
+    }
+
+    Request --> CacheObject : references
+    PolicyContext --> Request
+    PolicyContext --> CacheObject
+    PolicyContext --> DeviceState
+    PolicyContext --> ExperimentConfig
+
+    ProfileAdapter --> ProfileSpec
+    ProfileAdapter --> ProfileMeasurement
+    KIVIAdapter ..|> ProfileAdapter
+    H2OAdapter ..|> ProfileAdapter
+    FullGPUAdapter ..|> ProfileAdapter
+    FullCPUAdapter ..|> ProfileAdapter
+    RecomputeAdapter ..|> ProfileAdapter
+
+    Policy --> PolicyContext
+    Policy --> Action
+    FullLRUPolicy ..|> Policy
+    StaticBestPolicy ..|> Policy
+    UtilityDynamicPolicy ..|> Policy
+    TailGuardPolicy ..|> Policy
+
+    TailGuardPolicy --> QRP
+    TailGuardPolicy --> ConformalGuard
+    TailGuardPolicy --> SafeTierController
+    TailGuardPolicy --> ActionCandidate
+    TailGuardPolicy --> ProfileAdapter : queries cost/profile meta
+
+    Backend --> ExecutionRequest
+    Backend --> ExecutionResult
+    MeasuredReplayBackend ..|> Backend
+    VLLMBackend ..|> Backend
+    LMCacheBackend ..|> Backend
+    Backend --> ProfileAdapter : uses adapters/cost tables
+
+    MetricCollector --> ExecutionResult
 ```
 
-它的输出是一个执行结果对象，至少包含：
+这张图里有三个关键边界。第一，`ProfileAdapter` 不做决策，只提供 profile 定义、测量结果和成本估计。第二，`Policy` 不直接碰底层 kernel，它只消费 `ProfileAdapter` 给出的 profile 信息，然后产出 `Action`。第三，`Backend` 不重新决定动作，它只负责把 `Action` 落到 replay 或真实系统上，并返回 `ExecutionResult`。
 
-- 动作是否成功执行；
-- 执行后的 profile 和位置；
-- 动作代价，例如 `action_cost_ms`；
-- 执行后请求的 `ttft_ms`；
-- GPU/CPU 内存变化；
-- 是否发生 `restore`、`recompute`、`cache_hit`；
-- 在 replay 模式下的 `quality_loss`，或真实 backend 下的输出结果。
+#### 时序图
 
-输出的来源取决于 backend 类型。
+```mermaid
+sequenceDiagram
+    participant Runner as ExecutionRunner
+    participant Policy as TailGuardPolicy
+    participant QRP as QRP
+    participant CG as ConformalGuard
+    participant STC as SafeTierController
+    participant PA as ProfileAdapter
+    participant BE as Backend
+    participant MC as MetricCollector
 
-1. `Measured-Replay Backend`
+    Runner->>Policy: decide(ctx)
+    loop for each object x profile
+        Policy->>QRP: predict(ctx, profile)
+        QRP-->>Policy: pred_loss
+        Policy->>CG: bound(ctx, profile, pred_loss)
+        CG-->>Policy: risk_upper_bound
+        Policy->>PA: estimate_cost(object, profile, env)
+        PA-->>Policy: measurement/cost
+    end
 
-这类 backend 不需要每次都真实跑完整模型，而是基于预先测好的 profile 数据和 trace 进行回放。质量损失来自离线质量表，显存变化来自 bytes/token 测量，量化、restore、recompute 等成本来自真机微基准、查表或拟合模型。它适合 Pilot 阶段和大规模参数扫描。
+    Policy->>CG: safe_set(candidates, epsilon)
+    CG-->>Policy: safe_candidates
+    Policy->>STC: select(safe_candidates, gpu_budget)
+    STC-->>Policy: actions
+    Policy-->>Runner: actions
 
-2. `真实系统 Backend`
+    Runner->>BE: execute(exec_req)
+    alt measured replay
+        BE->>PA: load_measurement_table()
+        PA-->>BE: offline measurements
+        BE-->>Runner: replay execution results
+    else real backend
+        BE->>PA: adapter-specific params
+        PA-->>BE: profile metadata
+        BE-->>Runner: real execution results
+    end
 
-例如 `VLLMBackend` 或 `LMCacheBackend`。这类 backend 直接操作真实推理系统，动作代价、TTFT、显存变化和 restore/offload 行为都来自实时测量。模型输出也由真实推理产生。这里系统指标可以直接读到，但质量真值往往不能同步得到，需要靠 full reference 或 shadow audit 计算。
-
-简化地说，`Backend` 回答的是一句话：如果上层真的这样做了，系统会发生什么。
-
-#### Policy 层做什么
-
-`Policy` 是决策层。它负责根据当前请求、对象状态、缓存状态和设备状态，选出一个具体动作交给 `Backend` 执行。
-
-它的工作流程通常有四步：
-
-1. 读取当前状态；
-2. 枚举候选动作；
-3. 按自身策略规则评估这些动作；
-4. 输出最终动作。
-
-它的输入一般包括：
-
-- 请求信息：任务类型、prompt 长度、上下文长度、历史长度、RAG chunk 数、到达时间；
-- 对象信息：对象 token 数、当前 profile、当前位置、age、reuse 次数、最近访问时间、是否有 full shadow；
-- 系统状态：当前 GPU/CPU 占用、剩余预算、并发和队列状态、带宽估计；
-- 策略依赖的辅助量：QRP 预测损失、CG 风险上界、reuse 概率、切换成本预测等。
-
-可以抽象成：
-
-```python
-Policy.decide(request, objects, cache_state, device_state, config) -> Action
+    Runner->>MC: record(results)
+    MC-->>Runner: tables/logs/audit rows
 ```
 
-它的输出是一个明确动作，例如：
-
-- 把某个对象从 `full@GPU` 切到 `KIVI4@GPU`
-- 把某个对象 offload 到 `full@CPU`
-- 丢弃对象，并在后续访问时 `recompute`
-
-不同策略得到输出的方式不同。
-
-- `full_lru` 基本不做质量预测，默认全精度，显存超限时按 LRU 或引擎默认规则换出；
-- `static_best` 和 `static_safe` 先离线选出固定 profile，线上按固定规则执行；
-- `utility_dynamic` 根据平均质量和系统收益构造 utility 分数，在线挑分数最优动作；
-- `uncalibrated_dynamic` 也会利用预测损失，但不做 conformal 校准；
-- `tailguard` 则先经 QRP 预测，再经 CG 得到安全集合，最后由 STC 在安全集合里做成本优化。
-
-所以 `Policy` 回答的是另一句话：在当前状态下，系统应该做什么。
-
-把两层关系合起来看，就是：
-
-```text
-Request + Cache State + Device State
-                |
-                v
-            Policy
-   (决定选哪个动作)
-                |
-                v
-            Action
-                |
-                v
-            Backend
-   (真正执行动作并测量结果)
-                |
-                v
-       ExecutionResult
-                |
-                v
-       Metrics / Audit / Logs
-```
-
-这也是实验框架里最需要讲清楚的边界：`Policy` 决定“做什么”，`Backend` 决定“做了以后系统实际发生什么”。
+如果把这个调用链翻回正文，可以压成一句话：Runner 先把上下文交给 `Policy`，`Policy` 结合 QRP、CG、STC 和 `ProfileAdapter` 选出动作，`Backend` 再执行这些动作，最后由 `MetricCollector` 统一记账。这也是后续代码结构最稳妥的落点。
 
 ## 6. 核心方法
 
@@ -454,3 +643,49 @@ TailGuardKV 这篇论文如果最后能站住，不会只靠一张“平均指�
   要证明控制器开销、显存稳定性和真实系统可部署性是过关的，而不是只停留在 replay 结果。
 
 如果把整份规划压成一句最直接的话，实验部分真正想证明的是：TailGuardKV 不只是“理论上可以控制尾部风险”，而是“在统一实验框架下，确实能在守住质量约束的前提下换来系统收益，而且这种收益不是一次性、静态的假象”。
+
+## 8. 实验边界
+
+这部分是理解一体化 Pilot 的关键。它不是一个可以随便试错、后面再推倒重来的“预热实验”，而是主实验的最小完整版本。规划文档在这里卡得很严，核心要求有三句：
+
+> “通过后，主实验只做四件事：增加模型、增加任务、增加预算/SLO网格、切换到真实 vLLM/LMCache/端侧 backend。算法和 baseline 不得推倒重写。”
+
+> “Pilot先运行 1模型 × 2任务 × 2预算 × 2个ε × 2个δ ，但算法、baseline、日志和绘图接口必须与主实验完全相同。主实验只扩大矩阵，不能只挑有利cell。”
+
+> “端到端Pilot必须完成，H0/H1/H2-lite同时通过；代码只改配置即可开始主实验。”
+
+把这几句放在一起看，边界就很清楚了：Pilot 要做的，不是先拼一个临时样机看看方向对不对，而是先把主实验要用的那条主干代码、主干算法和主干对照系统做出来，只把实验矩阵缩小。
+
+### 8.1 Pilot 应该做什么
+
+Pilot 必须一次性回答 H0、H1 和 H2-lite，不能拆成三个互相独立的小实验串行推进。也就是说，同一批 TailGuardKV 对 baseline 的结果，既要说明 tail-risk 这个问题真实存在，也要说明 coverage 确实守住了，还要说明在这个约束下已经出现了系统收益信号。
+
+实现上，Pilot 就要把主线闭环完整接起来：QRP 负责做风险预测，CG 用 simultaneous calibration 给出安全集合，STC 在安全集合里做动作选择，必要时触发 exact fallback。运行层面，Pilot 主要依赖 measured-replay backend，但同一时期就要把 vLLM/LMCache 的最小 adapter 和 smoke trace 接上，保证后面切真实 backend 时只是替换执行环境，不是重写系统。
+
+再往下落，Pilot 还必须从第一天就用统一接口组织代码。文档要求同一个 `run_experiment.py`、同一套 `Policy` 与 `Backend` 抽象、同一 CSV/Parquet schema、同一套指标和同一 trace 管理方式。换句话说，Pilot 阶段写出来的 runner、日志、绘图和 baseline 接口，后面都要继续用。
+
+### 8.2 Pilot 明确不该做什么
+
+第一，不要把 Pilot 做成“先证明一点，再补剩下部分”的串行工程。文档已经把 H0/H1/H2-lite 合并成同一个端到端门槛，任何一条核心门槛失败，都不是“主实验再想办法补”，而是要停下来收缩或改题。
+
+第二，不要把 Pilot 当成一次性原型。不能先用 notebook、临时脚本、特殊日志格式或者单独 runner 把结果做出来，然后在主实验阶段另起炉灶。文档已经明确写了，代码必须只改配置即可开始主实验，Pilot 和主实验共用同一路径。
+
+第三，不要在 Pilot 通过后重写核心算法或 baseline。主实验允许扩大的，是模型数、任务数、预算/SLO 网格，以及真实 backend；不允许扩大的，是“顺手把算法主线改掉”或者“重新定义 baseline 集合”。如果 Pilot 阶段用的是一套简化启发式，准备到主实验再换正式算法，那就已经越界了。
+
+第四，不要在 Pilot 阶段陷进底层工程泥潭。规划里专门强调，预实验直接实现最小完整算法和 baseline，但要限制 profile 和 kernel 数量，避免精力都耗在真实引擎细节上。Pilot 的任务是先证明主线成立，不是先把所有工程角落都抠干净。
+
+### 8.3 各层任务与实现边界
+
+从实验问题层看，Pilot 的边界是“同一批结果同时支撑问题、保证和收益”。它要回答的是：平均指标是否掩盖了 tail-risk，TailGuardKV 是否真的守住了质量 SLO，以及在这个前提下是否已经出现了 p95 TTFT 或显存收益。它不负责把所有 deployment 证据一次跑满，那是后续 H4 和真实 backend 阶段的任务。
+
+从实验规模层看，Pilot 只是主实验矩阵的严格子集。当前规定是 `1模型 × 2任务 × 2预算 × 2个epsilon × 2个delta`。主实验的变化只能是把这个子集扩大，不能只挑表现好的 cell 继续跑，也不能因为 Pilot 某些格子不好看，就临时重排矩阵定义。
+
+从算法层看，Pilot 就要落下主线版本：`QRP + simultaneous CG + STC + exact fallback`。这里的重点是“完整”和“可复用”。文档里虽然提到 `policy-level CRC` 可以作为更紧但更复杂的主实验版本，但结合“算法不得推倒重写”和“AAL 是主实验阶段唯一新增的大模块”来看，更稳妥的解释是：`simultaneous calibration` 才是 Pilot 到主实验的默认主线，`policy-level CRC` 最多是后续附加版本或消融，不该变成推翻 Pilot 主线的理由。
+
+从 baseline 层看，Pilot 就要把可部署 baseline 放进统一 `Policy` 接口里，同表比较。收益判断针对的是“最佳可部署 baseline”，不是一个随手挑的弱对照。因此，弱 baseline 试水、强 baseline 留到主实验再补，这种做法不符合文档边界。
+
+从系统实现层看，Pilot 的边界是“先把抽象定住，再把规模做小”。`Policy`、`Backend`、`MetricCollector`、`ExperimentConfig` 这些接口在 Pilot 阶段就要固定下来。Measured-replay backend 是 Pilot 的主执行环境，但不是说系统结构可以只为 replay 设计。真实 backend 的 smoke 接入要同步存在，确保后面切到 vLLM/LMCache 或端侧 backend 时，不会牵连上层算法和实验接口一起变化。
+
+从主实验新增内容看，文档给的边界也很清楚：AAL 是主实验阶段唯一新增的大模块。也就是说，Pilot 之后真正允许新增的是 audit 和 drift adaptation 这条闭环能力，而不是重新设计 QRP、CG、STC 或 baseline 主线。
+
+如果把这一节再压缩成一句话，那就是：一体化 Pilot 要做的是“主实验最小可运行闭环”，不是“主实验之前的临时样机”。后面可以扩规模、接真实 backend、补 AAL，但不能借这个过程把核心算法、baseline 或实验主路径重新写一遍。

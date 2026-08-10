@@ -14,6 +14,7 @@ SUMMARY_KEY_COLUMNS = [
     "ok",
     "error",
     "diagnostic_output",
+    "session_trace_output",
     "failures",
     "config",
     "run_dir",
@@ -59,6 +60,13 @@ SUMMARY_KEY_COLUMNS = [
     "has_h1_coverage_metrics",
     "has_h2_lite_benefit_metrics",
     "deployable_baseline_names",
+    "experiment_type",
+    "backend_events_applicable",
+    "backend_semantics_status",
+    "backend_not_applicable_reason",
+    "session_reuse_evidence",
+    "global_resident_evolution",
+    "backend_event_evidence",
 ]
 
 TOTAL_POLICY_SUMMARY_COLUMNS = [
@@ -111,6 +119,13 @@ TOTAL_POLICY_SUMMARY_COLUMNS = [
     "optimality_gap",
     "audit_rate",
     "action_distribution",
+    "experiment_type",
+    "backend_events_applicable",
+    "backend_semantics_status",
+    "backend_not_applicable_reason",
+    "session_reuse_evidence",
+    "global_resident_evolution",
+    "backend_event_evidence",
 ]
 
 
@@ -148,6 +163,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "ok": payload.get("ok"),
             "error": _summary_error(payload),
             "diagnostic_output": payload.get("diagnostic_output", ""),
+            "session_trace_output": payload.get("session_trace_output", ""),
             "failures": payload.get("failures", ""),
             "config": payload.get("config"),
             "run_dir": payload.get("run_dir", ""),
@@ -158,6 +174,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "epsilon": payload.get("epsilon"),
             "delta": payload.get("delta"),
             "memory_budget_mib": payload.get("memory_budget_mib"),
+            "experiment_type": payload.get("experiment_type", ""),
             **evidence,
         }
     ]
@@ -179,6 +196,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "epsilon": payload.get("epsilon"),
                 "delta": payload.get("delta"),
                 "memory_budget_mib": payload.get("memory_budget_mib"),
+                "experiment_type": payload.get("experiment_type", ""),
             }
             if isinstance(metrics, dict):
                 row.update(metrics)
@@ -202,6 +220,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "epsilon": policy_run.get("epsilon"),
                     "delta": policy_run.get("delta"),
                     "memory_budget_mib": policy_run.get("memory_budget_mib"),
+                    "experiment_type": payload.get("experiment_type", ""),
                 }
                 if isinstance(metrics, dict):
                     row.update(metrics)
@@ -253,8 +272,9 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                             "run_dir": payload.get("run_dir", ""),
                             "policy": policy,
                             "memory_budget_mib": payload.get("memory_budget_mib"),
-                            "epsilon": payload.get("epsilon"),
-                            "delta": payload.get("delta"),
+                        "epsilon": payload.get("epsilon"),
+                        "delta": payload.get("delta"),
+                            "experiment_type": payload.get("experiment_type", ""),
                         }
                     )
                     if isinstance(metrics, dict):
@@ -283,6 +303,31 @@ def _evidence_fields(payload: dict[str, Any]) -> dict[str, Any]:
         if str(name) != "quality_oracle"
     ]
     return {
+        "experiment_type": payload.get("experiment_type", ""),
+        "backend_events_applicable": (
+            None
+            if not evidence_metrics
+            else all(metric.get("backend_events_applicable") is True for metric in evidence_metrics)
+        ),
+        "backend_semantics_status": next(
+            (
+                metric.get("backend_semantics_status", "")
+                for metric in evidence_metrics
+                if metric.get("backend_semantics_status")
+            ),
+            "",
+        ),
+        "backend_not_applicable_reason": next(
+            (
+                metric.get("backend_not_applicable_reason", "")
+                for metric in evidence_metrics
+                if metric.get("backend_not_applicable_reason")
+            ),
+            "",
+        ),
+        "session_reuse_evidence": any(metric.get("session_reuse_evidence") for metric in evidence_metrics),
+        "global_resident_evolution": any(metric.get("global_resident_evolution") for metric in evidence_metrics),
+        "backend_event_evidence": any(metric.get("backend_event_evidence") for metric in evidence_metrics),
         "has_h0_tail_metrics": _has_any_metric(evidence_metrics, {"p95_quality_loss", "p99_quality_loss", "cvar_quality_loss", "worst_group_violation"}),
         "has_h1_coverage_metrics": _has_any_metric(evidence_metrics, {"safe_ratio", "fallback_ratio", "exact_fallback_ratio", "candidate_safe_count"}),
         "has_h2_lite_benefit_metrics": bool(

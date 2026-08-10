@@ -139,6 +139,91 @@ def test_build_profile_table_reuses_session_runtime_container_across_chunks(tmp_
     assert stub.memory_budgets == [64.0, 64.0, 64.0]
 
 
+def test_build_profile_table_does_not_relimit_preloaded_requests(tmp_path: Path) -> None:
+    class StubAdapter:
+        name = "stub"
+
+        def __init__(self) -> None:
+            self.seen_request_ids: list[str] = []
+
+        def profiles(self):
+            return (ProfileSpec("full_gpu", "stub", "env", lossy=False, exact=True),)
+
+        def profile_many(self, requests, profile_name, dry_run=True, session_runtime=None, memory_budget_mib=None):
+            del dry_run, session_runtime, memory_budget_mib
+            self.seen_request_ids.extend(request.request_id for request in requests)
+            return [
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    profile=profile_name,
+                    adapter=self.name,
+                    ok=True,
+                    measured=True,
+                    output_text=request.prompt,
+                    latency_ms=1.0,
+                    ttft_ms=1.0,
+                    peak_memory_mib=1.0,
+                    kv_cache_memory_mib=1.0,
+                    resident_memory_mib=1.0,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    kv_incremental_mib=1.0,
+                    kv_cumulative_mib=1.0,
+                    resident_kv_mib_before=0.0,
+                    resident_kv_mib_after=1.0,
+                    restore_ms=0.0,
+                    recompute_ms=0.0,
+                    evicted_kv_mib=0.0,
+                    budget_hit=False,
+                    extra={"task": request.task, "length_bucket": "short", "split": request.metadata.get("split", "eval")},
+                )
+                for request in requests
+            ]
+
+    stub = StubAdapter()
+    preloaded_requests = [
+        Request(
+            request_id=f"r{index}",
+            task="chat",
+            prompt=f"prompt {index}",
+            session_id=f"s{index // 2}",
+            turn_index=index % 2,
+            arrival_index=index,
+            metadata={"split": "calibration" if index < 2 else "eval"},
+        )
+        for index in range(4)
+    ]
+    with (
+        patch("run_util.build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu"]}}),
+        patch("run_util.build_profile_table.config_adapters", return_value=["stub"]),
+        patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu"]),
+        patch(
+            "run_util.build_profile_table.config_runtime",
+            return_value={"repeat": 1, "memory_budget_mib": 64.0, "profile_chunk_size": 10, "max_requests": 2},
+        ),
+        patch("run_util.build_profile_table.config_experiment_type", return_value="baseline_session"),
+        patch("run_util.build_profile_table.config_quality_mode", return_value="session_diagnostic"),
+        patch("run_util.build_profile_table.build_profile_adapters", return_value=[stub]),
+        patch("run_util.build_profile_table.exact_profiles", return_value={"full_gpu"}),
+        patch("run_util.build_profile_table.validate_requests_for_quality_mode"),
+        patch("run_util.build_profile_table.validate_requests_for_experiment_type"),
+    ):
+        code = build_profile_table(
+            argparse.Namespace(
+                config="config.yaml",
+                adapters=None,
+                output=str(tmp_path / "profiles.csv"),
+                import_measurements="",
+                dry_run=False,
+                preloaded_requests=preloaded_requests,
+                fallback_requests=False,
+            )
+        )
+
+    assert code == 0
+    assert stub.seen_request_ids == [request.request_id for request in preloaded_requests]
+
+
 def test_build_profile_table_uses_persistent_worker_when_enabled(tmp_path: Path) -> None:
     class StubWorker:
         def __init__(self) -> None:
