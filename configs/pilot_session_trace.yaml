@@ -48,7 +48,7 @@ data:
   quality_mode: session_diagnostic
   requests: data/fixtures/pilot_session_trace_requests.jsonl
   calibration_fraction: 0.5
-  max_requests: 12
+  max_requests: 240
 
 profile_smoke:
   max_new_tokens: 16
@@ -63,5 +63,6 @@ outputs:
   smoke_profiles: out/profile_tables/pilot_session_trace_measured_profiles.csv
   smoke_session_trace: out/session_traces/pilot_session_trace_pressure_trace.csv
   smoke_profile_checks: out/profile_tables/pilot_session_trace_profile_smoke.csv
+  smoke_trace_quality_gate: out/profile_tables/pilot_session_trace_quality_gate.json
   smoke_policy: out/policy_tables/pilot_session_trace_measured_policy.csv
   smoke_summary: out/policy_tables/pilot_session_trace_measured_summary.csv

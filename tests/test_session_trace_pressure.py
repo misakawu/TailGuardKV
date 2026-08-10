@@ -134,20 +134,28 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
     requests_path = tmp_path / "requests.jsonl"
     requests_path.write_text(
         "\n".join(
-            json.dumps(
-                {
-                    "request_id": request.request_id,
-                    "task": request.task,
-                    "prompt": request.prompt,
-                    "session_id": request.session_id,
-                    "turn_index": request.turn_index,
-                    "arrival_index": request.arrival_index,
-                    "reference": f"reply-{request.request_id}",
-                    "metadata": {"split": request.metadata.get("split", "eval")},
-                },
-                ensure_ascii=False,
-            )
-            for request in _seed_requests()
+                json.dumps(
+                    {
+                        "request_id": request.request_id,
+                        "task": "qa" if request.request_id.startswith("a") else "summary",
+                        "prompt": request.prompt,
+                        "session_id": request.session_id,
+                        "turn_index": request.turn_index,
+                        "arrival_index": request.arrival_index,
+                        "reference": f"reply-{request.request_id}",
+                        "history_turns": list(request.history_turns),
+                        "metadata": {
+                            "split": request.metadata.get("split", "eval"),
+                            "length_bucket": "medium" if request.request_id.startswith("a") else "long",
+                            "risk_family": "kivi_sensitive" if request.request_id.startswith("a") else "h2o_sensitive",
+                            "risk_profiles": ["kivi_2bit_residual32"] if request.request_id.startswith("a") else ["h2o_heavy15_recent15"],
+                            "pressure_phase": "quality" if request.turn_index > 0 else "memory",
+                            "followup_kind": "constraint_recall" if request.request_id.startswith("a") and request.turn_index > 0 else "detail_recall" if request.turn_index > 0 else "",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                for request in _seed_requests()
         ),
         encoding="utf-8",
     )
@@ -160,17 +168,17 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
                 f"  requests: {requests_path}",
                 "profiles:",
                 "  adapters: [test]",
-                "  names: [full_gpu]",
+                "  names: [full_gpu, kivi_2bit_residual32, h2o_heavy15_recent15]",
                 "policies:",
                 "  names: [full_lru]",
                 "pilot:",
                 "  memory_budgets_mib: [50]",
-                    "outputs:",
-                    f"  smoke_profiles: {profile_path}",
-                    f"  smoke_session_trace: {session_trace_path}",
-                    f"  smoke_policy: {policy_path}",
-                    f"  smoke_summary: {summary_path}",
-                ]
+                "outputs:",
+                f"  smoke_profiles: {profile_path}",
+                f"  smoke_session_trace: {session_trace_path}",
+                f"  smoke_policy: {policy_path}",
+                f"  smoke_summary: {summary_path}",
+            ]
             ),
         encoding="utf-8",
     )
@@ -180,8 +188,49 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
     def fake_profile(args: argparse.Namespace) -> int:
         assert len(args.preloaded_requests) == len(seed) * 2
         assert any("__pressure" in (request.session_id or "") for request in args.preloaded_requests)
-        write_csv(Path(args.output), [row.to_row() for row in _trace_measurements(args.preloaded_requests)])
-        print(json.dumps({"output": args.output, "rows": len(args.preloaded_requests)}))
+        rows: list[dict[str, object]] = []
+        for request in args.preloaded_requests:
+            task = "qa" if request.request_id.startswith("a") else "summary"
+            split = request.metadata.get("split", "eval")
+            for profile, quality_loss, peak_memory in (
+                ("full_gpu", 0.0, 30.0),
+                ("kivi_2bit_residual32", 0.05 if task == "qa" and split == "eval" else 0.0, 20.0),
+                ("h2o_heavy15_recent15", 0.05 if task == "summary" and split == "eval" else 0.0, 18.0),
+            ):
+                rows.append(
+                    ProfileMeasurement(
+                        request_id=request.request_id,
+                        session_id=request.session_id,
+                        turn_index=request.turn_index,
+                        profile=profile,
+                        adapter="test",
+                        ok=True,
+                        measured=True,
+                        output_text="answer",
+                        latency_ms=10.0,
+                        ttft_ms=10.0,
+                        peak_memory_mib=peak_memory,
+                        kv_cache_memory_mib=peak_memory,
+                        resident_memory_mib=peak_memory,
+                        kv_incremental_mib=peak_memory,
+                        kv_cumulative_mib=peak_memory,
+                        resident_kv_mib_before=10.0 if request.turn_index > 0 else 0.0,
+                        resident_kv_mib_after=peak_memory,
+                        quality_loss=quality_loss,
+                        extra={
+                            "task": task,
+                            "length_bucket": "medium",
+                            "split": split,
+                            "arrival_index": request.arrival_index,
+                            "prompt_text": request.prompt,
+                            "history_turns": json.dumps(list(request.history_turns), ensure_ascii=False),
+                            "effective_prompt_chars": request.prompt_chars,
+                            "original_request_id": request.metadata.get("original_request_id", request.request_id),
+                        },
+                    ).to_row()
+                )
+        write_csv(Path(args.output), rows)
+        print(json.dumps({"output": args.output, "rows": len(rows)}))
         return 0
 
     def fake_policy(args: argparse.Namespace) -> int:
@@ -257,3 +306,182 @@ def test_baseline_session_pressure_trace_produces_backend_event_evidence(tmp_pat
         or float(record["queue_delay_ms"] or 0.0) > 0.0
         for record in records
     )
+
+
+def test_baseline_session_quality_gate_blocks_policy_sweep_when_eval_signal_is_missing(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    profile_path = tmp_path / "profiles.csv"
+    session_trace_path = tmp_path / "session_trace.csv"
+    policy_path = tmp_path / "policy.csv"
+    summary_path = tmp_path / "summary.csv"
+    gate_path = tmp_path / "trace_quality_gate.json"
+    requests_path = tmp_path / "requests.jsonl"
+    requests_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "request_id": request.request_id,
+                    "task": "qa" if request.request_id.startswith("a") else "summary",
+                    "prompt": request.prompt,
+                    "session_id": request.session_id,
+                    "turn_index": request.turn_index,
+                    "arrival_index": request.arrival_index,
+                    "reference": f"reply-{request.request_id}",
+                    "history_turns": list(request.history_turns),
+                    "metadata": {
+                        "split": request.metadata.get("split", "eval"),
+                        "length_bucket": "medium",
+                        "risk_family": "kivi_sensitive" if request.request_id.startswith("a") else "h2o_sensitive",
+                        "risk_profiles": ["kivi_2bit_residual32"] if request.request_id.startswith("a") else ["h2o_heavy15_recent15"],
+                        "pressure_phase": "quality" if request.turn_index > 0 else "memory",
+                        "followup_kind": "constraint_recall" if request.request_id.startswith("a") and request.turn_index > 0 else "detail_recall" if request.turn_index > 0 else "",
+                    },
+                },
+                ensure_ascii=False,
+            )
+            for request in _seed_requests()
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        "\n".join(
+            [
+                "experiment:",
+                "  type: baseline_session",
+                "data:",
+                "  source: fixture",
+                "  quality_mode: session_diagnostic",
+                f"  requests: {requests_path}",
+                "  max_requests: 4",
+                "profiles:",
+                "  adapters: [test]",
+                "  names: [full_gpu, kivi_2bit_residual32, h2o_heavy15_recent15]",
+                "policies:",
+                "  names: [full_lru]",
+                "pilot:",
+                "  memory_budgets_mib: [50]",
+                "outputs:",
+                f"  smoke_profiles: {profile_path}",
+                f"  smoke_session_trace: {session_trace_path}",
+                f"  smoke_policy: {policy_path}",
+                f"  smoke_summary: {summary_path}",
+                f"  smoke_trace_quality_gate: {gate_path}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_profile(args: argparse.Namespace) -> int:
+        rows = []
+        for request in args.preloaded_requests:
+            task = "qa" if request.request_id.startswith("a") else "summary"
+            split = request.metadata.get("split", "eval")
+            rows.append(
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    profile="full_gpu",
+                    adapter="test",
+                    ok=True,
+                    measured=True,
+                    output_text="answer",
+                    latency_ms=10.0,
+                    ttft_ms=10.0,
+                    peak_memory_mib=30.0,
+                    kv_cache_memory_mib=30.0,
+                    resident_memory_mib=30.0,
+                    kv_incremental_mib=10.0,
+                    kv_cumulative_mib=30.0,
+                    resident_kv_mib_before=10.0 if request.turn_index > 0 else 0.0,
+                    resident_kv_mib_after=30.0,
+                    quality_loss=0.0,
+                    extra={
+                        "task": task,
+                        "length_bucket": "medium",
+                        "split": split,
+                        "arrival_index": request.arrival_index,
+                        "prompt_text": request.prompt,
+                        "history_turns": json.dumps(list(request.history_turns), ensure_ascii=False),
+                        "effective_prompt_chars": request.prompt_chars,
+                        "original_request_id": request.metadata.get("original_request_id", request.request_id),
+                    },
+                ).to_row()
+            )
+            rows.append(
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    profile="kivi_2bit_residual32",
+                    adapter="test",
+                    ok=True,
+                    measured=True,
+                    output_text="answer",
+                    latency_ms=8.0,
+                    ttft_ms=8.0,
+                    peak_memory_mib=20.0,
+                    kv_cache_memory_mib=20.0,
+                    resident_memory_mib=20.0,
+                    kv_incremental_mib=8.0,
+                    kv_cumulative_mib=20.0,
+                    resident_kv_mib_before=8.0 if request.turn_index > 0 else 0.0,
+                    resident_kv_mib_after=20.0,
+                    quality_loss=0.05 if task == "qa" and split == "eval" else 0.0,
+                    extra={
+                        "task": task,
+                        "length_bucket": "medium",
+                        "split": split,
+                        "arrival_index": request.arrival_index,
+                        "prompt_text": request.prompt,
+                        "history_turns": json.dumps(list(request.history_turns), ensure_ascii=False),
+                        "effective_prompt_chars": request.prompt_chars,
+                        "original_request_id": request.metadata.get("original_request_id", request.request_id),
+                    },
+                ).to_row()
+            )
+            rows.append(
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    profile="h2o_heavy15_recent15",
+                    adapter="test",
+                    ok=True,
+                    measured=True,
+                    output_text="answer",
+                    latency_ms=8.5,
+                    ttft_ms=8.5,
+                    peak_memory_mib=18.0,
+                    kv_cache_memory_mib=18.0,
+                        resident_memory_mib=18.0,
+                        kv_incremental_mib=7.0,
+                        kv_cumulative_mib=18.0,
+                        resident_kv_mib_before=7.0 if request.turn_index > 0 else 0.0,
+                        resident_kv_mib_after=18.0,
+                        quality_loss=0.0,
+                        extra={
+                            "task": task,
+                            "length_bucket": "medium",
+                            "split": split,
+                            "arrival_index": request.arrival_index,
+                            "prompt_text": request.prompt,
+                            "history_turns": json.dumps(list(request.history_turns), ensure_ascii=False),
+                            "effective_prompt_chars": request.prompt_chars,
+                            "original_request_id": request.metadata.get("original_request_id", request.request_id),
+                        },
+                    ).to_row()
+                )
+        write_csv(Path(args.output), rows)
+        print(json.dumps({"output": args.output, "rows": len(rows)}))
+        return 0
+
+    with patch("run_util.experiment.build_profile_table", side_effect=fake_profile), patch(
+        "run_util.experiment.run_policies", side_effect=AssertionError("policy sweep should be blocked by quality gate")
+    ), patch("run_util.experiment.plot_summary", return_value=[]):
+        code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=""))
+
+    assert code == 2
+    gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate_payload["passed"] is False
+    assert any("H2O" in message for message in gate_payload["errors"])

@@ -48,6 +48,7 @@ from run_util.experiment_summary import summary_rows, write_summary, write_total
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
 from run_util.run_policies import run_policies
+from scripts.validate_trace_quality import validate_trace_quality
 from visual.plot_summary import plot_summary
 
 
@@ -56,6 +57,7 @@ PILOT_PROFILE_OUTPUT = "out/profile_tables/pilot_smoke_measured_profiles.csv"
 PILOT_SESSION_TRACE_OUTPUT = "out/session_traces/pilot_smoke_measured_session_trace.csv"
 PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
 PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
+PILOT_TRACE_QUALITY_GATE_OUTPUT = "out/profile_tables/pilot_session_trace_quality_gate.json"
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     stream = io.StringIO()
@@ -150,6 +152,11 @@ def _print_and_write(payload: dict[str, Any]) -> None:
 
 def _summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return summary_rows(payload)
+
+
+def _load_fixture_rows(request_path: str) -> list[dict[str, Any]]:
+    path = Path(request_path)
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _session_trace_settings(config: dict[str, Any]) -> dict[str, float | int]:
@@ -254,6 +261,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         )
         policy_output = str(_resolve_run_output(str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT)), run_dir))
         summary_output = str(_resolve_run_output(str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT)), run_dir))
+        trace_quality_gate_output = str(
+            _resolve_run_output(str(outputs.get("smoke_trace_quality_gate", PILOT_TRACE_QUALITY_GATE_OUTPUT)), run_dir)
+        )
         configured_total_summary_output = outputs.get("smoke_total_summary")
         if explicit_total_summary_output:
             total_summary_output = str(_resolve_run_output(explicit_total_summary_output, run_dir))
@@ -364,6 +374,50 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         return 2
 
     sweeps = _policy_sweep_points(config)
+    gate_payload: dict[str, Any] = {}
+    if experiment_type == "baseline_session":
+        try:
+            fixture_rows = _load_fixture_rows(str(config.get("data", {}).get("requests")))
+            gate_result = validate_trace_quality(measurements, fixture_rows)
+            gate_payload = gate_result.to_json()
+            Path(trace_quality_gate_output).parent.mkdir(parents=True, exist_ok=True)
+            Path(trace_quality_gate_output).write_text(
+                json.dumps(gate_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            if not gate_result.passed:
+                payload = {
+                    "ok": False,
+                    "return_code": 2,
+                    "step": "validate_trace_quality",
+                    "error": "session trace quality gate failed",
+                    "config": config_path,
+                    "run_dir": str(run_dir),
+                    "experiment_type": experiment_type,
+                    "summary_output": summary_output,
+                    "total_summary_output": total_summary_output,
+                    "session_trace_output": session_trace_output,
+                    "trace_quality_gate_output": trace_quality_gate_output,
+                    "trace_quality_gate": gate_payload,
+                }
+                _print_and_write(payload)
+                return 2
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            payload = {
+                "ok": False,
+                "return_code": 2,
+                "step": "validate_trace_quality",
+                "error": str(exc),
+                "config": config_path,
+                "run_dir": str(run_dir),
+                "experiment_type": experiment_type,
+                "summary_output": summary_output,
+                "total_summary_output": total_summary_output,
+                "session_trace_output": session_trace_output,
+                "trace_quality_gate_output": trace_quality_gate_output,
+            }
+            _print_and_write(payload)
+            return 2
     policy_runs: list[dict[str, Any]] = []
     policy_rows = 0
     policy_code = 0
@@ -418,6 +472,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "memory_budget_mib": policy_payload.get("memory_budget_mib"),
         "profile": profile_payload,
         "session_trace": session_trace_payload,
+        "trace_quality_gate_output": trace_quality_gate_output,
+        "trace_quality_gate": gate_payload,
         "policy": policy_payload,
         "policy_runs": policy_runs,
     }

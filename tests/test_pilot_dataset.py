@@ -277,13 +277,14 @@ def test_session_trace_fixture_preserves_interleaved_multi_turn_sessions() -> No
     requests, fallback = load_requests({"data": {"requests": "data/fixtures/pilot_session_trace_requests.jsonl"}})
 
     assert fallback is False
-    assert len(requests) == 12
-    assert len({request.session_id for request in requests}) == 5
-    assert sum(1 for request in requests if request.turn_index > 0) >= 5
+    assert len(requests) == 240
+    assert len({request.session_id for request in requests}) == 48
+    assert sum(1 for request in requests if request.turn_index > 0) >= 96
     assert {request.task for request in requests} == {"qa", "summary"}
     assert {request.metadata["split"] for request in requests} == {"calibration", "eval"}
-    assert [request.arrival_index for request in requests] == list(range(12))
-    assert requests[0].session_id == "session-a"
-    assert requests[2].session_id == "session-a"
-    assert requests[1].session_id == "session-b"
-    assert requests[4].session_id == "session-b"
+    assert [request.arrival_index for request in requests] == list(range(240))
+    cutoff = int(len(requests) * 0.6)
+    assert all(request.metadata["pressure_phase"] == "memory" for request in requests[:cutoff])
+    assert all(request.metadata["pressure_phase"] == "quality" for request in requests[cutoff:])
+    assert any(request.metadata["followup_kind"] == "constraint_recall" for request in requests)
+    assert any(request.metadata["followup_kind"] == "detail_recall" for request in requests)
