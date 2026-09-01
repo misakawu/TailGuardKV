@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -104,6 +105,12 @@ def validate_trace_quality(
             continue
         task = str(fixture_row.get("task", "")).strip().lower()
         if task not in {"qa", "summary"}:
+            continue
+        if not math.isfinite(float(measurement.quality_loss)):
+            provenance_failures.append(
+                "eval quality record 的 quality_loss 是非有限数: "
+                f"measurement_request_id={measurement.request_id} fixture_request_id={request_id}"
+            )
             continue
         if request_id in duplicate_fixture_ids:
             provenance_failures.append(f"fixture request_id 重复，eval 质量记录无法唯一追溯: request_id={request_id}")
@@ -257,8 +264,19 @@ def _quality_record_provenance_failure(fixture_row: dict[str, Any]) -> str | Non
         turn_index = int(fixture_row.get("turn_index", -1))
     except (TypeError, ValueError):
         return "turn_index 必须是整数"
-    if turn_index < 2:
-        return f"质量记录不能来自 chat 开场 turn: turn_index={turn_index}"
+    expected_roles = {
+        2: "longbench_content",
+        3: "reference_recall",
+        4: "reference_rewrite",
+    }
+    if turn_index not in expected_roles:
+        return f"风险质量记录 turn_index 必须在 2..4: turn_index={turn_index}"
+    role = str(metadata["hybrid_turn_role"])
+    if role != expected_roles[turn_index]:
+        return (
+            "hybrid_turn_role 与风险 turn_index 不匹配: "
+            f"turn_index={turn_index} role={role} expected={expected_roles[turn_index]}"
+        )
     if str(fixture_row.get("task", "")).strip().lower() not in {"qa", "summary"}:
         return "质量记录 task 必须是 QA/Summary"
     return None

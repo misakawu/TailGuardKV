@@ -286,6 +286,42 @@ def test_validate_trace_quality_rejects_untraceable_eval_quality_record() -> Non
     assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
 
 
+@pytest.mark.parametrize("quality_loss", [float("nan"), float("inf"), float("-inf")])
+def test_validate_trace_quality_rejects_non_finite_quality_loss(quality_loss: float) -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    object.__setattr__(measurements[0], "quality_loss", quality_loss)
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is False
+    assert any("非有限" in message and "kivi_sensitive-qa" in message for message in result.provenance_failures)
+    assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
+    json.dumps(result.to_json(), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("turn_index", "role", "expected_error"),
+    [
+        (5, "reference_rewrite", "turn_index"),
+        (2, "sharegpt_opening", "hybrid_turn_role"),
+    ],
+)
+def test_validate_trace_quality_rejects_invalid_risk_turn_role(
+    turn_index: int,
+    role: str,
+    expected_error: str,
+) -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    fixture_rows[0]["turn_index"] = turn_index
+    fixture_rows[0]["metadata"]["hybrid_turn_role"] = role
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is False
+    assert any(expected_error in message for message in result.provenance_failures)
+    assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
+
+
 def test_pilot_session_trace_config_and_fixture_match_reconstructed_dataset() -> None:
     config = yaml.safe_load(Path("configs/pilot_session_trace.yaml").read_text(encoding="utf-8"))
     fixture_path = Path("data/fixtures/pilot_session_trace_requests.jsonl")

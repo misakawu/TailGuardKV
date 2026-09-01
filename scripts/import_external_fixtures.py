@@ -121,10 +121,17 @@ def validate_baseline_session_fixture(path: Path) -> dict[str, Any]:
     splits: set[str] = set()
     risk_families: set[str] = set()
     arrivals: list[int] = []
+    request_ids: set[str] = set()
 
     for index, row in enumerate(rows):
         _require_fields(row, SESSION_REQUIRED_TOP_LEVEL, path=path, row_index=index)
         metadata = _require_metadata(row, path=path, row_index=index)
+        request_id = str(row["request_id"]).strip()
+        if not request_id:
+            raise ValueError(f"baseline_session request_id 不能为空: row={index}")
+        if request_id in request_ids:
+            raise ValueError(f"baseline_session request_id 不能重复: row={index} request_id={request_id}")
+        request_ids.add(request_id)
         session_id = str(row["session_id"]).strip()
         if not session_id:
             raise ValueError(f"baseline_session session_id 不能为空: row={index}")

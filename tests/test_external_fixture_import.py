@@ -209,3 +209,28 @@ def test_validate_baseline_session_fixture_rejects_wrong_session_split_count(tmp
 
     with pytest.raises(ValueError, match="risk/task/split"):
         validate_baseline_session_fixture(fixture_path)
+
+
+@pytest.mark.parametrize("request_id", ["", "   "])
+def test_validate_baseline_session_fixture_rejects_blank_request_id(tmp_path: Path, request_id: str) -> None:
+    fixture_path = tmp_path / "baseline_session_blank_request_id.jsonl"
+    rows = _hybrid_session_rows()
+    rows[0]["request_id"] = request_id
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="request_id.*不能为空"):
+        validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_baseline_session_fixture_rejects_duplicate_request_id(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_duplicate_request_id.jsonl"
+    rows = _hybrid_session_rows()
+    rows[1]["request_id"] = rows[0]["request_id"]
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="request_id.*不能重复"):
+        validate_baseline_session_fixture(fixture_path)
