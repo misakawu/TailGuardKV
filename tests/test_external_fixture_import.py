@@ -88,203 +88,124 @@ def test_validate_baseline_quality_fixture_rejects_missing_required_metadata(tmp
         validate_baseline_quality_fixture(fixture_path)
 
 
-def test_validate_baseline_session_fixture_accepts_session_trace_jsonl(tmp_path: Path) -> None:
+def _hybrid_session_rows() -> list[dict[str, object]]:
+    sessions: list[list[dict[str, object]]] = []
+    session_index = 0
+    roles = ("sharegpt_opening", "sharegpt_opening", "longbench_content", "reference_recall", "reference_rewrite")
+    for risk_family in ("kivi_sensitive", "h2o_sensitive", "low_risk"):
+        for task in ("qa", "summary"):
+            for split in ("calibration", "eval"):
+                for _ in range(4):
+                    session_id = f"hybrid-session-{session_index:03d}"
+                    content_request_id = f"longbench-{session_index:03d}"
+                    reference = f"reference-{session_index:03d}"
+                    session_rows: list[dict[str, object]] = []
+                    for turn_index in range(5):
+                        injected = turn_index >= 2
+                        session_rows.append(
+                            {
+                                "request_id": f"{session_id}-turn-{turn_index}",
+                                "task": task if injected else "chat",
+                                "prompt": f"prompt {session_index} {turn_index}",
+                                "reference": reference if injected else f"opening {session_index} {turn_index}",
+                                "session_id": session_id,
+                                "turn_index": turn_index,
+                                "metadata": {
+                                    "source": "hybrid_session_builder",
+                                    "source_dataset": "sharegpt_longbench_hybrid_session",
+                                    "content_source_dataset": "longbench" if injected else "sharegpt",
+                                    "content_source_request_id": content_request_id if injected else f"sharegpt-{session_index}-{turn_index}",
+                                    "content_source_index": session_index if injected else session_index * 2 + turn_index,
+                                    "injection_template": "template_a",
+                                    "original_session_id": f"sharegpt-session-{session_index:03d}",
+                                    "hybrid_turn_role": roles[turn_index],
+                                    "split": split,
+                                    "risk_family": risk_family,
+                                },
+                            }
+                        )
+                    sessions.append(session_rows)
+                    session_index += 1
+
+    rows: list[dict[str, object]] = []
+    for turn_index in range(5):
+        for session_rows in sessions:
+            row = dict(session_rows[turn_index])
+            row["arrival_index"] = len(rows)
+            rows.append(row)
+    return rows
+
+
+def _write_rows(path: Path, rows: list[dict[str, object]]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_validate_baseline_session_fixture_accepts_exact_hybrid_contract(tmp_path: Path) -> None:
     fixture_path = tmp_path / "baseline_session.jsonl"
-    rows = [
-        {
-            "request_id": "s1-t0",
-            "task": "chat",
-            "prompt": "first turn",
-            "reference": "r0",
-            "session_id": "s1",
-            "turn_index": 0,
-            "arrival_index": 0,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "calibration",
-                "risk_family": "kivi_sensitive",
-            },
-        },
-        {
-            "request_id": "s2-t0",
-            "task": "chat",
-            "prompt": "other session",
-            "reference": "r0",
-            "session_id": "s2",
-            "turn_index": 0,
-            "arrival_index": 1,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "eval",
-                "risk_family": "h2o_sensitive",
-            },
-        },
-        {
-            "request_id": "s1-t1",
-            "task": "chat",
-            "prompt": "follow up",
-            "reference": "r1",
-            "session_id": "s1",
-            "turn_index": 1,
-            "arrival_index": 2,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "calibration",
-                "risk_family": "kivi_sensitive",
-            },
-        },
-        {
-            "request_id": "s3-t0",
-            "task": "chat",
-            "prompt": "low risk start",
-            "reference": "r0",
-            "session_id": "s3",
-            "turn_index": 0,
-            "arrival_index": 3,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "eval",
-                "risk_family": "low_risk",
-            },
-        },
-    ]
-    fixture_path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+    _write_rows(fixture_path, _hybrid_session_rows())
 
     from scripts.import_external_fixtures import validate_baseline_session_fixture
 
     report = validate_baseline_session_fixture(fixture_path)
 
-    assert report["row_count"] == 4
-    assert report["session_count"] == 3
-    assert report["multi_turn_session_count"] == 1
-    assert report["interleaved_session_count"] >= 2
+    assert report["row_count"] == 240
+    assert report["session_count"] == 48
+    assert report["turns_per_session"] == 5
     assert set(report["risk_families"]) == {"kivi_sensitive", "h2o_sensitive", "low_risk"}
+    assert set(report["risk_task_split_session_counts"].values()) == {4}
 
 
-def test_validate_baseline_session_fixture_accepts_low_risk_only_jsonl(tmp_path: Path) -> None:
-    fixture_path = tmp_path / "baseline_session_low_risk.jsonl"
-    rows = [
-        {
-            "request_id": "s1-t0",
-            "task": "chat",
-            "prompt": "first turn",
-            "reference": "r0",
-            "session_id": "s1",
-            "turn_index": 0,
-            "arrival_index": 0,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "calibration",
-                "risk_family": "low_risk",
-                },
-            },
-        {
-            "request_id": "s2-t0",
-            "task": "chat",
-            "prompt": "other session",
-            "reference": "r0",
-            "session_id": "s2",
-            "turn_index": 0,
-            "arrival_index": 1,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "eval",
-                "risk_family": "low_risk",
-            },
-        },
-        {
-            "request_id": "s1-t1",
-            "task": "chat",
-            "prompt": "follow up",
-            "reference": "r1",
-            "session_id": "s1",
-            "turn_index": 1,
-            "arrival_index": 2,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "calibration",
-                "risk_family": "low_risk",
-            },
-        },
-    ]
-    fixture_path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+def test_validate_baseline_session_fixture_rejects_missing_hybrid_metadata(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_missing_metadata.jsonl"
+    rows = _hybrid_session_rows()
+    del rows[0]["metadata"]["original_session_id"]
+    _write_rows(fixture_path, rows)
 
     from scripts.import_external_fixtures import validate_baseline_session_fixture
 
-    report = validate_baseline_session_fixture(fixture_path)
-
-    assert report["row_count"] == 3
-    assert set(report["risk_families"]) == {"low_risk"}
+    with pytest.raises(ValueError, match="original_session_id"):
+        validate_baseline_session_fixture(fixture_path)
 
 
-def test_validate_baseline_session_fixture_rejects_non_continuous_turn_index(tmp_path: Path) -> None:
-    fixture_path = tmp_path / "baseline_session_bad.jsonl"
-    rows = [
-        {
-            "request_id": "s1-t0",
-            "task": "chat",
-            "prompt": "first turn",
-            "reference": "r0",
-            "session_id": "s1",
-            "turn_index": 0,
-            "arrival_index": 0,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "calibration",
-                "risk_family": "kivi_sensitive",
-            },
-        },
-        {
-            "request_id": "s1-t2",
-            "task": "chat",
-            "prompt": "skip turn",
-            "reference": "r2",
-            "session_id": "s1",
-            "turn_index": 2,
-            "arrival_index": 1,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "eval",
-                "risk_family": "kivi_sensitive",
-            },
-        },
-        {
-            "request_id": "s2-t0",
-            "task": "chat",
-            "prompt": "other session",
-            "reference": "r0",
-            "session_id": "s2",
-            "turn_index": 0,
-            "arrival_index": 2,
-            "metadata": {
-                "source": "external_labeling",
-                "source_dataset": "sharegpt_pilot",
-                "split": "eval",
-                "risk_family": "low_risk",
-            },
-        },
-    ]
-    fixture_path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
-        encoding="utf-8",
-    )
+def test_validate_baseline_session_fixture_rejects_missing_longbench_provenance(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_bad_longbench.jsonl"
+    rows = _hybrid_session_rows()
+    injected_row = next(row for row in rows if row["turn_index"] == 2)
+    injected_row["metadata"]["content_source_dataset"] = "sharegpt"
+    _write_rows(fixture_path, rows)
 
     from scripts.import_external_fixtures import validate_baseline_session_fixture
 
-    with pytest.raises(ValueError, match="turn_index"):
+    with pytest.raises(ValueError, match="LongBench"):
+        validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_baseline_session_fixture_rejects_chat_as_injected_risk_sample(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_chat_risk.jsonl"
+    rows = _hybrid_session_rows()
+    injected_row = next(row for row in rows if row["turn_index"] == 2)
+    injected_row["task"] = "chat"
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="QA/Summary"):
+        validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_baseline_session_fixture_rejects_wrong_session_split_count(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_bad_split_count.jsonl"
+    rows = _hybrid_session_rows()
+    session_id = str(rows[0]["session_id"])
+    for row in rows:
+        if row["session_id"] == session_id:
+            row["metadata"]["split"] = "eval"
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="risk/task/split"):
         validate_baseline_session_fixture(fixture_path)

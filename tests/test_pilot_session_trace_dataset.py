@@ -66,6 +66,56 @@ def _measurement(
     )
 
 
+def _risk_template(
+    request_id: str,
+    *,
+    task: str,
+    risk_family: str,
+    split: str = "eval",
+    turn_index: int = 2,
+) -> dict[str, object]:
+    injected = turn_index >= 2
+    return {
+        "request_id": request_id,
+        "task": task,
+        "prompt": f"{task} prompt {request_id}",
+        "reference": f"{task} reference {request_id}",
+        "session_id": f"session-{request_id}",
+        "turn_index": turn_index,
+        "metadata": {
+            "source": "hybrid_session_builder",
+            "source_dataset": "sharegpt_longbench_hybrid_session",
+            "content_source_dataset": "longbench" if injected else "sharegpt",
+            "content_source_request_id": f"content-{request_id}",
+            "content_source_index": 7,
+            "injection_template": "template_a",
+            "original_session_id": f"sharegpt-{request_id}",
+            "hybrid_turn_role": "longbench_content" if injected else "sharegpt_opening",
+            "split": split,
+            "risk_family": risk_family,
+        },
+    }
+
+
+def _passing_risk_gate_inputs() -> tuple[list[dict[str, object]], list[ProfileMeasurement]]:
+    fixture_rows = [
+        _risk_template(f"{family}-{task}", task=task, risk_family=family)
+        for family in ("kivi_sensitive", "h2o_sensitive", "low_risk")
+        for task in ("qa", "summary")
+    ]
+    measurements = [
+        _measurement("kivi_sensitive-qa", profile=MAINSTREAM_KIVI_PROFILES[0], task="qa", split="eval", quality_loss=0.05),
+        _measurement("kivi_sensitive-summary", profile=MAINSTREAM_KIVI_PROFILES[0], task="summary", split="eval", quality_loss=0.03),
+        _measurement("low_risk-qa", profile=MAINSTREAM_KIVI_PROFILES[0], task="qa", split="eval", quality_loss=0.01),
+        _measurement("low_risk-summary", profile=MAINSTREAM_KIVI_PROFILES[0], task="summary", split="eval", quality_loss=0.01),
+        _measurement("h2o_sensitive-qa", profile=MAINSTREAM_H2O_PROFILES[0], task="qa", split="eval", quality_loss=0.06),
+        _measurement("h2o_sensitive-summary", profile=MAINSTREAM_H2O_PROFILES[0], task="summary", split="eval", quality_loss=0.04),
+        _measurement("low_risk-qa", profile=MAINSTREAM_H2O_PROFILES[0], task="qa", split="eval", quality_loss=0.01),
+        _measurement("low_risk-summary", profile=MAINSTREAM_H2O_PROFILES[0], task="summary", split="eval", quality_loss=0.01),
+    ]
+    return fixture_rows, measurements
+
+
 def test_build_requests_from_templates_enforces_session_trace_layout() -> None:
     templates: list[dict[str, object]] = []
     for index in range(6):
@@ -114,55 +164,126 @@ def test_build_requests_from_templates_enforces_session_trace_layout() -> None:
     assert any(row["metadata"]["followup_kind"] == "detail_recall" for row in rows)
 
 
-def test_validate_trace_quality_passes_with_h2o_and_kivi_eval_signal() -> None:
-    fixture_rows = [
-        _template("qa-eval", task="qa", risk_family="kivi_sensitive", split="eval", followup_kind="constraint_recall"),
-        _template("sum-eval", task="summary", risk_family="h2o_sensitive", split="eval", followup_kind="detail_recall"),
-    ]
-    measurements = [
-        _measurement("qa-eval", profile=MAINSTREAM_KIVI_PROFILES[-1], task="qa", split="eval", quality_loss=0.04),
-        _measurement("sum-eval", profile=MAINSTREAM_H2O_PROFILES[-1], task="summary", split="eval", quality_loss=0.03),
-    ]
+def test_validate_trace_quality_reports_group_signal_coverage_gaps_and_provenance() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
 
     result = validate_trace_quality(measurements, fixture_rows)
 
     assert result.passed is True
     assert result.covered_tasks == {"qa", "summary"}
-    assert set(result.qualifying_profiles) == {MAINSTREAM_KIVI_PROFILES[-1], MAINSTREAM_H2O_PROFILES[-1]}
+    assert set(result.qualifying_profiles) == {MAINSTREAM_KIVI_PROFILES[0], MAINSTREAM_H2O_PROFILES[0]}
+    assert result.group_means["kivi_sensitive"][MAINSTREAM_KIVI_PROFILES[0]] == pytest.approx(0.04)
+    assert result.group_means["h2o_sensitive"][MAINSTREAM_H2O_PROFILES[0]] == pytest.approx(0.05)
+    assert result.task_coverage == {
+        "kivi_sensitive": {"qa", "summary"},
+        "h2o_sensitive": {"qa", "summary"},
+    }
+    assert result.sensitive_control_gaps == {
+        "kivi_sensitive": pytest.approx(0.03),
+        "h2o_sensitive": pytest.approx(0.04),
+    }
+    assert result.provenance_failures == []
+    assert all(
+        {"measurement_request_id", "fixture_request_id", "content_source_request_id", "content_source_index", "injection_template"}
+        <= record.keys()
+        for record in result.quality_records
+    )
+    json.dumps(result.to_json())
 
 
-def test_validate_trace_quality_fails_for_single_profile_signal() -> None:
-    fixture_rows = [
-        _template("qa-eval", task="qa", risk_family="kivi_sensitive", split="eval", followup_kind="constraint_recall"),
-        _template("sum-eval", task="summary", risk_family="h2o_sensitive", split="eval", followup_kind="detail_recall"),
-    ]
-    measurements = [
-        _measurement("qa-eval", profile=MAINSTREAM_KIVI_PROFILES[0], task="qa", split="eval", quality_loss=0.04),
-        _measurement("sum-eval", profile=MAINSTREAM_KIVI_PROFILES[0], task="summary", split="eval", quality_loss=0.03),
-    ]
+def test_validate_trace_quality_uses_eval_quality_records_only() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    fixture_rows.extend(
+        [
+            _risk_template("calibration-high", task="qa", risk_family="kivi_sensitive", split="calibration"),
+            _risk_template("chat-opening", task="chat", risk_family="h2o_sensitive", turn_index=0),
+        ]
+    )
+    measurements.extend(
+        [
+            _measurement(
+                "calibration-high",
+                profile=MAINSTREAM_KIVI_PROFILES[-1],
+                task="qa",
+                split="calibration",
+                quality_loss=1.0,
+            ),
+            _measurement(
+                "chat-opening",
+                profile=MAINSTREAM_H2O_PROFILES[-1],
+                task="chat",
+                split="eval",
+                quality_loss=1.0,
+            ),
+        ]
+    )
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is True
+    assert MAINSTREAM_KIVI_PROFILES[-1] not in result.qualifying_profiles
+    assert MAINSTREAM_H2O_PROFILES[-1] not in result.qualifying_profiles
+    assert {record["fixture_request_id"] for record in result.quality_records}.isdisjoint(
+        {"calibration-high", "chat-opening"}
+    )
+
+
+def test_validate_trace_quality_requires_strict_per_family_group_mean() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    for row in measurements:
+        if row.request_id in {"kivi_sensitive-qa", "kivi_sensitive-summary"}:
+            object.__setattr__(row, "quality_loss", 0.02)
 
     result = validate_trace_quality(measurements, fixture_rows)
 
     assert result.passed is False
-    assert "至少需要 2 个不同 profile" in result.errors[0]
+    assert any("KIVI" in message and "> 0.02" in message for message in result.errors)
 
 
-def test_validate_trace_quality_fails_when_nonzero_loss_only_covers_one_task() -> None:
-    fixture_rows = [
-        _template("qa-eval-a", task="qa", risk_family="kivi_sensitive", split="eval", followup_kind="constraint_recall"),
-        _template("qa-eval-b", task="qa", risk_family="h2o_sensitive", split="eval", followup_kind="constraint_recall"),
-        _template("sum-eval", task="summary", risk_family="h2o_sensitive", split="eval", followup_kind="detail_recall"),
-    ]
-    measurements = [
-        _measurement("qa-eval-a", profile=MAINSTREAM_KIVI_PROFILES[0], task="qa", split="eval", quality_loss=0.04),
-        _measurement("qa-eval-b", profile=MAINSTREAM_H2O_PROFILES[0], task="qa", split="eval", quality_loss=0.03),
-        _measurement("sum-eval", profile=MAINSTREAM_H2O_PROFILES[0], task="summary", split="eval", quality_loss=0.0),
-    ]
+def test_validate_trace_quality_requires_each_sensitive_group_to_cover_both_tasks() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    measurements = [row for row in measurements if row.request_id != "h2o_sensitive-summary"]
 
     result = validate_trace_quality(measurements, fixture_rows)
 
     assert result.passed is False
-    assert any("QA 与 Summary" in message for message in result.errors)
+    assert result.task_coverage["h2o_sensitive"] == {"qa"}
+    assert any("h2o_sensitive" in message and "QA 与 Summary" in message for message in result.errors)
+
+
+def test_validate_trace_quality_requires_positive_sensitive_control_gap() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    for row in measurements:
+        if row.profile in MAINSTREAM_KIVI_PROFILES and row.request_id.startswith("low_risk"):
+            object.__setattr__(row, "quality_loss", 0.05)
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is False
+    assert result.sensitive_control_gaps["kivi_sensitive"] == pytest.approx(-0.01)
+    assert any("kivi_sensitive" in message and "对照组" in message for message in result.errors)
+
+
+def test_validate_trace_quality_rejects_untraceable_eval_quality_record() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    fixture_rows[0]["metadata"]["content_source_request_id"] = ""
+    measurements.append(
+        _measurement(
+            "foreign-eval",
+            profile=MAINSTREAM_KIVI_PROFILES[0],
+            task="qa",
+            split="eval",
+            quality_loss=0.9,
+        )
+    )
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is False
+    assert len(result.provenance_failures) == 2
+    assert any("content_source_request_id" in message for message in result.provenance_failures)
+    assert any("foreign-eval" in message for message in result.provenance_failures)
+    assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
 
 
 def test_pilot_session_trace_config_and_fixture_match_reconstructed_dataset() -> None:
