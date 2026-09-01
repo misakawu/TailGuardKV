@@ -23,6 +23,8 @@ def test_external_baseline_session_config_points_to_imported_fixture() -> None:
     assert config["data"]["quality_mode"] == "session_diagnostic"
     assert config["data"]["requests"] == "data/fixtures/baseline_session_external.jsonl"
     assert config["data"]["max_requests"] == 240
+    assert config["outputs"]["smoke_trace_semantics_gate"].endswith("_trace_semantics_gate.json")
+    assert config["outputs"]["smoke_risk_signal_gate"].endswith("_risk_signal_gate.json")
 
 
 def test_run_external_baseline_smoke_script_references_new_configs() -> None:

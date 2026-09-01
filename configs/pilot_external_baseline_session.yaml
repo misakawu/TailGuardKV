@@ -66,3 +66,5 @@ outputs:
   smoke_profile_checks: out/profile_tables/pilot_external_baseline_session_profile_smoke.csv
   smoke_policy: out/policy_tables/pilot_external_baseline_session_policy.csv
   smoke_summary: out/policy_tables/pilot_external_baseline_session_summary.csv
+  smoke_trace_semantics_gate: out/profile_tables/pilot_external_baseline_session_trace_semantics_gate.json
+  smoke_risk_signal_gate: out/profile_tables/pilot_external_baseline_session_risk_signal_gate.json

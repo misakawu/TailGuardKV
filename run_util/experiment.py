@@ -31,6 +31,8 @@ from itertools import product
 from pathlib import Path
 from typing import Any, Callable
 
+from backends.measured_replay import MeasuredReplayBackend
+from run_util.core_types import ProfileMeasurement
 from run_util.experiment_common import (
     config_experiment_type,
     config_policies,
@@ -39,6 +41,7 @@ from run_util.experiment_common import (
     load_requests,
     load_config,
     read_measurements,
+    requests_from_measurements,
     synthesize_pressure_trace,
     validate_requests_for_experiment_type,
     validate_profile_measurements,
@@ -58,7 +61,8 @@ PILOT_PROFILE_OUTPUT = "out/profile_tables/pilot_smoke_measured_profiles.csv"
 PILOT_SESSION_TRACE_OUTPUT = "out/session_traces/pilot_smoke_measured_session_trace.csv"
 PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
 PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
-PILOT_TRACE_QUALITY_GATE_OUTPUT = "out/profile_tables/pilot_session_trace_quality_gate.json"
+PILOT_TRACE_SEMANTICS_GATE_OUTPUT = "out/profile_tables/pilot_session_trace_semantics_gate.json"
+PILOT_RISK_SIGNAL_GATE_OUTPUT = "out/profile_tables/pilot_session_risk_signal_gate.json"
 PILOT_SPLIT_VALIDATION_OUTPUT = "out/profile_tables/pilot_session_trace_split_validation.html"
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
@@ -236,6 +240,182 @@ def _write_session_trace(
     }
 
 
+def _history_is_present(value: Any) -> bool:
+    if isinstance(value, (list, tuple)):
+        return bool(value)
+    if value in {None, ""}:
+        return False
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return bool(str(value).strip())
+    return bool(parsed) if isinstance(parsed, (list, tuple)) else bool(str(parsed).strip())
+
+
+def validate_trace_semantics(
+    measurements: list[ProfileMeasurement],
+    fixture_rows: list[dict[str, Any]],
+    *,
+    required_profiles: list[str],
+    replay_profile: str,
+    memory_budget_mib: float,
+    profile_path: str,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    request_ids = [str(row.get("request_id", "")).strip() for row in fixture_rows]
+    fixture_valid = bool(fixture_rows) and all(request_ids) and len(request_ids) == len(set(request_ids))
+    if not fixture_valid:
+        errors.append("fixture must be nonempty and contain unique nonempty request_id values")
+
+    session_ids = [str(row.get("session_id", "")).strip() for row in fixture_rows]
+    session_valid = bool(session_ids) and all(session_ids) and len(set(session_ids)) >= 2
+    if not session_valid:
+        errors.append("fixture must contain at least two nonempty sessions")
+
+    turns_by_session: dict[str, list[int]] = {}
+    arrivals: list[int] = []
+    try:
+        for row, session_id in zip(fixture_rows, session_ids):
+            turns_by_session.setdefault(session_id, []).append(int(row.get("turn_index", -1)))
+            arrivals.append(int(row.get("arrival_index", -1)))
+    except (TypeError, ValueError):
+        turns_by_session = {}
+        arrivals = []
+    turn_valid = bool(turns_by_session) and all(
+        sorted(turns) == list(range(len(turns)))
+        for turns in turns_by_session.values()
+    )
+    if not turn_valid:
+        errors.append("each fixture session must have consecutive turn_index values starting at zero")
+    arrival_valid = arrivals == list(range(len(fixture_rows)))
+    if not arrival_valid:
+        errors.append("fixture arrival_index values must be globally ordered, unique, and contiguous from zero")
+
+    profile_table_valid = True
+    try:
+        validate_profile_measurements(
+            measurements,
+            profile_path,
+            required_profiles=required_profiles,
+            require_measured=True,
+            experiment_type="baseline_session",
+        )
+    except ValueError as exc:
+        profile_table_valid = False
+        errors.append(str(exc))
+    replay_measurements = [row for row in measurements if row.profile == replay_profile]
+    profile_resident_fields_valid = bool(replay_measurements) and all(
+        row.resident_kv_mib_before is not None
+        and row.resident_kv_mib_after is not None
+        and row.kv_cumulative_mib is not None
+        for row in replay_measurements
+    )
+    if not profile_resident_fields_valid:
+        errors.append(f"profile {replay_profile} is missing resident KV fields")
+    profile_history_fields_valid = bool(replay_measurements) and all(
+        "history_turns" in row.extra for row in replay_measurements
+    ) and all(
+        _history_is_present(row.extra.get("history_turns"))
+        for row in replay_measurements
+        if row.turn_index > 0
+    )
+    if not profile_history_fields_valid:
+        errors.append(f"profile {replay_profile} is missing accumulated history on reused turns")
+
+    backend_results = []
+    prerequisites_passed = all(
+        (
+            fixture_valid,
+            session_valid,
+            turn_valid,
+            arrival_valid,
+            profile_table_valid,
+            profile_resident_fields_valid,
+            profile_history_fields_valid,
+        )
+    )
+    if prerequisites_passed:
+        try:
+            replay_requests = requests_from_measurements(replay_measurements)
+            backend = MeasuredReplayBackend(
+                replay_measurements,
+                allow_dry_run=False,
+                use_pandas=False,
+                global_budget_mib=memory_budget_mib,
+            )
+            backend_results = backend.run(replay_requests, [replay_profile])
+        except (KeyError, ValueError) as exc:
+            errors.append(f"trace semantics replay failed: {exc}")
+
+    session_reuse = any(
+        result.turn_index > 0
+        and (
+            bool(result.resident_kv_mib_before and result.resident_kv_mib_before > 0)
+            or bool(result.restore_ms and result.restore_ms > 0)
+            or bool(result.recompute_ms and result.recompute_ms > 0)
+        )
+        for result in backend_results
+    )
+    global_values = [
+        float(result.global_resident_kv_mib)
+        for result in backend_results
+        if result.global_resident_kv_mib is not None
+    ]
+    global_resident_evolution = len(set(global_values)) >= 2
+    real_pressure_event = any(
+        bool(result.budget_hit)
+        or bool(result.evicted_kv_mib and result.evicted_kv_mib > 0)
+        or bool(result.restore_ms and result.restore_ms > 0)
+        or bool(result.recompute_ms and result.recompute_ms > 0)
+        or bool(result.queue_delay_ms and result.queue_delay_ms > 0)
+        for result in backend_results
+    )
+    if prerequisites_passed and not session_reuse:
+        errors.append("trace replay did not demonstrate session reuse")
+    if prerequisites_passed and not global_resident_evolution:
+        errors.append("trace replay did not demonstrate global resident KV evolution")
+    if prerequisites_passed and not real_pressure_event:
+        errors.append("trace replay did not produce a real pressure event")
+
+    return {
+        "passed": not errors,
+        "errors": errors,
+        "fixture_valid": fixture_valid,
+        "session_valid": session_valid,
+        "turn_valid": turn_valid,
+        "arrival_valid": arrival_valid,
+        "profile_table_valid": profile_table_valid,
+        "profile_resident_fields_valid": profile_resident_fields_valid,
+        "profile_history_fields_valid": profile_history_fields_valid,
+        "session_reuse": session_reuse,
+        "global_resident_evolution": global_resident_evolution,
+        "real_pressure_event": real_pressure_event,
+        "replay_profile": replay_profile,
+        "memory_budget_mib": memory_budget_mib,
+        "replay_rows": len(backend_results),
+        "global_resident_kv_mib": global_values,
+    }
+
+
+def _write_json_gate(path: str, payload: dict[str, Any]) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(json_ready(payload), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _attach_policy_comparison_status(payload: dict[str, Any], status: str) -> None:
+    payload["policy_comparison_status"] = status
+    summary = payload.get("summary")
+    if not isinstance(summary, dict):
+        return
+    for metrics in summary.values():
+        if isinstance(metrics, dict):
+            metrics["policy_comparison_status"] = status
+
+
 def pilot_smoke_measured(args: argparse.Namespace) -> int:
     config_path = getattr(args, "config", PILOT_CONFIG)
     experiment_type = ""
@@ -264,8 +444,22 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         )
         policy_output = str(_resolve_run_output(str(outputs.get("smoke_policy", PILOT_POLICY_OUTPUT)), run_dir))
         summary_output = str(_resolve_run_output(str(outputs.get("smoke_summary", PILOT_SUMMARY_OUTPUT)), run_dir))
-        trace_quality_gate_output = str(
-            _resolve_run_output(str(outputs.get("smoke_trace_quality_gate", PILOT_TRACE_QUALITY_GATE_OUTPUT)), run_dir)
+        trace_semantics_gate_output = str(
+            _resolve_run_output(
+                str(outputs.get("smoke_trace_semantics_gate", PILOT_TRACE_SEMANTICS_GATE_OUTPUT)),
+                run_dir,
+            )
+        )
+        risk_signal_gate_output = str(
+            _resolve_run_output(
+                str(
+                    outputs.get(
+                        "smoke_risk_signal_gate",
+                        outputs.get("smoke_trace_quality_gate", PILOT_RISK_SIGNAL_GATE_OUTPUT),
+                    )
+                ),
+                run_dir,
+            )
         )
         split_validation_output = str(
             _resolve_run_output(str(outputs.get("smoke_split_validation", PILOT_SPLIT_VALIDATION_OUTPUT)), run_dir)
@@ -355,13 +549,14 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
 
     try:
         measurements = read_measurements(Path(profile_output))
-        validate_profile_measurements(
-            measurements,
-            profile_output,
-            required_profiles=profiles,
-            require_measured=True,
-            experiment_type=experiment_type,
-        )
+        if experiment_type != "baseline_session":
+            validate_profile_measurements(
+                measurements,
+                profile_output,
+                required_profiles=profiles,
+                require_measured=True,
+                experiment_type=experiment_type,
+            )
     except (FileNotFoundError, ValueError) as exc:
         payload = {
             "ok": False,
@@ -382,64 +577,45 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         return 2
 
     sweeps = _policy_sweep_points(config)
-    gate_payload: dict[str, Any] = {}
+    trace_semantics_gate_payload: dict[str, Any] = {}
+    risk_signal_gate_payload: dict[str, Any] = {}
     split_validation_payload: dict[str, Any] = {}
+    policy_comparison_status = ""
+    fixture_rows: list[dict[str, Any]] = []
     if experiment_type == "baseline_session":
         try:
             fixture_rows = _load_fixture_rows(str(config.get("data", {}).get("requests")))
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            trace_semantics_gate_payload = {"passed": False, "errors": [str(exc)]}
+        try:
             split_result = validate_split_balance(fixture_rows, build_split_risk_lookup(measurements))
             split_validation_payload = split_result.to_json()
             Path(split_validation_output).parent.mkdir(parents=True, exist_ok=True)
             Path(split_validation_output).write_text(split_result.html, encoding="utf-8")
-            if not split_result.passed:
-                payload = {
-                    "ok": False,
-                    "return_code": 2,
-                    "step": "validate_split_balance",
-                    "error": "session trace split validation failed",
-                    "config": config_path,
-                    "run_dir": str(run_dir),
-                    "experiment_type": experiment_type,
-                    "summary_output": summary_output,
-                    "total_summary_output": total_summary_output,
-                    "session_trace_output": session_trace_output,
-                    "split_validation_output": split_validation_output,
-                    "split_validation": split_validation_payload,
-                }
-                _print_and_write(payload)
-                return 2
-            gate_result = validate_trace_quality(measurements, fixture_rows)
-            gate_payload = gate_result.to_json()
-            Path(trace_quality_gate_output).parent.mkdir(parents=True, exist_ok=True)
-            Path(trace_quality_gate_output).write_text(
-                json.dumps(gate_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+        except (ValueError, KeyError) as exc:
+            split_validation_payload = {"passed": False, "errors": [str(exc)]}
+        if not trace_semantics_gate_payload:
+            trace_semantics_gate_payload = validate_trace_semantics(
+                measurements,
+                fixture_rows,
+                required_profiles=profiles,
+                replay_profile="full_gpu" if "full_gpu" in profiles else profiles[0],
+                memory_budget_mib=min(sweep["memory_budget_mib"] for sweep in sweeps),
+                profile_path=profile_output,
             )
-            if not gate_result.passed:
-                payload = {
-                    "ok": False,
-                    "return_code": 2,
-                    "step": "validate_trace_quality",
-                    "error": "session trace quality gate failed",
-                    "config": config_path,
-                    "run_dir": str(run_dir),
-                    "experiment_type": experiment_type,
-                    "summary_output": summary_output,
-                    "total_summary_output": total_summary_output,
-                    "session_trace_output": session_trace_output,
-                    "split_validation_output": split_validation_output,
-                    "trace_quality_gate_output": trace_quality_gate_output,
-                    "trace_quality_gate": gate_payload,
-                    "split_validation": split_validation_payload,
-                }
-                _print_and_write(payload)
-                return 2
-        except (FileNotFoundError, ValueError, KeyError) as exc:
+        _write_json_gate(trace_semantics_gate_output, trace_semantics_gate_payload)
+        if not trace_semantics_gate_payload.get("passed"):
+            risk_signal_gate_payload = {
+                "passed": False,
+                "status": "not_evaluated",
+                "errors": ["trace semantics gate failed before policy replay"],
+            }
+            _write_json_gate(risk_signal_gate_output, risk_signal_gate_payload)
             payload = {
                 "ok": False,
                 "return_code": 2,
-                "step": "validate_trace_quality",
-                "error": str(exc),
+                "step": "validate_trace_semantics",
+                "error": "session trace semantics gate failed",
                 "config": config_path,
                 "run_dir": str(run_dir),
                 "experiment_type": experiment_type,
@@ -447,7 +623,11 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
                 "total_summary_output": total_summary_output,
                 "session_trace_output": session_trace_output,
                 "split_validation_output": split_validation_output,
-                "trace_quality_gate_output": trace_quality_gate_output,
+                "split_validation": split_validation_payload,
+                "trace_semantics_gate_output": trace_semantics_gate_output,
+                "trace_semantics_gate": trace_semantics_gate_payload,
+                "risk_signal_gate_output": risk_signal_gate_output,
+                "risk_signal_gate": risk_signal_gate_payload,
             }
             _print_and_write(payload)
             return 2
@@ -484,6 +664,29 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         policy_rows += int(policy_payload.get("rows") or 0)
         if policy_code != 0:
             break
+    if experiment_type == "baseline_session":
+        try:
+            gate_result = validate_trace_quality(measurements, fixture_rows)
+            risk_signal_gate_payload = gate_result.to_json()
+        except Exception as exc:
+            risk_signal_gate_payload = {"passed": False, "errors": [str(exc)]}
+        if split_validation_payload.get("passed") is False:
+            risk_signal_gate_payload["passed"] = False
+            risk_signal_gate_payload.setdefault("errors", []).extend(
+                split_validation_payload.get("errors", ["session split validation failed"])
+            )
+        policy_comparison_status = (
+            "formally_comparable"
+            if risk_signal_gate_payload.get("passed")
+            else "risk_evidence_insufficient"
+        )
+        risk_signal_gate_payload["policy_comparison_status"] = policy_comparison_status
+        _write_json_gate(risk_signal_gate_output, risk_signal_gate_payload)
+        for run in policy_runs:
+            run["policy_comparison_status"] = policy_comparison_status
+            run_payload = run.get("payload")
+            if isinstance(run_payload, dict):
+                _attach_policy_comparison_status(run_payload, policy_comparison_status)
     payload = {
         "ok": policy_code == 0,
         "return_code": policy_code,
@@ -507,8 +710,11 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "session_trace": session_trace_payload,
         "split_validation_output": split_validation_output,
         "split_validation": split_validation_payload,
-        "trace_quality_gate_output": trace_quality_gate_output,
-        "trace_quality_gate": gate_payload,
+        "trace_semantics_gate_output": trace_semantics_gate_output,
+        "trace_semantics_gate": trace_semantics_gate_payload,
+        "risk_signal_gate_output": risk_signal_gate_output,
+        "risk_signal_gate": risk_signal_gate_payload,
+        "policy_comparison_status": policy_comparison_status,
         "policy": policy_payload,
         "policy_runs": policy_runs,
     }

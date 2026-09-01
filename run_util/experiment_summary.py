@@ -15,6 +15,9 @@ SUMMARY_KEY_COLUMNS = [
     "error",
     "diagnostic_output",
     "session_trace_output",
+    "trace_semantics_gate_output",
+    "risk_signal_gate_output",
+    "policy_comparison_status",
     "failures",
     "config",
     "run_dir",
@@ -126,6 +129,7 @@ TOTAL_POLICY_SUMMARY_COLUMNS = [
     "session_reuse_evidence",
     "global_resident_evolution",
     "backend_event_evidence",
+    "policy_comparison_status",
 ]
 
 
@@ -164,6 +168,9 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "error": _summary_error(payload),
             "diagnostic_output": payload.get("diagnostic_output", ""),
             "session_trace_output": payload.get("session_trace_output", ""),
+            "trace_semantics_gate_output": payload.get("trace_semantics_gate_output", ""),
+            "risk_signal_gate_output": payload.get("risk_signal_gate_output", ""),
+            "policy_comparison_status": payload.get("policy_comparison_status", ""),
             "failures": payload.get("failures", ""),
             "config": payload.get("config"),
             "run_dir": payload.get("run_dir", ""),
@@ -197,6 +204,7 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "delta": payload.get("delta"),
                 "memory_budget_mib": payload.get("memory_budget_mib"),
                 "experiment_type": payload.get("experiment_type", ""),
+                "policy_comparison_status": payload.get("policy_comparison_status", "") if section == "policy" else "",
             }
             if isinstance(metrics, dict):
                 row.update(metrics)
@@ -221,6 +229,10 @@ def summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "delta": policy_run.get("delta"),
                     "memory_budget_mib": policy_run.get("memory_budget_mib"),
                     "experiment_type": payload.get("experiment_type", ""),
+                    "policy_comparison_status": policy_run.get(
+                        "policy_comparison_status",
+                        payload.get("policy_comparison_status", ""),
+                    ),
                 }
                 if isinstance(metrics, dict):
                     row.update(metrics)
@@ -252,6 +264,10 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                         "memory_budget_mib": policy_run.get("memory_budget_mib"),
                         "epsilon": policy_run.get("epsilon"),
                         "delta": policy_run.get("delta"),
+                        "policy_comparison_status": policy_run.get(
+                            "policy_comparison_status",
+                            payload.get("policy_comparison_status", ""),
+                        ),
                     }
                 )
                 if isinstance(metrics, dict):
@@ -272,9 +288,10 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                             "run_dir": payload.get("run_dir", ""),
                             "policy": policy,
                             "memory_budget_mib": payload.get("memory_budget_mib"),
-                        "epsilon": payload.get("epsilon"),
-                        "delta": payload.get("delta"),
+                            "epsilon": payload.get("epsilon"),
+                            "delta": payload.get("delta"),
                             "experiment_type": payload.get("experiment_type", ""),
+                            "policy_comparison_status": payload.get("policy_comparison_status", ""),
                         }
                     )
                     if isinstance(metrics, dict):

@@ -12,9 +12,11 @@ import pytest
 
 from run_util.core_types import ProfileMeasurement, Request
 from run_util.experiment import pilot_smoke_measured
+from run_util.experiment_summary import write_summary as write_experiment_summary
 from run_util.io_utils import write_csv
 from run_util.run_policies import run_policies
 from run_util.session_trace import synthesize_pressure_trace
+from scripts.validate_trace_quality import validate_trace_quality as evaluate_trace_quality
 
 
 def _request(
@@ -131,6 +133,9 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
     session_trace_path = tmp_path / "session_trace.csv"
     policy_path = tmp_path / "policy.csv"
     summary_path = tmp_path / "summary.csv"
+    total_summary_path = tmp_path / "total_summary.csv"
+    trace_gate_path = tmp_path / "trace_semantics_gate.json"
+    risk_gate_path = tmp_path / "risk_signal_gate.json"
     requests_path = tmp_path / "requests.jsonl"
     requests_path.write_text(
         "\n".join(
@@ -178,6 +183,9 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
                 f"  smoke_session_trace: {session_trace_path}",
                 f"  smoke_policy: {policy_path}",
                 f"  smoke_summary: {summary_path}",
+                f"  smoke_total_summary: {total_summary_path}",
+                f"  smoke_trace_semantics_gate: {trace_gate_path}",
+                f"  smoke_risk_signal_gate: {risk_gate_path}",
                 f"  smoke_split_validation: {tmp_path / 'split_validation.html'}",
             ]
                 ),
@@ -194,7 +202,7 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
             task = "qa" if request.request_id.startswith("a") else "summary"
             split = request.metadata.get("split", "eval")
             for profile, quality_loss, peak_memory in (
-                ("full_gpu", 0.0, 30.0),
+                ("full_gpu", 0.0, 20.0),
                 ("kivi_2bit_residual32", 0.05 if task == "qa" else 0.0, 20.0),
                 ("h2o_heavy15_recent15", 0.05 if task == "summary" else 0.0, 18.0),
             ):
@@ -236,11 +244,30 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
 
     def fake_policy(args: argparse.Namespace) -> int:
         captured.append(args.measurements)
-        print(json.dumps({"output": args.output, "rows": 2, "epsilon": 0.2, "delta": 0.05, "memory_budget_mib": 50}))
+        print(
+            json.dumps(
+                {
+                    "output": args.output,
+                    "rows": 2,
+                    "epsilon": 0.2,
+                    "delta": 0.05,
+                    "memory_budget_mib": 50,
+                    "summary": {"full_lru": {"count": 2.0}},
+                }
+            )
+        )
         return 0
+
+    class PassingRiskResult:
+        passed = True
+
+        def to_json(self) -> dict[str, object]:
+            return {"passed": True, "errors": []}
 
     with patch("run_util.experiment.build_profile_table", side_effect=fake_profile), patch(
         "run_util.experiment.run_policies", side_effect=fake_policy
+    ), patch(
+        "run_util.experiment.validate_trace_quality", return_value=PassingRiskResult()
     ), patch("run_util.experiment.plot_summary", return_value=[]):
         code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=""))
 
@@ -249,6 +276,29 @@ def test_baseline_session_runner_sends_pressure_trace_to_policy_stage(tmp_path: 
     assert captured[0] == str(profile_path)
     trace_rows = list(__import__("csv").DictReader(session_trace_path.open(encoding="utf-8")))
     assert len(trace_rows) == len(seed) * 2
+    trace_gate_payload = json.loads(trace_gate_path.read_text(encoding="utf-8"))
+    assert trace_gate_payload["passed"] is True
+    assert all(
+        trace_gate_payload[field] is True
+        for field in (
+            "fixture_valid",
+            "session_valid",
+            "turn_valid",
+            "arrival_valid",
+            "profile_resident_fields_valid",
+            "profile_history_fields_valid",
+            "session_reuse",
+            "global_resident_evolution",
+            "real_pressure_event",
+        )
+    )
+    assert json.loads(risk_gate_path.read_text(encoding="utf-8"))["passed"] is True
+    assert json.loads(risk_gate_path.read_text(encoding="utf-8"))["policy_comparison_status"] == "formally_comparable"
+    summary_rows = list(csv.DictReader(summary_path.open(encoding="utf-8")))
+    policy_row = next(row for row in summary_rows if row["section"] == "policy")
+    assert policy_row["policy_comparison_status"] == "formally_comparable"
+    total_rows = list(csv.DictReader(total_summary_path.open(encoding="utf-8")))
+    assert total_rows[0]["policy_comparison_status"] == "formally_comparable"
 
 
 def test_baseline_session_pressure_trace_produces_backend_event_evidence(tmp_path: Path) -> None:
@@ -309,13 +359,15 @@ def test_baseline_session_pressure_trace_produces_backend_event_evidence(tmp_pat
     )
 
 
-def test_baseline_session_quality_gate_blocks_policy_sweep_when_eval_signal_is_missing(tmp_path: Path) -> None:
+def test_baseline_session_risk_gate_does_not_block_policy_sweep_when_eval_signal_is_missing(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     profile_path = tmp_path / "profiles.csv"
     session_trace_path = tmp_path / "session_trace.csv"
     policy_path = tmp_path / "policy.csv"
     summary_path = tmp_path / "summary.csv"
-    gate_path = tmp_path / "trace_quality_gate.json"
+    total_summary_path = tmp_path / "total_summary.csv"
+    trace_gate_path = tmp_path / "trace_semantics_gate.json"
+    risk_gate_path = tmp_path / "risk_signal_gate.json"
     requests_path = tmp_path / "requests.jsonl"
     requests_path.write_text(
         "\n".join(
@@ -366,7 +418,9 @@ def test_baseline_session_quality_gate_blocks_policy_sweep_when_eval_signal_is_m
                 f"  smoke_session_trace: {session_trace_path}",
                 f"  smoke_policy: {policy_path}",
                 f"  smoke_summary: {summary_path}",
-                f"  smoke_trace_quality_gate: {gate_path}",
+                f"  smoke_total_summary: {total_summary_path}",
+                f"  smoke_trace_semantics_gate: {trace_gate_path}",
+                f"  smoke_risk_signal_gate: {risk_gate_path}",
                 f"  smoke_split_validation: {tmp_path / 'split_validation.html'}",
             ]
         ),
@@ -390,13 +444,13 @@ def test_baseline_session_quality_gate_blocks_policy_sweep_when_eval_signal_is_m
                     output_text="answer",
                     latency_ms=10.0,
                     ttft_ms=10.0,
-                    peak_memory_mib=30.0,
-                    kv_cache_memory_mib=30.0,
-                    resident_memory_mib=30.0,
+                    peak_memory_mib=20.0,
+                    kv_cache_memory_mib=20.0,
+                    resident_memory_mib=20.0,
                     kv_incremental_mib=10.0,
-                    kv_cumulative_mib=30.0,
+                    kv_cumulative_mib=20.0,
                     resident_kv_mib_before=10.0 if request.turn_index > 0 else 0.0,
-                    resident_kv_mib_after=30.0,
+                    resident_kv_mib_after=20.0,
                     quality_loss=0.0,
                     extra={
                         "task": task,
@@ -478,24 +532,80 @@ def test_baseline_session_quality_gate_blocks_policy_sweep_when_eval_signal_is_m
         print(json.dumps({"output": args.output, "rows": len(rows)}))
         return 0
 
+    stage_order: list[str] = []
+
+    def fake_policy(args: argparse.Namespace) -> int:
+        stage_order.append("policy")
+        print(
+            json.dumps(
+                {
+                    "output": args.output,
+                    "rows": 1,
+                    "epsilon": args.epsilon,
+                    "delta": args.delta,
+                    "memory_budget_mib": args.memory_budget_mib,
+                    "summary": {"full_lru": {"count": 1.0}},
+                }
+            )
+        )
+        return 0
+
+    def tracked_risk_gate(measurements, fixture_rows):
+        stage_order.append("risk")
+        return evaluate_trace_quality(measurements, fixture_rows)
+
+    written_payloads: list[dict[str, object]] = []
+
+    def capture_summary(payload: dict[str, object], path: str) -> None:
+        written_payloads.append(json.loads(json.dumps(payload)))
+        write_experiment_summary(payload, path)
+
+    class FailingSplitResult:
+        passed = False
+        html = "<html>failed</html>"
+
+        def to_json(self) -> dict[str, object]:
+            return {"passed": False, "errors": ["forced split diagnostic failure"]}
+
     with patch("run_util.experiment.build_profile_table", side_effect=fake_profile), patch(
-        "run_util.experiment.run_policies", side_effect=AssertionError("policy sweep should be blocked by quality gate")
+        "run_util.experiment.run_policies", side_effect=fake_policy
+    ), patch(
+        "run_util.experiment.validate_split_balance", return_value=FailingSplitResult()
+    ), patch(
+        "run_util.experiment.validate_trace_quality", side_effect=tracked_risk_gate
+    ), patch(
+        "run_util.experiment.write_summary", side_effect=capture_summary
     ), patch("run_util.experiment.plot_summary", return_value=[]):
         code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=""))
 
-    assert code == 2
-    gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
-    assert gate_payload["passed"] is False
-    assert any("H2O" in message for message in gate_payload["errors"])
+    assert code == 0
+    assert stage_order == ["policy", "risk"]
+    trace_gate_payload = json.loads(trace_gate_path.read_text(encoding="utf-8"))
+    assert trace_gate_payload["passed"] is True
+    risk_gate_payload = json.loads(risk_gate_path.read_text(encoding="utf-8"))
+    assert risk_gate_payload["passed"] is False
+    assert risk_gate_payload["policy_comparison_status"] == "risk_evidence_insufficient"
+    assert any("H2O" in message for message in risk_gate_payload["errors"])
+    summary_rows = list(csv.DictReader(summary_path.open(encoding="utf-8")))
+    policy_row = next(row for row in summary_rows if row["section"] == "policy")
+    assert policy_row["policy_comparison_status"] == "risk_evidence_insufficient"
+    total_rows = list(csv.DictReader(total_summary_path.open(encoding="utf-8")))
+    assert total_rows[0]["policy_comparison_status"] == "risk_evidence_insufficient"
+    final_payload = written_payloads[-1]
+    assert final_payload["policy_comparison_status"] == "risk_evidence_insufficient"
+    policy_metrics = final_payload["policy_runs"][0]["payload"]["summary"]["full_lru"]
+    assert policy_metrics["policy_comparison_status"] == "risk_evidence_insufficient"
 
 
-def test_baseline_session_split_gate_blocks_policy_sweep_when_ks_is_too_high(tmp_path: Path) -> None:
+def test_baseline_session_trace_gate_failure_blocks_policy_sweep(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     profile_path = tmp_path / "profiles.csv"
     session_trace_path = tmp_path / "session_trace.csv"
     policy_path = tmp_path / "policy.csv"
     summary_path = tmp_path / "summary.csv"
     split_gate_path = tmp_path / "split_validation.html"
+    trace_gate_path = tmp_path / "trace_semantics_gate.json"
+    risk_gate_path = tmp_path / "risk_signal_gate.json"
     requests_path = tmp_path / "requests.jsonl"
     requests_path.write_text(
         "\n".join(
@@ -547,6 +657,8 @@ def test_baseline_session_split_gate_blocks_policy_sweep_when_ks_is_too_high(tmp
                 f"  smoke_policy: {policy_path}",
                 f"  smoke_summary: {summary_path}",
                 f"  smoke_split_validation: {split_gate_path}",
+                f"  smoke_trace_semantics_gate: {trace_gate_path}",
+                f"  smoke_risk_signal_gate: {risk_gate_path}",
             ]
         ),
         encoding="utf-8",
@@ -599,20 +711,41 @@ def test_baseline_session_split_gate_blocks_policy_sweep_when_ks_is_too_high(tmp
         return 0
 
     class ForcedSplitResult:
-        passed = False
-        errors = ["forced ks failure"]
-        html = "<html>forced</html>"
+        passed = True
+        errors: list[str] = []
+        html = "<html>passed</html>"
 
         def to_json(self) -> dict[str, object]:
-            return {"passed": False, "errors": ["forced ks failure"], "html": "<html>forced</html>"}
+            return {"passed": True, "errors": [], "html": self.html}
 
     with patch("run_util.experiment.build_profile_table", side_effect=fake_profile), patch(
         "run_util.experiment.validate_split_balance", return_value=ForcedSplitResult()
-    ), patch("run_util.experiment.run_policies") as run_policies_mock, patch(
+    ), patch(
+        "run_util.experiment.validate_trace_semantics",
+        return_value={
+            "passed": False,
+            "errors": ["no real pressure event"],
+            "fixture_valid": True,
+            "session_valid": True,
+            "turn_valid": True,
+            "arrival_valid": True,
+            "profile_resident_fields_valid": True,
+            "profile_history_fields_valid": True,
+            "session_reuse": True,
+            "global_resident_evolution": True,
+            "real_pressure_event": False,
+        },
+    ), patch("run_util.experiment.validate_trace_quality") as validate_risk_mock, patch(
+        "run_util.experiment.run_policies"
+    ) as run_policies_mock, patch(
         "run_util.experiment.plot_summary", return_value=[]
     ):
         code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=""))
 
     assert code == 2
     run_policies_mock.assert_not_called()
+    validate_risk_mock.assert_not_called()
     assert split_gate_path.exists()
+    assert json.loads(trace_gate_path.read_text(encoding="utf-8"))["passed"] is False
+    risk_payload = json.loads(risk_gate_path.read_text(encoding="utf-8"))
+    assert risk_payload["status"] == "not_evaluated"
