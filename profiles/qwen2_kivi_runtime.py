@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable
 
 from profiles.kivi_cache import KIVICache, KIVILayerState
+from profiles.qwen2_runtime_common import binding_diagnostics
 from profiles.qwen2_runtime_layout import apply_rope, mask_softmax, qwen2_layout_error
 
 
@@ -64,6 +65,7 @@ def prepare_kivi_runtime(
         "bits": bits,
         "residual_length": residual_length,
         "tracker": tracker,
+        "binding_diagnostics": binding_diagnostics(payload, torch),
     }
 
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -12,16 +14,26 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+from run_util.core_types import ProfileMeasurement
+from run_util.io_utils import read_measurements
+
+
 OUTPUT_PATH = REPO_ROOT / "data" / "fixtures" / "pilot_session_trace_requests.jsonl"
+VALIDATION_OUTPUT_PATH = REPO_ROOT / "data" / "golden" / "split_validation_v1.html"
 TOTAL_REQUESTS = 240
 SESSION_TURNS = 5
 MEMORY_TURNS = 3
 QUALITY_TURNS = 2
+DEFAULT_CALIBRATION_RATIO = 0.6
+KS_FAILURE_THRESHOLD = 0.1
 MAINSTREAM_KIVI_PROFILES = (
+    "kivi_2bit_residual16",
     "kivi_2bit_residual32",
     "kivi_2bit_residual64",
 )
 MAINSTREAM_H2O_PROFILES = (
+    "h2o_heavy05_recent05",
+    "h2o_heavy08_recent08",
     "h2o_heavy15_recent15",
     "h2o_heavy20_recent20",
 )
@@ -31,13 +43,81 @@ LOW_RISK_PROFILES = (
 )
 
 
+@dataclass(frozen=True)
+class SplitValidationMetric:
+    group: str
+    profile: str
+    calibration_count: int
+    eval_count: int
+    ks: float
+    p95_delta: float
+    calibration_cdf: list[dict[str, float]] = field(default_factory=list)
+    eval_cdf: list[dict[str, float]] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "group": self.group,
+            "profile": self.profile,
+            "calibration_count": self.calibration_count,
+            "eval_count": self.eval_count,
+            "ks": self.ks,
+            "p95_delta": self.p95_delta,
+            "calibration_cdf": self.calibration_cdf,
+            "eval_cdf": self.eval_cdf,
+        }
+
+
+@dataclass(frozen=True)
+class SplitValidationResult:
+    passed: bool
+    errors: list[str] = field(default_factory=list)
+    metrics: list[SplitValidationMetric] = field(default_factory=list)
+    html: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "passed": self.passed,
+            "errors": list(self.errors),
+            "metrics": [metric.to_json() for metric in self.metrics],
+            "html": self.html,
+        }
+
+
 def main() -> int:
-    rows = build_requests_from_templates(generate_templates())
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_PATH.open("w", encoding="utf-8") as handle:
+    parser = argparse.ArgumentParser(description="Generate pilot session trace fixture with risk-stratified split.")
+    parser.add_argument("--output", default=str(OUTPUT_PATH))
+    parser.add_argument("--measurements", default="")
+    parser.add_argument("--validation-output", default=str(VALIDATION_OUTPUT_PATH))
+    args = parser.parse_args()
+
+    templates = generate_templates()
+    request_risk_families = _request_risk_family_lookup(templates)
+    risk_lookup = None
+    if args.measurements:
+        risk_lookup = build_split_risk_lookup(
+            read_measurements(Path(args.measurements)),
+            request_risk_families=request_risk_families,
+        )
+    rows = build_requests_from_templates(templates, risk_lookup=risk_lookup)
+    validation = validate_split_balance(rows, risk_lookup)
+    if args.validation_output:
+        validation_path = Path(args.validation_output)
+        validation_path.parent.mkdir(parents=True, exist_ok=True)
+        validation_path.write_text(validation.html, encoding="utf-8")
+    if not validation.passed:
+        print(json.dumps({"errors": validation.errors}, ensure_ascii=False, sort_keys=True))
+        return 2
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-    print(json.dumps({"output": str(OUTPUT_PATH), "rows": len(rows)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"output": str(output_path), "rows": len(rows), "validation_output": str(args.validation_output)},
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -62,7 +142,10 @@ def generate_templates() -> list[dict[str, Any]]:
     return templates
 
 
-def build_requests_from_templates(templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_requests_from_templates(
+    templates: list[dict[str, Any]],
+    risk_lookup: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     normalized = [_normalize_template(row) for row in templates]
     ordered = sorted(
         normalized,
@@ -75,13 +158,122 @@ def build_requests_from_templates(templates: list[dict[str, Any]]) -> list[dict[
             str(row.get("request_id", "")),
         ),
     )
+    stratified = assign_stratified_splits(ordered, risk_lookup)
     memory_cutoff = int(len(ordered) * 0.6)
-    for arrival_index, row in enumerate(ordered):
+    for arrival_index, row in enumerate(stratified):
         row["metadata"]["pressure_phase"] = "memory" if arrival_index < memory_cutoff else "quality"
         if row["metadata"]["pressure_phase"] == "memory":
             row["metadata"]["followup_kind"] = ""
         row["metadata"]["arrival_index"] = arrival_index
-    return ordered
+    return stratified
+
+
+def build_split_risk_lookup(
+    measurements: list[ProfileMeasurement],
+    *,
+    request_risk_families: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for measurement in measurements:
+        request_id = _measurement_request_id(measurement)
+        risk_family = _measurement_risk_family(measurement, request_risk_families or {})
+        entry = lookup.setdefault(
+            request_id,
+            {
+                "split_score": 0.0,
+                "split_score_family": risk_family,
+                "profile_losses": {},
+            },
+        )
+        if measurement.quality_loss is None:
+            continue
+        loss = float(measurement.quality_loss)
+        profile_losses = entry["profile_losses"]
+        profile_losses[measurement.profile] = max(float(profile_losses.get(measurement.profile, 0.0)), loss)
+        entry["split_score"] = _recompute_split_score(
+            str(entry.get("split_score_family", risk_family)),
+            profile_losses,
+        )
+    return lookup
+
+
+def assign_stratified_splits(
+    rows: list[dict[str, Any]],
+    risk_lookup: dict[str, dict[str, Any]] | None = None,
+    *,
+    calibration_ratio: float = DEFAULT_CALIBRATION_RATIO,
+) -> list[dict[str, Any]]:
+    lookup = risk_lookup or _metadata_risk_lookup(rows)
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(_group_key(row), []).append(row)
+
+    for group_rows in grouped.values():
+        ranked = sorted(
+            group_rows,
+            key=lambda row: (
+                -_request_split_score(row, lookup),
+                str(row["metadata"].get("risk_family", "")),
+                str(row["request_id"]),
+            ),
+        )
+        target_calibration = max(1, int(round(len(ranked) * calibration_ratio)))
+        calibration_assigned = 0
+        for index, row in enumerate(ranked):
+            # Spread calibration quota across the ranked list so the 60/40 ratio
+            # does not get "patched" by moving a low-risk tail block wholesale.
+            ideal_calibration = ((index + 1) * target_calibration) / len(ranked)
+            split = "calibration" if calibration_assigned < ideal_calibration else "eval"
+            if split == "calibration":
+                calibration_assigned += 1
+            row["metadata"]["split"] = split
+            row["metadata"]["split_score"] = round(_request_split_score(row, lookup), 6)
+    return rows
+
+
+def validate_split_balance(
+    rows: list[dict[str, Any]],
+    risk_lookup: dict[str, dict[str, Any]] | None = None,
+    *,
+    ks_threshold: float = KS_FAILURE_THRESHOLD,
+) -> SplitValidationResult:
+    lookup = risk_lookup or _metadata_risk_lookup(rows)
+    grouped: dict[tuple[str, str], dict[str, dict[str, list[float]]]] = {}
+    for row in rows:
+        split = str(row["metadata"].get("split", "eval"))
+        group_key = _group_key(row)
+        profile_losses = _profile_losses_for_row(row, lookup)
+        for profile, loss in profile_losses.items():
+            slot = grouped.setdefault(group_key, {}).setdefault(profile, {"calibration": [], "eval": []})
+            slot["calibration" if split == "calibration" else "eval"].append(float(loss))
+
+    errors: list[str] = []
+    metrics: list[SplitValidationMetric] = []
+    for group_key in sorted(grouped):
+        group_label = f"{group_key[0]}/{group_key[1]}"
+        for profile in sorted(grouped[group_key]):
+            calibration_values = sorted(grouped[group_key][profile]["calibration"])
+            eval_values = sorted(grouped[group_key][profile]["eval"])
+            if not calibration_values or not eval_values:
+                errors.append(f"{group_label} {profile} 缺少 calibration/eval 双侧样本。")
+                continue
+            ks = _ks_statistic(calibration_values, eval_values)
+            p95_delta = abs(_percentile(calibration_values, 0.95) - _percentile(eval_values, 0.95))
+            metric = SplitValidationMetric(
+                group=group_label,
+                profile=profile,
+                calibration_count=len(calibration_values),
+                eval_count=len(eval_values),
+                ks=round(ks, 6),
+                p95_delta=round(p95_delta, 6),
+                calibration_cdf=_cdf_points(calibration_values),
+                eval_cdf=_cdf_points(eval_values),
+            )
+            metrics.append(metric)
+            if ks > ks_threshold:
+                errors.append(f"{group_label} {profile} 的 KS={ks:.4f} 超过阈值 {ks_threshold:.2f}。")
+    html = _render_split_validation_html(metrics, errors, ks_threshold)
+    return SplitValidationResult(passed=not errors, errors=errors, metrics=metrics, html=html)
 
 
 def _normalize_template(row: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +295,172 @@ def _normalize_template(row: dict[str, Any]) -> dict[str, Any]:
         "history_turns": history_turns,
         "metadata": metadata,
     }
+
+
+def _metadata_risk_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        risk_family = str(metadata.get("risk_family", "low_risk"))
+        followup_kind = str(metadata.get("followup_kind", ""))
+        pressure_phase = str(metadata.get("pressure_phase", "memory"))
+        if risk_family == "low_risk":
+            base_score = 0.02
+        elif followup_kind:
+            base_score = 0.35
+        elif pressure_phase == "quality":
+            base_score = 0.25
+        else:
+            base_score = 0.18
+        profile_losses = {str(profile): base_score for profile in metadata.get("risk_profiles") or []}
+        lookup[str(row["request_id"])] = {
+            "split_score": _recompute_split_score(risk_family, profile_losses),
+            "split_score_family": risk_family,
+            "profile_losses": profile_losses,
+        }
+    return lookup
+
+
+def _group_key(row: dict[str, Any]) -> tuple[str, str]:
+    metadata = row.get("metadata") or {}
+    return (str(row.get("task", "")), str(metadata.get("length_bucket", "unknown")))
+
+
+def _request_split_score(row: dict[str, Any], lookup: dict[str, dict[str, Any]]) -> float:
+    request_id = str(row["request_id"])
+    entry = lookup.get(request_id)
+    if not entry:
+        return 0.0
+    return float(entry.get("split_score", 0.0))
+
+
+def _profile_losses_for_row(row: dict[str, Any], lookup: dict[str, dict[str, Any]]) -> dict[str, float]:
+    request_id = str(row["request_id"])
+    entry = lookup.get(request_id) or {}
+    profile_losses = entry.get("profile_losses")
+    if isinstance(profile_losses, dict) and profile_losses:
+        return {str(profile): float(loss) for profile, loss in profile_losses.items()}
+    score = float(entry.get("split_score", 0.0))
+    return {profile: score for profile in row["metadata"].get("risk_profiles") or []}
+
+
+def _measurement_request_id(measurement: ProfileMeasurement) -> str:
+    original = measurement.extra.get("original_request_id")
+    if original not in {None, ""}:
+        return str(original)
+    request_id = str(measurement.request_id)
+    return request_id.split("__pressure", 1)[0]
+
+
+def _is_lossy_profile(profile: str) -> bool:
+    return not profile.startswith("full")
+
+
+def _request_risk_family_lookup(rows: list[dict[str, Any]]) -> dict[str, str]:
+    return {
+        str(row["request_id"]): str((row.get("metadata") or {}).get("risk_family", "low_risk"))
+        for row in rows
+    }
+
+
+def _measurement_risk_family(measurement: ProfileMeasurement, request_risk_families: dict[str, str]) -> str:
+    request_id = _measurement_request_id(measurement)
+    if request_id in request_risk_families:
+        return str(request_risk_families[request_id])
+    task = str(measurement.extra.get("task", "")).lower()
+    if task == "qa":
+        return "kivi_sensitive"
+    if task == "summary":
+        return "h2o_sensitive"
+    return "low_risk"
+
+
+def _recompute_split_score(risk_family: str, profile_losses: dict[str, Any]) -> float:
+    relevant_losses = [
+        float(loss)
+        for profile, loss in profile_losses.items()
+        if _profile_relevant_to_risk_family(str(profile), risk_family)
+    ]
+    if not relevant_losses:
+        return 0.0
+    return max(relevant_losses)
+
+
+def _profile_relevant_to_risk_family(profile: str, risk_family: str) -> bool:
+    if not _is_lossy_profile(profile):
+        return False
+    if risk_family == "kivi_sensitive":
+        return profile.startswith("kivi_")
+    if risk_family == "h2o_sensitive":
+        return profile.startswith("h2o_")
+    return True
+
+
+def _ks_statistic(lhs: list[float], rhs: list[float]) -> float:
+    points = sorted(set(lhs + rhs))
+    max_gap = 0.0
+    for point in points:
+        lhs_cdf = sum(1 for value in lhs if value <= point) / len(lhs)
+        rhs_cdf = sum(1 for value in rhs if value <= point) / len(rhs)
+        max_gap = max(max_gap, abs(lhs_cdf - rhs_cdf))
+    return max_gap
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    position = quantile * (len(values) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(values) - 1)
+    if lower == upper:
+        return values[lower]
+    weight = position - lower
+    return values[lower] * (1.0 - weight) + values[upper] * weight
+
+
+def _cdf_points(values: list[float]) -> list[dict[str, float]]:
+    return [
+        {"x": round(value, 6), "y": round((index + 1) / len(values), 6)}
+        for index, value in enumerate(sorted(values))
+    ]
+
+
+def _render_split_validation_html(
+    metrics: list[SplitValidationMetric],
+    errors: list[str],
+    ks_threshold: float,
+) -> str:
+    rows = "\n".join(
+        (
+            "<tr>"
+            f"<td>{metric.group}</td>"
+            f"<td>{metric.profile}</td>"
+            f"<td>{metric.calibration_count}</td>"
+            f"<td>{metric.eval_count}</td>"
+            f"<td>{metric.ks:.6f}</td>"
+            f"<td>{metric.p95_delta:.6f}</td>"
+            f"<td><pre>{json.dumps(metric.calibration_cdf, ensure_ascii=False)}</pre></td>"
+            f"<td><pre>{json.dumps(metric.eval_cdf, ensure_ascii=False)}</pre></td>"
+            "</tr>"
+        )
+        for metric in metrics
+    )
+    error_items = "".join(f"<li>{error}</li>" for error in errors) or "<li>none</li>"
+    return (
+        "<html><head><meta charset='utf-8'><title>split validation</title></head><body>"
+        "<h1>Split Validation v1</h1>"
+        f"<p>KS threshold: {ks_threshold:.2f}</p>"
+        "<h2>Errors</h2>"
+        f"<ul>{error_items}</ul>"
+        "<h2>Metrics</h2>"
+        "<table border='1' cellspacing='0' cellpadding='4'>"
+        "<tr><th>group</th><th>profile</th><th>cal_count</th><th>eval_count</th><th>KS</th><th>p95_delta</th><th>calibration_cdf</th><th>eval_cdf</th></tr>"
+        f"{rows}"
+        "</table>"
+        "</body></html>"
+    )
 
 
 def _qa_session(session_index: int, *, risk_family: str) -> list[dict[str, Any]]:

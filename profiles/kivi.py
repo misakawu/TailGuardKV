@@ -19,8 +19,22 @@ class KIVIAdapter(ProfileAdapter):
 
     def profiles(self) -> tuple[ProfileSpec, ...]:
         return (
+            ProfileSpec(
+                "kivi_4bit_residual16",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"bits": 4, "kivi_group_size": 16, "kivi_residual_length": 16},
+            ),
             ProfileSpec("kivi_4bit_residual32", self.name, self.env, lossy=True, metadata={"bits": 4, "kivi_residual_length": 32}),
             ProfileSpec("kivi_4bit_residual64", self.name, self.env, lossy=True, metadata={"bits": 4, "kivi_residual_length": 64}),
+            ProfileSpec(
+                "kivi_2bit_residual16",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"bits": 2, "kivi_group_size": 16, "kivi_residual_length": 16},
+            ),
             ProfileSpec("kivi_2bit_residual32", self.name, self.env, lossy=True, metadata={"bits": 2, "kivi_residual_length": 32}),
             ProfileSpec("kivi_2bit_residual64", self.name, self.env, lossy=True, metadata={"bits": 2, "kivi_residual_length": 64}),
         )

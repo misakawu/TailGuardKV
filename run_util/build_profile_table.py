@@ -92,6 +92,9 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_prompt_text",
     "extra_effective_prompt_chars",
     "extra_primary_metric",
+    "extra_runtime_cuda_visible_devices",
+    "extra_runtime_device_strategy",
+    "extra_runtime_visible_device_count",
     "extra_stage_startup_ms",
     "extra_stage_model_load_ms",
     "extra_stage_tokenize_ms",
@@ -112,6 +115,8 @@ PROFILE_TABLE_FIELDNAMES = [
     "extra_strategy",
     "extra_ttft_semantics",
     "extra_unsupported",
+    "extra_worker_cuda_visible_devices",
+    "extra_worker_device_strategy",
     "extra_worker_mode",
     "extra_vllm_cache_hits",
     "extra_vllm_cache_misses",
@@ -308,6 +313,19 @@ def create_persistent_worker(adapter: object, runtime_config: dict[str, object])
     )
 
 
+def _persistent_worker_runtime_config(spec, runtime_config: dict[str, object]) -> dict[str, object]:
+    resolved = dict(runtime_config)
+    family = str(getattr(spec, "family", "") or "")
+
+    def runtime_binding(field: str, default: object) -> object:
+        family_key = f"{family}_{field}" if family else field
+        return runtime_config.get(family_key, runtime_config.get(field, default))
+
+    resolved["device_strategy"] = spec.metadata.get("device_strategy", runtime_binding("device_strategy", "balanced_two_gpu"))
+    resolved["cuda_visible_devices"] = spec.metadata.get("cuda_visible_devices", runtime_binding("cuda_visible_devices", ""))
+    return resolved
+
+
 def build_profile_table(args: argparse.Namespace) -> int:
     try:
         config = load_config(Path(args.config))
@@ -387,12 +405,24 @@ def build_profile_table(args: argparse.Namespace) -> int:
         try:
             for adapter in adapters:
                 persistent_worker = None
+                persistent_worker_binding: tuple[str, str] | None = None
                 try:
-                    if not args.dry_run and bool(runtime.get("use_persistent_workers", True)):
-                        persistent_worker = create_persistent_worker(adapter, runtime)
                     for spec in adapter.profiles():
                         if spec.name not in profiles:
                             continue
+                        if not args.dry_run and bool(runtime.get("use_persistent_workers", True)):
+                            worker_runtime = _persistent_worker_runtime_config(spec, runtime)
+                            worker_binding = (
+                                str(worker_runtime.get("device_strategy") or ""),
+                                str(worker_runtime.get("cuda_visible_devices") or ""),
+                            )
+                            if persistent_worker is None or persistent_worker_binding != worker_binding:
+                                if persistent_worker is not None:
+                                    close = getattr(persistent_worker, "close", None)
+                                    if callable(close):
+                                        close()
+                                persistent_worker = create_persistent_worker(adapter, worker_runtime)
+                                persistent_worker_binding = worker_binding
                         session_runtime = session_runtime_by_profile.setdefault(spec.name, {})
                         for chunk_index, request_chunk in _request_chunks(requests, profile_chunk_size):
                             try:

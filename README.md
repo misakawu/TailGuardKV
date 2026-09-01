@@ -1,62 +1,187 @@
 # TailGuardKV
 
-## 配置
+TailGuardKV 用来验证 KV cache 管理策略在 edge LLM serving 场景下的质量、显存和时延取舍。当前仓库已经不是单纯的论文规划目录，现阶段重点是两条 smoke 轨道：
 
-当前实验只保留三份入口配置。
+- `baseline_quality`：对带参考答案的单轮请求做质量比较
+- `baseline_session`：对多轮会话做 resident、budget 和 backend pressure 语义检查
+
+`2026-08` 这一轮里，LongBench 和 ShareGPT 的筛选、测量、标注都放在仓库外工作区，主仓库只负责消费外部夹具和跑实验。
+
+## 当前目录
+
+- [`configs/`](./configs/)：实验入口配置
+- [`data/fixtures/`](./data/fixtures/)：仓库内固定夹具位置
+- [`docs/status/`](./docs/status/)：执行记录和阶段状态
+- [`metrics/`](./metrics/)：质量指标计算
+- [`profiles/`](./profiles/)：full / KIVI / H2O runtime 适配
+- [`run_util/`](./run_util/)：profile 构建、policy replay、汇总逻辑
+- [`scripts/`](./scripts/)：导入、生成、启动脚本
+- [`tests/`](./tests/)：数据集、配置和回归测试
+- [`论文规划/`](./论文规划/)：研究与论文规划文档
+
+## 当前入口配置
+
+目前常用入口不是“三份配置”，而是按用途分开：
 
 - [`configs/pilot.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot.yaml)  
-  baseline 正式配置。它现在显式声明 `experiment.type=baseline_quality`，使用带 `reference` 的 [`data/fixtures/pilot_qa_summary_requests.jsonl`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/data/fixtures/pilot_qa_summary_requests.jsonl)，只用于生成 `QA + 摘要` 主 smoke 结果，不再承担 session/backend 语义验收。
+  主 baseline quality 配置，消费仓库内标准质量夹具。
 - [`configs/pilot_50.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot_50.yaml)  
-  baseline 小规模 smoke 配置。它同样声明 `experiment.type=baseline_quality`，配置结构和 `pilot.yaml` 一致，只是把 `max_requests` 收敛到 50，用于快速检查。
+  小规模 quality 预检配置。
 - [`configs/pilot_session_trace.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot_session_trace.yaml)  
-  session-aware baseline 配置。它显式声明 `experiment.type=baseline_session`，使用 [`data/fixtures/pilot_session_trace_requests.jsonl`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/data/fixtures/pilot_session_trace_requests.jsonl)，专门验证 resident/global resident、预算命中与 restore/recompute/evict/queue 证据。
+  session trace 语义检查配置。
 - [`configs/pilot_sharegpt.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot_sharegpt.yaml)  
-  ShareGPT session/cache 诊断配置。它同样属于 `baseline_session` 语义轨道，使用 [`data/fixtures/sharegpt_sessions.json`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/data/fixtures/sharegpt_sessions.json)，只验证多 session、多 turn 下的 replay、resident、budget 和 cache 行为，不参与 baseline 质量比较。
+  ShareGPT session/cache 诊断配置。
+- [`configs/pilot_external_baseline_quality.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot_external_baseline_quality.yaml)  
+  外部 LongBench 标注夹具的 baseline quality 入口。
+- [`configs/pilot_external_baseline_session.yaml`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/configs/pilot_external_baseline_session.yaml)  
+  外部 ShareGPT 标注夹具的 baseline session 入口。
 
-“双轨 baseline” 的意思是：`baseline_quality` 只在带 `reference` 的独立 `QA + 摘要` 请求集上做质量比较；`baseline_session` 只做会话和缓存诊断，不再被拿来生成 baseline 质量表。
+## 外部标注工作区
 
-## 启动
+外部工作区路径：
 
-推荐只用这一条命令启动完整实验：
+- `/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling`
+
+这个工作区负责四类事情：
+
+- 生成 LongBench 候选
+- 生成 ShareGPT session 候选
+- 调主仓库 `run_util.build_profile_table` 做 measured profiling
+- 导出主仓库可直接消费的 `baseline_quality` / `baseline_session` 夹具
+
+主仓库不再承载 LongBench / ShareGPT 的数据准备逻辑，只保留导入、校验和实验消费入口。
+
+## 当前数据集状态
+
+### LongBench 外部标注集
+
+已完成外部测量和导出，产物在：
+
+- `/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling/artifacts/fixtures/baseline_quality_external.jsonl`
+- `/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling/artifacts/manifests/baseline_quality_external_manifest.json`
+
+截至 `2026-08-12` 已确认统计：
+
+- 总数 `100`
+- 风险分布：`kivi_sensitive=20`、`h2o_sensitive=20`、`low_risk=60`
+- 任务分布：`code=42`、`qa=38`、`summary=20`
+- split 分布：`calibration=50`、`eval=50`
+
+这里没有继续硬追计划里的 `60 / 60 / 60`。真实测量结果不支持那个目标，当前导出策略已经改成按可用样本收缩敏感组，并用 `tie_sensitive` 回填。
+
+### ShareGPT 外部标注集
+
+当前还在全量测量阶段，产物还没导出完成。
+
+已确认状态如下：
+
+- 候选集：`36` 个 session，`164` 个 turn
+- 候选限制：`max_turns=5`、`max_prompt_chars=1024`、`max_effective_prompt_chars=5000`
+- 当前测量表：`/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling/artifacts/measurements/sharegpt_session_candidates_profiles.csv`
+- 截至 `2026-08-12 15:57`，测量表已写入 `696` 行
+- `baseline_session_external.jsonl` 还没有生成
+
+这条线前面已经修过一次 OOM。问题不是单条 prompt，而是多轮 history 累加后的 effective prompt 过长，所以现在按 effective prompt 长度先筛 session，再做全量测量。
+
+## 外部夹具导入
+
+导入脚本是 [`scripts/import_external_fixtures.py`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/scripts/import_external_fixtures.py)。
+
+只校验 `baseline_quality`：
 
 ```bash
-conda run -n tailguardkv-base python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+python scripts/import_external_fixtures.py \
+  --kind baseline_quality \
+  --input /path/to/baseline_quality.jsonl \
+  --validate-only
 ```
 
-如果要跑小规模 baseline smoke 或 ShareGPT 诊断，只替换 `--config` 为 `configs/pilot_50.yaml` 或 `configs/pilot_sharegpt.yaml`。
+导入 `baseline_quality`：
 
-## 执行流程
+```bash
+python scripts/import_external_fixtures.py \
+  --kind baseline_quality \
+  --input /path/to/baseline_quality.jsonl
+```
 
-当前实现分三层。
+只校验 `baseline_session`：
 
-第一层是实验编排层，由 [`run_experiment.py`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/run_experiment.py) 的 `pilot-smoke-measured` 入口负责。
+```bash
+python scripts/import_external_fixtures.py \
+  --kind baseline_session \
+  --input /path/to/baseline_session.jsonl \
+  --validate-only
+```
 
-- 读取配置。
-- 解析输出目录。
-- 先调用 profile 构建阶段。
-- profile 成功后，再调用 policy replay 阶段。
-- 最后汇总 summary 和可视化输出。
+导入 `baseline_session`：
 
-第二层是 profile 构建层，由 [`run_util/build_profile_table.py`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/run_util/build_profile_table.py) 负责。
+```bash
+python scripts/import_external_fixtures.py \
+  --kind baseline_session \
+  --input /path/to/baseline_session.jsonl
+```
 
-- 读取请求集和 runtime 配置。
-- 根据 `experiment.type` 判断当前是 `baseline_quality` 还是 `baseline_session`，并兼容旧 `quality_mode`。
-- baseline 模式下，先校验请求是否有受支持的 `task`，以及是否带 `reference`。
-- session 模式下，强制校验 `session_id`、多 turn、交错 session 和 resident 字段。
-- 按 profile 和 request chunk 调用 adapter，生成 measured profile rows。
-- 给每条 measurement 补充 `task`、`split`、`reference`、`history_turns` 等上下文。
-- 计算 `quality_loss`、`quality_score` 和额外 loss 指标。
-- 校验 profile 表字段完整性。
-- 增量写出 profile CSV 和 session trace。
+默认导入位置：
 
-第三层是 policy replay 层，由 [`run_util/run_policies.py`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/run_util/run_policies.py) 负责。
+- `baseline_quality` -> `data/fixtures/baseline_quality_external.jsonl`
+- `baseline_session` -> `data/fixtures/baseline_session_external.jsonl`
 
-- 读取 measured profile 表。
-- 切分 calibration 和 evaluation 请求。
-- 构造 measured replay backend。
-- 按 `epsilon`、`delta`、`memory_budget_mib` 生成 policy sweep 组合。
-- 对每个 policy 和每个 request 做回放决策。
-- 记录动作、fallback、quality、memory、ttft 等结果。
-- `baseline_session` 下对 session/backend 证据做硬门禁；缺少 global resident 演化或 backend 事件时直接失败。
-- 写出 policy CSV。
-- 汇总 policy summary，质量轨道把 backend 事件字段标记为不适用，session 轨道要求这些字段必须可解释。
+当前校验规则包括：
+
+- `baseline_quality` 必须带 `request_id`、`task`、`prompt`、`reference`、`metadata`
+- `metadata` 至少带 `source`、`source_dataset`、`split`、`risk_family`
+- `baseline_quality` 必须覆盖有效的 `qa / summary / code` 子集，并同时出现 `calibration / eval`
+- `baseline_session` 必须带 `session_id`、连续 `turn_index`、全局递增 `arrival_index`
+- `baseline_session` 至少包含一个多轮会话和可交错 session
+- 两类夹具都要求出现 `kivi_sensitive`、`h2o_sensitive`、`low_risk`
+
+## 运行方式
+
+主 smoke 入口仍然是 `pilot-smoke-measured`：
+
+```bash
+conda run -n tailguardkv-base \
+  python run_experiment.py pilot-smoke-measured --config configs/pilot.yaml
+```
+
+跑外部 baseline 夹具时，直接用：
+
+```bash
+bash scripts/run_external_baseline_smoke.sh quality
+bash scripts/run_external_baseline_smoke.sh session
+```
+
+这两个命令分别调用：
+
+- `configs/pilot_external_baseline_quality.yaml`
+- `configs/pilot_external_baseline_session.yaml`
+
+## 当前实现边界
+
+当前实现已经支持：
+
+- `baseline_quality` 和 `baseline_session` 双轨实验类型
+- 外部夹具导入和 schema 校验
+- `code` 任务质量指标支持
+- session 轨道的 resident / budget / backend pressure 硬门禁
+
+当前还在推进中的部分：
+
+- ShareGPT 全量测量收尾
+- `baseline_session_external.jsonl` 导出
+- 两套外部夹具导入主仓库后的正式 smoke 跑表
+
+## 验证
+
+这轮改动里已经补过并跑过的测试包括：
+
+```bash
+pytest tests/test_external_fixture_import.py tests/test_pilot_dataset.py tests/test_pilot_session_trace_dataset.py -q
+pytest tests/test_external_baseline_configs.py tests/test_code_task_support.py -q
+pytest tests/test_longbench_label_strategy.py -q
+pytest tests/test_sharegpt_labeling_strategy.py -q
+```
+
+执行过程和分钟级进展见：
+
+- [`docs/status/2026-08-12_baseline_smoke_execution_log.md`](/DATACENTER3/zhenxiang.wang/work/TailGuardKV/docs/status/2026-08-12_baseline_smoke_execution_log.md)

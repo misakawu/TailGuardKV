@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable
 
 from profiles.h2o_cache import H2OCache, H2OLayerState
+from profiles.qwen2_runtime_common import binding_diagnostics
 
 
 def h2o_sizes(tokenizer: Any, payload: dict[str, Any]) -> dict[str, int]:
@@ -72,6 +73,7 @@ def prepare_h2o_runtime(
         "startup_ms": startup_ms,
         "model_load_ms": model_load_ms,
         "tracker": tracker,
+        "binding_diagnostics": binding_diagnostics(payload, torch),
     }
 
 

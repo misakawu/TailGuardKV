@@ -21,6 +21,20 @@ class H2OAdapter(ProfileAdapter):
     def profiles(self) -> tuple[ProfileSpec, ...]:
         return (
             ProfileSpec(
+                "h2o_heavy05_recent05",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"h2o_heavy_ratio": 0.05, "h2o_recent_ratio": 0.05},
+            ),
+            ProfileSpec(
+                "h2o_heavy08_recent08",
+                self.name,
+                self.env,
+                lossy=True,
+                metadata={"h2o_heavy_ratio": 0.08, "h2o_recent_ratio": 0.08},
+            ),
+            ProfileSpec(
                 "h2o_heavy10_recent10",
                 self.name,
                 self.env,

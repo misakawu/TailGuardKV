@@ -1,0 +1,28 @@
+{
+  "covered_tasks": [
+    "qa",
+    "summary"
+  ],
+  "errors": [
+    "至少需要 2 个不同 profile 的 mean_quality_loss > 0.02，当前只有 1 个。",
+    "缺少满足阈值的 KIVI 主流档位 profile。"
+  ],
+  "passed": false,
+  "profile_means": {
+    "full_gpu": 0.0,
+    "h2o_heavy05_recent05": 0.026044,
+    "h2o_heavy08_recent08": 0.013299,
+    "h2o_heavy10_recent10": 0.014917,
+    "h2o_heavy15_recent15": 0.009738,
+    "h2o_heavy20_recent20": 0.006396,
+    "kivi_2bit_residual16": 0.00266,
+    "kivi_2bit_residual32": 0.003237,
+    "kivi_2bit_residual64": 0.002207,
+    "kivi_4bit_residual16": 0.001065,
+    "kivi_4bit_residual32": 0.002179,
+    "kivi_4bit_residual64": 0.001562
+  },
+  "qualifying_profiles": [
+    "h2o_heavy05_recent05"
+  ]
+}

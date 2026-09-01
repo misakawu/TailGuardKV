@@ -87,6 +87,14 @@ FORMAL_PROFILES = [
     "h2o_heavy20_recent20",
 ]
 
+SESSION_TRACE_PROFILES = [
+    *FORMAL_PROFILES,
+    "kivi_4bit_residual16",
+    "kivi_2bit_residual16",
+    "h2o_heavy08_recent08",
+    "h2o_heavy05_recent05",
+]
+
 
 def _write_pilot_test_config(
     path: Path,
@@ -1218,7 +1226,37 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(row.extra["kivi_quantization_triggered"], False)
         self.assertEqual(row.extra["kivi_effective_mode"], "unquantized_short_request")
 
-    def test_append_profile_rows_keeps_kivi_quantization_columns(self) -> None:
+    def test_measurement_from_result_preserves_binding_diagnostics(self) -> None:
+        request = Request("r1", "summary", "prompt")
+        spec = ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True)
+
+        row = profiles_base._measurement_from_result(
+            "full",
+            request,
+            spec,
+            {
+                "ok": True,
+                "measured": True,
+                "output_text": "ok",
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "resident_memory_mib": 3.0,
+                "worker_cuda_visible_devices": "0,1",
+                "runtime_cuda_visible_devices": "0,1",
+                "runtime_visible_device_count": 2,
+                "runtime_device_strategy": "balanced_two_gpu",
+            },
+            default_extra={"env": "tailguardkv-base"},
+            worker_mode="persistent",
+        )
+
+        self.assertEqual(row.extra["worker_cuda_visible_devices"], "0,1")
+        self.assertEqual(row.extra["runtime_cuda_visible_devices"], "0,1")
+        self.assertEqual(row.extra["runtime_visible_device_count"], 2)
+        self.assertEqual(row.extra["runtime_device_strategy"], "balanced_two_gpu")
+
+    def test_append_profile_rows_keeps_diagnostic_and_kivi_columns(self) -> None:
         row = ProfileMeasurement(
             request_id="r1",
             profile="kivi_4bit_residual64",
@@ -1238,6 +1276,11 @@ class TailGuardCoreTest(unittest.TestCase):
                 "split": "calibration",
                 "kivi_quantization_triggered": False,
                 "kivi_effective_mode": "unquantized_short_request",
+                "worker_cuda_visible_devices": "0,1",
+                "worker_device_strategy": "balanced_two_gpu",
+                "runtime_cuda_visible_devices": "0,1",
+                "runtime_device_strategy": "balanced_two_gpu",
+                "runtime_visible_device_count": 2,
             },
         )
 
@@ -1248,6 +1291,11 @@ class TailGuardCoreTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["extra_kivi_quantization_triggered"], "False")
         self.assertEqual(rows[0]["extra_kivi_effective_mode"], "unquantized_short_request")
+        self.assertEqual(rows[0]["extra_worker_cuda_visible_devices"], "0,1")
+        self.assertEqual(rows[0]["extra_worker_device_strategy"], "balanced_two_gpu")
+        self.assertEqual(rows[0]["extra_runtime_cuda_visible_devices"], "0,1")
+        self.assertEqual(rows[0]["extra_runtime_device_strategy"], "balanced_two_gpu")
+        self.assertEqual(rows[0]["extra_runtime_visible_device_count"], "2")
 
     def test_qwen2_runtime_profiles_use_first_token_helper_instead_of_generate(self) -> None:
         class FakeTensor:
@@ -3197,20 +3245,34 @@ class TailGuardCoreTest(unittest.TestCase):
             [spec.name for spec in specs],
             [
                 "full_gpu",
+                "kivi_4bit_residual16",
                 "kivi_4bit_residual32",
                 "kivi_4bit_residual64",
+                "kivi_2bit_residual16",
                 "kivi_2bit_residual32",
                 "kivi_2bit_residual64",
+                "h2o_heavy05_recent05",
+                "h2o_heavy08_recent08",
                 "h2o_heavy10_recent10",
                 "h2o_heavy15_recent15",
                 "h2o_heavy20_recent20",
             ],
         )
         by_name = {spec.name: spec for spec in specs}
+        self.assertEqual(by_name["kivi_4bit_residual16"].metadata["bits"], 4)
+        self.assertEqual(by_name["kivi_4bit_residual16"].metadata["kivi_group_size"], 16)
+        self.assertEqual(by_name["kivi_4bit_residual16"].metadata["kivi_residual_length"], 16)
         self.assertEqual(by_name["kivi_4bit_residual32"].metadata["bits"], 4)
         self.assertEqual(by_name["kivi_4bit_residual32"].metadata["kivi_residual_length"], 32)
+        self.assertEqual(by_name["kivi_2bit_residual16"].metadata["bits"], 2)
+        self.assertEqual(by_name["kivi_2bit_residual16"].metadata["kivi_group_size"], 16)
+        self.assertEqual(by_name["kivi_2bit_residual16"].metadata["kivi_residual_length"], 16)
         self.assertEqual(by_name["kivi_2bit_residual64"].metadata["bits"], 2)
         self.assertEqual(by_name["kivi_2bit_residual64"].metadata["kivi_residual_length"], 64)
+        self.assertEqual(by_name["h2o_heavy05_recent05"].metadata["h2o_heavy_ratio"], 0.05)
+        self.assertEqual(by_name["h2o_heavy05_recent05"].metadata["h2o_recent_ratio"], 0.05)
+        self.assertEqual(by_name["h2o_heavy08_recent08"].metadata["h2o_heavy_ratio"], 0.08)
+        self.assertEqual(by_name["h2o_heavy08_recent08"].metadata["h2o_recent_ratio"], 0.08)
         self.assertEqual(by_name["h2o_heavy15_recent15"].metadata["h2o_heavy_ratio"], 0.15)
         self.assertEqual(by_name["h2o_heavy15_recent15"].metadata["h2o_recent_ratio"], 0.15)
 
@@ -3232,20 +3294,12 @@ class TailGuardCoreTest(unittest.TestCase):
         pilot_sharegpt = load_config(Path("configs/pilot_sharegpt.yaml"))
         pilot_phase1 = load_config(Path("configs/pilot_phase1.yaml"))
         pilot_session_trace = load_config(Path("configs/pilot_session_trace.yaml"))
-        expected_profiles = [
-            "full_gpu",
-            "kivi_4bit_residual32",
-            "kivi_4bit_residual64",
-            "kivi_2bit_residual32",
-            "kivi_2bit_residual64",
-            "h2o_heavy10_recent10",
-            "h2o_heavy15_recent15",
-            "h2o_heavy20_recent20",
-        ]
         self.assertEqual(config_adapters(pilot), ["full", "kivi", "h2o"])
-        self.assertEqual(config_profiles(pilot), expected_profiles)
-        self.assertEqual(config_profiles(pilot_50), expected_profiles)
-        self.assertEqual(config_profiles(pilot_sharegpt), expected_profiles)
+        self.assertEqual(config_profiles(pilot), FORMAL_PROFILES)
+        self.assertEqual(config_profiles(pilot_50), FORMAL_PROFILES)
+        self.assertEqual(config_profiles(pilot_sharegpt), FORMAL_PROFILES)
+        self.assertEqual(config_profiles(pilot_phase1), FORMAL_PROFILES)
+        self.assertEqual(config_profiles(pilot_session_trace), SESSION_TRACE_PROFILES)
         self.assertEqual(pilot["data"]["max_requests"], 200)
         self.assertEqual(pilot_50["data"]["max_requests"], 50)
         self.assertEqual(pilot["data"]["requests"], "data/fixtures/pilot_qa_summary_requests.jsonl")
@@ -4177,6 +4231,104 @@ class TailGuardCoreTest(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["diagnostic_output"], str(diagnostic_path))
             self.assertEqual(payload["failures"][0]["error"], "chunk failed")
+
+    def test_build_profile_table_restarts_persistent_worker_when_cuda_binding_changes(self) -> None:
+        class StubAdapter:
+            name = "stub"
+
+            def profiles(self):
+                return (
+                    ProfileSpec(
+                        "full_gpu",
+                        "full",
+                        "env",
+                        lossy=False,
+                        exact=True,
+                        metadata={
+                            "device_strategy": "balanced_two_gpu",
+                            "cuda_visible_devices": "0,1",
+                        },
+                    ),
+                    ProfileSpec(
+                        "kivi_4bit_residual64",
+                        "kivi",
+                        "env",
+                        lossy=True,
+                        exact=False,
+                        metadata={
+                            "device_strategy": "single_gpu",
+                            "cuda_visible_devices": "2",
+                        },
+                    ),
+                )
+
+        class StubWorker:
+            def __init__(self, worker_id: int) -> None:
+                self.worker_id = worker_id
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        requests = [Request("r0", "qa", "prompt", metadata={"split": "eval"})]
+        created_workers: list[StubWorker] = []
+        worker_ids_seen: list[int] = []
+
+        def fake_create_worker(adapter, runtime_config):
+            worker = StubWorker(len(created_workers) + 1)
+            created_workers.append(worker)
+            return worker
+
+        def fake_profile_many_compat(
+            adapter,
+            request_chunk,
+            profile_name,
+            *,
+            dry_run,
+            session_runtime,
+            memory_budget_mib,
+            persistent_worker,
+        ):
+            worker_ids_seen.append(getattr(persistent_worker, "worker_id", 0))
+            return [_measurement(request.request_id, profile_name, 0.0) for request in request_chunk]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profiles.csv"
+            with (
+                patch("run_util.build_profile_table.load_config", return_value={"profiles": {"adapters": ["stub"], "names": ["full_gpu", "kivi_4bit_residual64"]}}),
+                patch("run_util.build_profile_table.config_adapters", return_value=["stub"]),
+                patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu", "kivi_4bit_residual64"]),
+                patch(
+                    "run_util.build_profile_table.config_runtime",
+                    return_value={
+                        "repeat": 1,
+                        "use_persistent_workers": True,
+                        "timeout_s": 180,
+                        "full_device_strategy": "balanced_two_gpu",
+                        "full_cuda_visible_devices": "0,1",
+                        "kivi_device_strategy": "single_gpu",
+                        "kivi_cuda_visible_devices": "2",
+                    },
+                ),
+                patch("run_util.build_profile_table.build_profile_adapters", return_value=[StubAdapter()]),
+                patch("run_util.build_profile_table.load_requests", return_value=(requests, False)),
+                patch("run_util.build_profile_table.create_persistent_worker", side_effect=fake_create_worker),
+                patch("run_util.build_profile_table._profile_many_compat", side_effect=fake_profile_many_compat),
+            ):
+                code = build_profile_table(
+                    argparse.Namespace(
+                        config="config.yaml",
+                        adapters=None,
+                        output=str(output_path),
+                        import_measurements="",
+                        dry_run=False,
+                    )
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(worker_ids_seen, [1, 2])
+        self.assertEqual(len(created_workers), 2)
+        self.assertTrue(all(worker.closed for worker in created_workers))
 
     def test_build_profile_table_success_clears_stale_failed_chunks_output(self) -> None:
         class StubAdapter:

@@ -48,6 +48,7 @@ from run_util.experiment_summary import summary_rows, write_summary, write_total
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
 from run_util.run_policies import run_policies
+from scripts.generate_pilot_session_trace_requests import build_split_risk_lookup, validate_split_balance
 from scripts.validate_trace_quality import validate_trace_quality
 from visual.plot_summary import plot_summary
 
@@ -58,6 +59,7 @@ PILOT_SESSION_TRACE_OUTPUT = "out/session_traces/pilot_smoke_measured_session_tr
 PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
 PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
 PILOT_TRACE_QUALITY_GATE_OUTPUT = "out/profile_tables/pilot_session_trace_quality_gate.json"
+PILOT_SPLIT_VALIDATION_OUTPUT = "out/profile_tables/pilot_session_trace_split_validation.html"
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     stream = io.StringIO()
@@ -239,6 +241,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
     experiment_type = ""
     run_dir = _resolve_run_dir(getattr(args, "run_dir", None), config_path)
     fallback_summary_output = str(_resolve_run_output(PILOT_SUMMARY_OUTPUT, run_dir))
+    fallback_split_validation_output = str(_resolve_run_output(PILOT_SPLIT_VALIDATION_OUTPUT, run_dir))
     explicit_total_summary_output = str(getattr(args, "total_summary_output", "") or "")
     fallback_total_summary_output = str(
         _resolve_run_output(explicit_total_summary_output, run_dir)
@@ -264,6 +267,9 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         trace_quality_gate_output = str(
             _resolve_run_output(str(outputs.get("smoke_trace_quality_gate", PILOT_TRACE_QUALITY_GATE_OUTPUT)), run_dir)
         )
+        split_validation_output = str(
+            _resolve_run_output(str(outputs.get("smoke_split_validation", PILOT_SPLIT_VALIDATION_OUTPUT)), run_dir)
+        )
         configured_total_summary_output = outputs.get("smoke_total_summary")
         if explicit_total_summary_output:
             total_summary_output = str(_resolve_run_output(explicit_total_summary_output, run_dir))
@@ -283,6 +289,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "summary_output": fallback_summary_output,
             "total_summary_output": fallback_total_summary_output,
             "session_trace_output": str(_resolve_run_output(PILOT_SESSION_TRACE_OUTPUT, run_dir)),
+            "split_validation_output": fallback_split_validation_output,
         }
         _print_and_write(payload)
         return 2
@@ -369,15 +376,38 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             "diagnostic_output": profile_payload.get("diagnostic_output"),
             "failures": profile_payload.get("failures"),
             "profile": profile_payload,
+            "split_validation_output": split_validation_output,
         }
         _print_and_write(payload)
         return 2
 
     sweeps = _policy_sweep_points(config)
     gate_payload: dict[str, Any] = {}
+    split_validation_payload: dict[str, Any] = {}
     if experiment_type == "baseline_session":
         try:
             fixture_rows = _load_fixture_rows(str(config.get("data", {}).get("requests")))
+            split_result = validate_split_balance(fixture_rows, build_split_risk_lookup(measurements))
+            split_validation_payload = split_result.to_json()
+            Path(split_validation_output).parent.mkdir(parents=True, exist_ok=True)
+            Path(split_validation_output).write_text(split_result.html, encoding="utf-8")
+            if not split_result.passed:
+                payload = {
+                    "ok": False,
+                    "return_code": 2,
+                    "step": "validate_split_balance",
+                    "error": "session trace split validation failed",
+                    "config": config_path,
+                    "run_dir": str(run_dir),
+                    "experiment_type": experiment_type,
+                    "summary_output": summary_output,
+                    "total_summary_output": total_summary_output,
+                    "session_trace_output": session_trace_output,
+                    "split_validation_output": split_validation_output,
+                    "split_validation": split_validation_payload,
+                }
+                _print_and_write(payload)
+                return 2
             gate_result = validate_trace_quality(measurements, fixture_rows)
             gate_payload = gate_result.to_json()
             Path(trace_quality_gate_output).parent.mkdir(parents=True, exist_ok=True)
@@ -397,8 +427,10 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
                     "summary_output": summary_output,
                     "total_summary_output": total_summary_output,
                     "session_trace_output": session_trace_output,
+                    "split_validation_output": split_validation_output,
                     "trace_quality_gate_output": trace_quality_gate_output,
                     "trace_quality_gate": gate_payload,
+                    "split_validation": split_validation_payload,
                 }
                 _print_and_write(payload)
                 return 2
@@ -414,6 +446,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
                 "summary_output": summary_output,
                 "total_summary_output": total_summary_output,
                 "session_trace_output": session_trace_output,
+                "split_validation_output": split_validation_output,
                 "trace_quality_gate_output": trace_quality_gate_output,
             }
             _print_and_write(payload)
@@ -472,6 +505,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "memory_budget_mib": policy_payload.get("memory_budget_mib"),
         "profile": profile_payload,
         "session_trace": session_trace_payload,
+        "split_validation_output": split_validation_output,
+        "split_validation": split_validation_payload,
         "trace_quality_gate_output": trace_quality_gate_output,
         "trace_quality_gate": gate_payload,
         "policy": policy_payload,

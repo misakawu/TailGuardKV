@@ -12,19 +12,27 @@ profiles:
     - h2o
   names:
     - full_gpu
+    - kivi_4bit_residual16
     - kivi_4bit_residual32
     - kivi_4bit_residual64
+    - kivi_2bit_residual16
     - kivi_2bit_residual32
     - kivi_2bit_residual64
+    - h2o_heavy05_recent05
+    - h2o_heavy08_recent08
     - h2o_heavy10_recent10
     - h2o_heavy15_recent15
     - h2o_heavy20_recent20
   specs:
     full_gpu: {exact: true}
+    kivi_4bit_residual16: {exact: false}
     kivi_4bit_residual32: {exact: false}
     kivi_4bit_residual64: {exact: false}
+    kivi_2bit_residual16: {exact: false}
     kivi_2bit_residual32: {exact: false}
     kivi_2bit_residual64: {exact: false}
+    h2o_heavy05_recent05: {exact: false}
+    h2o_heavy08_recent08: {exact: false}
     h2o_heavy10_recent10: {exact: false}
     h2o_heavy15_recent15: {exact: false}
     h2o_heavy20_recent20: {exact: false}
@@ -54,7 +62,14 @@ profile_smoke:
   max_new_tokens: 16
   timeout_s: 180
   repeat: 1
+  profile_chunk_size: 24
   local_files_only: true
+  full_device_strategy: balanced_two_gpu
+  full_cuda_visible_devices: "0,1"
+  kivi_device_strategy: balanced_two_gpu
+  kivi_cuda_visible_devices: "0,1"
+  h2o_device_strategy: balanced_two_gpu
+  h2o_cuda_visible_devices: "0,1"
   vllm_enforce_eager: true
   vllm_gpu_memory_utilization: 0.75
   vllm_max_model_len: 1024
@@ -64,5 +79,6 @@ outputs:
   smoke_session_trace: out/session_traces/pilot_session_trace_pressure_trace.csv
   smoke_profile_checks: out/profile_tables/pilot_session_trace_profile_smoke.csv
   smoke_trace_quality_gate: out/profile_tables/pilot_session_trace_quality_gate.json
+  smoke_split_validation: out/profile_tables/pilot_session_trace_split_validation.html
   smoke_policy: out/policy_tables/pilot_session_trace_measured_policy.csv
   smoke_summary: out/policy_tables/pilot_session_trace_measured_summary.csv

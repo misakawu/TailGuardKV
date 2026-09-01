@@ -13,7 +13,8 @@ LATEST_PID_PATH="$LOG_DIR/${RUN_TAG}.pid"
 
 mkdir -p "$LOG_DIR"
 
-nohup setsid conda run -n "$CONDA_ENV" python "$ROOT_DIR/run_experiment.py" pilot-smoke-measured --config "$CONFIG_PATH" \
+nohup setsid conda run --no-capture-output --cwd "$ROOT_DIR" -n "$CONDA_ENV" \
+  python "$ROOT_DIR/run_experiment.py" pilot-smoke-measured --config "$CONFIG_PATH" \
   > "$LOG_PATH" 2>&1 < /dev/null &
 PID=$!
 

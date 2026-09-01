@@ -1,0 +1,63 @@
+model:
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
+
+experiment:
+  type: baseline_session
+
+profiles:
+  adapters:
+    - full
+    - kivi
+    - h2o
+  names:
+    - full_gpu
+    - kivi_2bit_residual32
+    - h2o_heavy15_recent15
+  specs:
+    full_gpu: {exact: true}
+    kivi_2bit_residual32: {exact: false}
+    h2o_heavy15_recent15: {exact: false}
+
+policies:
+  record_rejected_unsafe: true
+  names:
+    - full_lru
+    - utility_dynamic
+
+pilot:
+  epsilons: [0.10]
+  deltas: [0.10]
+  memory_budgets_mib: [26]
+
+data:
+  source: fixture
+  quality_mode: session_diagnostic
+  requests: data/fixtures/pilot_session_trace_requests.jsonl
+  calibration_fraction: 0.5
+  max_requests: 60
+
+profile_smoke:
+  max_new_tokens: 16
+  timeout_s: 180
+  repeat: 1
+  profile_chunk_size: 24
+  local_files_only: true
+  full_device_strategy: balanced_two_gpu
+  full_cuda_visible_devices: "0,1"
+  kivi_device_strategy: balanced_two_gpu
+  kivi_cuda_visible_devices: "0,1"
+  h2o_device_strategy: balanced_two_gpu
+  h2o_cuda_visible_devices: "0,1"
+  vllm_enforce_eager: true
+  vllm_gpu_memory_utilization: 0.75
+  vllm_max_model_len: 1024
+
+outputs:
+  smoke_profiles: out/profile_tables/pilot_session_trace_quick_profiles.csv
+  smoke_session_trace: out/session_traces/pilot_session_trace_quick_pressure_trace.csv
+  smoke_profile_checks: out/profile_tables/pilot_session_trace_quick_profile_smoke.csv
+  smoke_trace_quality_gate: out/profile_tables/pilot_session_trace_quick_quality_gate.json
+  smoke_split_validation: out/profile_tables/pilot_session_trace_quick_split_validation.html
+  smoke_policy: out/policy_tables/pilot_session_trace_quick_policy.csv
+  smoke_summary: out/policy_tables/pilot_session_trace_quick_summary.csv

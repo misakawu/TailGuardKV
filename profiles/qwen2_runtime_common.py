@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import resource
 import sys
 import time
@@ -218,6 +219,25 @@ def load_qwen2_model(payload: dict[str, Any], torch: Any, auto_model: Any, auto_
     return model, tokenizer, model.model.embed_tokens.weight.device
 
 
+def binding_diagnostics(payload: dict[str, Any], torch: Any | None = None) -> dict[str, Any]:
+    visible_count: int | None = None
+    if torch is not None:
+        device_count_fn = getattr(getattr(torch, "cuda", None), "device_count", None)
+        if callable(device_count_fn):
+            try:
+                visible_count = int(device_count_fn())
+            except Exception:
+                visible_count = None
+    diagnostics: dict[str, Any] = {
+        "runtime_device_strategy": str(payload.get("device_strategy") or ""),
+        "runtime_cuda_visible_devices": str(os.environ.get("CUDA_VISIBLE_DEVICES") or ""),
+        "worker_cuda_visible_devices": str(os.environ.get("CUDA_VISIBLE_DEVICES") or ""),
+    }
+    if visible_count is not None:
+        diagnostics["runtime_visible_device_count"] = visible_count
+    return diagnostics
+
+
 def invoke_generate_decode(model: Any, tokenizer: Any, device: Any, payload: dict[str, Any], torch: Any, **kwargs: Any) -> dict[str, Any]:
     try:
         return generate_decode(model, tokenizer, device, payload, torch, **kwargs)
@@ -341,6 +361,7 @@ def generate_decode(
         "ttft_semantics": "first_token",
         "worker_mode": worker_mode,
         "past_key_values": generated.get("past_key_values"),
+        **binding_diagnostics(payload, torch),
         **_peak_memory_fields(torch),
     }
 
@@ -418,6 +439,7 @@ def failure(
         "stage_decode_ms": stage_decode_ms,
         "stage_total_ms": stage_total_ms,
         "worker_mode": worker_mode,
+        **binding_diagnostics(payload),
     }
     if extra:
         result.update(extra)

@@ -106,6 +106,9 @@ class PersistentProfileWorker:
             path_parts.append(env["PYTHONPATH"])
         env["PYTHONPATH"] = os.pathsep.join(path_parts)
         env["PYTHONUNBUFFERED"] = "1"
+        cuda_visible_devices = str(self.runtime_config.get("cuda_visible_devices") or "").strip()
+        if cuda_visible_devices:
+            env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
         command = [
             _conda_env_python(self.env_name),
             "-m",

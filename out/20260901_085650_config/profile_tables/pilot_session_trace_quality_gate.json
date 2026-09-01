@@ -1,0 +1,17 @@
+{
+  "covered_tasks": [
+    "qa",
+    "summary"
+  ],
+  "errors": [],
+  "passed": true,
+  "profile_means": {
+    "full_gpu": 0.0,
+    "h2o_heavy15_recent15": 0.025,
+    "kivi_2bit_residual32": 0.025
+  },
+  "qualifying_profiles": [
+    "h2o_heavy15_recent15",
+    "kivi_2bit_residual32"
+  ]
+}

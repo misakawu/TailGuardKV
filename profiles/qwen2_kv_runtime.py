@@ -11,7 +11,7 @@ from profiles.h2o_cache import H2OCache, H2OLayerState, build_h2o_cache
 from profiles.kivi_cache import KIVICache, KIVILayerState, build_kivi_cache
 from profiles.qwen2_h2o_runtime import Qwen2H2OAttention, h2o_sizes as _h2o_sizes_impl, prepare_h2o_runtime as _prepare_h2o_runtime_impl, reset_h2o_attention as _reset_h2o_attention_impl, run_h2o_request as _run_h2o_request_impl
 from profiles.qwen2_kivi_runtime import Qwen2KIVIAttention, kivi_proof_error as _kivi_proof_error_impl, prepare_kivi_runtime as _prepare_kivi_runtime_impl, run_kivi_request as _run_kivi_request_impl, split_prefill_kivi_states as _split_prefill_kivi_states_impl
-from profiles.qwen2_runtime_common import clone_failure_result as _clone_failure_result_impl, failure as _failure_impl, generate_decode as _generate_decode_impl, import_runtime_modules as _import_runtime_modules_impl, invoke_generate_decode as _invoke_generate_decode_impl, is_fatal_cuda_error as _is_fatal_cuda_error_impl, is_oom_result as _is_oom_result_impl, load_qwen2_model as _load_qwen2_model_impl, release_runtime_cuda_resources as _release_runtime_cuda_resources_impl, require_cuda as _require_cuda_impl
+from profiles.qwen2_runtime_common import binding_diagnostics as _binding_diagnostics_impl, clone_failure_result as _clone_failure_result_impl, failure as _failure_impl, generate_decode as _generate_decode_impl, import_runtime_modules as _import_runtime_modules_impl, invoke_generate_decode as _invoke_generate_decode_impl, is_fatal_cuda_error as _is_fatal_cuda_error_impl, is_oom_result as _is_oom_result_impl, load_qwen2_model as _load_qwen2_model_impl, release_runtime_cuda_resources as _release_runtime_cuda_resources_impl, require_cuda as _require_cuda_impl
 from profiles.qwen2_runtime_layout import apply_rope as _apply_rope_impl, install_qwen2_attention as _install_qwen2_attention_impl, mask_softmax as _mask_softmax_impl, qwen2_layout_error as _kivi_compatibility_error_impl
 from profiles.session_runtime import SessionRuntimeState, apply_budget_policy
 
@@ -29,6 +29,7 @@ _apply_rope = _apply_rope_impl
 _mask_softmax = _mask_softmax_impl
 _split_prefill_kivi_states = _split_prefill_kivi_states_impl
 _release_runtime_cuda_resources = _release_runtime_cuda_resources_impl
+_binding_diagnostics = _binding_diagnostics_impl
 
 
 def _invoke_generate_decode(model: Any, tokenizer: Any, device: Any, payload: dict[str, Any], torch: Any, **kwargs: Any) -> dict[str, Any]:
@@ -180,12 +181,10 @@ def worker_init(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[s
     worker_state.clear()
     worker_state["adapter"] = str(payload.get("adapter") or "")
     worker_state["runtime_config"] = dict(payload.get("runtime_config") or {})
+    worker_state["binding_diagnostics"] = _worker_binding_diagnostics(worker_state["runtime_config"])
     return {
         "ok": True,
-        "worker": {
-            "mode": "persistent",
-            "adapter": worker_state["adapter"],
-        },
+        "worker": _worker_metadata(worker_state),
     }
 
 
@@ -195,7 +194,7 @@ def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> d
         return {
             "ok": True,
             "results": [],
-            "worker": {"mode": "persistent"},
+            "worker": _worker_metadata(worker_state),
             "session_runtime_state": SessionRuntimeState().to_payload(),
         }
     state = _session_state_from_payload(payload.get("session_runtime_state"))
@@ -216,8 +215,8 @@ def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> d
         results = [_failure(request, detail) for request in requests]
         return {
             "ok": False,
-            "results": [_sanitize_public_result(item) for item in results],
-            "worker": {"mode": "persistent"},
+            "results": _annotate_results_with_binding(results, worker_state=worker_state),
+            "worker": _worker_metadata(worker_state),
             "session_runtime_state": state.to_payload(),
             "fatal_error": detail,
         }
@@ -227,8 +226,8 @@ def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> d
         _clear_worker_runtime(worker_state)
     return {
         "ok": all(item.get("ok") for item in results),
-        "results": [_sanitize_public_result(item) for item in results],
-        "worker": {"mode": "persistent"},
+        "results": _annotate_results_with_binding(results, runtime=runtime, worker_state=worker_state),
+        "worker": _worker_metadata(worker_state),
         "session_runtime_state": state.to_payload(),
         **({"fatal_error": fatal_error} if fatal_error else {}),
     }
@@ -237,7 +236,7 @@ def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> d
 def worker_shutdown(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
     del payload
     _clear_worker_runtime(worker_state)
-    return {"ok": True, "worker": {"mode": "persistent"}}
+    return {"ok": True, "worker": _worker_metadata(worker_state)}
 
 
 def _kivi_proof_error(
@@ -358,6 +357,7 @@ def _prepare_full_runtime(payload: dict[str, Any], *, worker_start: float) -> di
         "device": device,
         "startup_ms": startup_ms,
         "model_load_ms": (time.perf_counter() - load_start) * 1000,
+        "binding_diagnostics": _binding_diagnostics(payload, torch),
     }
 
 
@@ -466,6 +466,40 @@ def _ensure_worker_runtime(worker_state: dict[str, Any], profile: str, request: 
     worker_state["runtime"] = runtime
     worker_state["runtime_profile"] = profile
     return runtime
+
+
+def _worker_binding_diagnostics(runtime_config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "worker_cuda_visible_devices": str(os.environ.get("CUDA_VISIBLE_DEVICES") or ""),
+        "worker_device_strategy": str(runtime_config.get("device_strategy") or ""),
+    }
+
+
+def _worker_metadata(worker_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mode": "persistent",
+        "adapter": str(worker_state.get("adapter") or ""),
+        **dict(worker_state.get("binding_diagnostics") or {}),
+    }
+
+
+def _annotate_results_with_binding(
+    results: list[dict[str, Any]],
+    *,
+    runtime: dict[str, Any] | None = None,
+    worker_state: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    runtime_binding = dict(runtime.get("binding_diagnostics") or {}) if isinstance(runtime, dict) else {}
+    worker_binding = dict(worker_state.get("binding_diagnostics") or {}) if isinstance(worker_state, dict) else {}
+    annotated: list[dict[str, Any]] = []
+    for item in results:
+        public = _sanitize_public_result(item)
+        for key, value in runtime_binding.items():
+            public.setdefault(key, value)
+        for key, value in worker_binding.items():
+            public.setdefault(key, value)
+        annotated.append(public)
+    return annotated
 
 
 def _clear_worker_runtime(worker_state: dict[str, Any]) -> None:

@@ -96,6 +96,54 @@ def test_worker_run_batch_reports_fatal_error_and_releases_runtime() -> None:
     release_runtime.assert_called_once()
 
 
+def test_worker_run_batch_reports_binding_diagnostics() -> None:
+    worker_state: dict[str, object] = {}
+    runtime = {
+        "runtime_id": "sentinel",
+        "binding_diagnostics": {
+            "runtime_device_strategy": "balanced_two_gpu",
+            "runtime_cuda_visible_devices": "0,1",
+            "runtime_visible_device_count": 2,
+        },
+    }
+
+    with (
+        patch.dict("os.environ", {"CUDA_VISIBLE_DEVICES": "0,1"}, clear=False),
+        patch("profiles.qwen2_kv_runtime._prepare_full_runtime", return_value=runtime),
+        patch(
+            "profiles.qwen2_kv_runtime._run_full_request",
+            return_value={
+                "ok": True,
+                "measured": True,
+                "output_text": "ok",
+                "latency_ms": 1.0,
+                "ttft_ms": 1.0,
+                "peak_memory_mib": 2.0,
+                "kv_cache_memory_mib": 2.0,
+                "resident_memory_mib": 2.0,
+            },
+        ),
+    ):
+        init_result = qwen2_kv_runtime.worker_init(
+            {
+                "adapter": "full",
+                "runtime_config": {
+                    "device_strategy": "balanced_two_gpu",
+                    "cuda_visible_devices": "0,1",
+                },
+            },
+            worker_state,
+        )
+        result = qwen2_kv_runtime.worker_run_batch(_payload("hello", 0), worker_state)
+
+    assert init_result["worker"]["worker_cuda_visible_devices"] == "0,1"
+    assert init_result["worker"]["worker_device_strategy"] == "balanced_two_gpu"
+    assert result["worker"]["worker_cuda_visible_devices"] == "0,1"
+    assert result["results"][0]["runtime_device_strategy"] == "balanced_two_gpu"
+    assert result["results"][0]["runtime_cuda_visible_devices"] == "0,1"
+    assert result["results"][0]["runtime_visible_device_count"] == 2
+
+
 def test_persistent_worker_starts_with_env_python_instead_of_conda_run() -> None:
     worker = PersistentProfileWorker(
         adapter="full",
