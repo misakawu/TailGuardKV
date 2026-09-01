@@ -718,6 +718,12 @@ def test_baseline_session_trace_gate_failure_blocks_policy_sweep(tmp_path: Path)
         def to_json(self) -> dict[str, object]:
             return {"passed": True, "errors": [], "html": self.html}
 
+    written_payloads: list[dict[str, object]] = []
+
+    def capture_summary(payload: dict[str, object], path: str) -> None:
+        written_payloads.append(json.loads(json.dumps(payload)))
+        write_experiment_summary(payload, path)
+
     with patch("run_util.experiment.build_profile_table", side_effect=fake_profile), patch(
         "run_util.experiment.validate_split_balance", return_value=ForcedSplitResult()
     ), patch(
@@ -739,7 +745,7 @@ def test_baseline_session_trace_gate_failure_blocks_policy_sweep(tmp_path: Path)
         "run_util.experiment.run_policies"
     ) as run_policies_mock, patch(
         "run_util.experiment.plot_summary", return_value=[]
-    ):
+    ), patch("run_util.experiment.write_summary", side_effect=capture_summary):
         code = pilot_smoke_measured(argparse.Namespace(config=str(config_path), run_dir=None, total_summary_output=""))
 
     assert code == 2
@@ -749,3 +755,8 @@ def test_baseline_session_trace_gate_failure_blocks_policy_sweep(tmp_path: Path)
     assert json.loads(trace_gate_path.read_text(encoding="utf-8"))["passed"] is False
     risk_payload = json.loads(risk_gate_path.read_text(encoding="utf-8"))
     assert risk_payload["status"] == "not_evaluated"
+    assert written_payloads[-1]["policy_comparison_status"] == "not_evaluated"
+    experiment_row = next(
+        row for row in csv.DictReader(summary_path.open(encoding="utf-8")) if row["section"] == "experiment"
+    )
+    assert experiment_row["policy_comparison_status"] == "not_evaluated"

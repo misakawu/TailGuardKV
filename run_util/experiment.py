@@ -628,6 +628,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
                 "trace_semantics_gate": trace_semantics_gate_payload,
                 "risk_signal_gate_output": risk_signal_gate_output,
                 "risk_signal_gate": risk_signal_gate_payload,
+                "policy_comparison_status": "not_evaluated",
             }
             _print_and_write(payload)
             return 2
