@@ -287,6 +287,26 @@ def test_validate_trace_quality_rejects_untraceable_eval_quality_record() -> Non
     assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
 
 
+def test_validate_trace_quality_rejects_empty_raghot_supporting_fact_ids() -> None:
+    fixture_rows, measurements = _passing_risk_gate_inputs()
+    raghot_row = fixture_rows[0]
+    raghot_row["metadata"].update(
+        {
+            "source_dataset": "sharegpt_raghot_qa_hybrid_session",
+            "content_source_dataset": "raghot_qa",
+            "context_pack_hash": "context-pack",
+            "supporting_fact_ids": [],
+            "packing_policy_version": "raghot_support_first_v1",
+        }
+    )
+
+    result = validate_trace_quality(measurements, fixture_rows)
+
+    assert result.passed is False
+    assert any("supporting_fact_ids" in message for message in result.provenance_failures)
+    assert "kivi_sensitive-qa" not in {record["fixture_request_id"] for record in result.quality_records}
+
+
 @pytest.mark.parametrize("quality_loss", [float("nan"), float("inf"), float("-inf")])
 def test_validate_trace_quality_rejects_non_finite_quality_loss(quality_loss: float) -> None:
     fixture_rows, measurements = _passing_risk_gate_inputs()

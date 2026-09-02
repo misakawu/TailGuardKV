@@ -290,7 +290,7 @@ def _quality_record_provenance_failure(fixture_row: dict[str, Any]) -> str | Non
         return "source_dataset 必须与 content_source_dataset 的来源注册表一致"
     for key in (*INJECTED_TURN_REQUIRED_METADATA, "original_session_id", "hybrid_turn_role", *source_spec["required_metadata"]):
         value = metadata.get(key)
-        if value is None or value == "":
+        if value is None or value == "" or (isinstance(value, (list, tuple, set, dict)) and not value):
             return f"metadata 缺少 {key}"
     try:
         turn_index = int(fixture_row.get("turn_index", -1))
