@@ -18,9 +18,32 @@ if str(REPO_ROOT) not in sys.path:
 from run_util.core_types import ProfileMeasurement
 from run_util.io_utils import read_measurements
 from scripts.generate_pilot_session_trace_requests import MAINSTREAM_H2O_PROFILES, MAINSTREAM_KIVI_PROFILES
+from scripts.import_external_fixtures import (
+    HYBRID_SOURCE,
+    INJECTED_TURN_REQUIRED_METADATA,
+    SOURCE_REGISTRY,
+    TURN_ROLES,
+)
 
 
 QUALITY_GATE_THRESHOLD = 0.02
+BASELINE_QUALITY_PROFILES = (
+    "full_gpu",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20",
+)
+BASELINE_QUALITY_KIVI_PROFILES = BASELINE_QUALITY_PROFILES[1:5]
+BASELINE_QUALITY_H2O_PROFILES = BASELINE_QUALITY_PROFILES[5:]
+STRICT_RISK_FAMILIES = ("kivi_sensitive", "h2o_sensitive", "low_risk")
+STRICT_GROUP_SIZE = 60
+LOW_RISK_LOSS_THRESHOLD = 0.01
+SENSITIVE_LABEL_THRESHOLD = 0.05
+FAMILY_GAP_THRESHOLD = 0.02
 
 
 @dataclass(frozen=True)
@@ -44,6 +67,21 @@ class TraceQualityValidationResult:
             for risk_family, tasks in sorted(self.task_coverage.items())
         }
         return payload
+
+
+@dataclass(frozen=True)
+class BaselineQualitySignalGateResult:
+    passed: bool
+    errors: list[str] = field(default_factory=list)
+    fixture_group_counts: dict[str, int] = field(default_factory=dict)
+    split_counts: dict[str, int] = field(default_factory=dict)
+    complete_profiles: list[str] = field(default_factory=list)
+    qualifying_profiles: list[str] = field(default_factory=list)
+    group_means: dict[str, dict[str, float]] = field(default_factory=dict)
+    sensitive_control_gaps: dict[str, float | None] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"gate": "baseline_quality_signal_gate", **asdict(self)}
 
 
 def main() -> int:
@@ -242,21 +280,15 @@ def _quality_record_provenance_failure(fixture_row: dict[str, Any]) -> str | Non
     metadata = fixture_row.get("metadata")
     if not isinstance(metadata, dict):
         return "metadata 必须是对象"
-    required_values = {
-        "source": "hybrid_session_builder",
-        "source_dataset": "sharegpt_longbench_hybrid_session",
-        "content_source_dataset": "longbench",
-    }
-    for key, expected in required_values.items():
-        if str(metadata.get(key, "")).strip().lower() != expected:
-            return f"{key} 必须是 {expected}"
-    for key in (
-        "content_source_request_id",
-        "content_source_index",
-        "injection_template",
-        "original_session_id",
-        "hybrid_turn_role",
-    ):
+    if str(metadata.get("source", "")).strip() != HYBRID_SOURCE:
+        return f"source 必须是 {HYBRID_SOURCE}"
+    content_source = str(metadata.get("content_source_dataset", "")).strip().lower()
+    source_spec = SOURCE_REGISTRY.get(content_source)
+    if source_spec is None:
+        return "content_source_dataset 不在来源注册表中"
+    if str(metadata.get("source_dataset", "")).strip() != source_spec["hybrid_source_dataset"]:
+        return "source_dataset 必须与 content_source_dataset 的来源注册表一致"
+    for key in (*INJECTED_TURN_REQUIRED_METADATA, "original_session_id", "hybrid_turn_role", *source_spec["required_metadata"]):
         value = metadata.get(key)
         if value is None or value == "":
             return f"metadata 缺少 {key}"
@@ -264,18 +296,13 @@ def _quality_record_provenance_failure(fixture_row: dict[str, Any]) -> str | Non
         turn_index = int(fixture_row.get("turn_index", -1))
     except (TypeError, ValueError):
         return "turn_index 必须是整数"
-    expected_roles = {
-        2: "longbench_content",
-        3: "reference_recall",
-        4: "reference_rewrite",
-    }
-    if turn_index not in expected_roles:
+    if turn_index not in {2, 3, 4}:
         return f"风险质量记录 turn_index 必须在 2..4: turn_index={turn_index}"
     role = str(metadata["hybrid_turn_role"])
-    if role != expected_roles[turn_index]:
+    if role != TURN_ROLES[turn_index]:
         return (
             "hybrid_turn_role 与风险 turn_index 不匹配: "
-            f"turn_index={turn_index} role={role} expected={expected_roles[turn_index]}"
+            f"turn_index={turn_index} role={role} expected={TURN_ROLES[turn_index]}"
         )
     if str(fixture_row.get("task", "")).strip().lower() not in {"qa", "summary"}:
         return "质量记录 task 必须是 QA/Summary"
@@ -299,10 +326,170 @@ def _quality_record_evidence(
         "content_source_dataset": str(metadata["content_source_dataset"]),
         "content_source_request_id": str(metadata["content_source_request_id"]),
         "content_source_index": metadata["content_source_index"],
+        "content_payload_hash": str(metadata["content_payload_hash"]),
         "injection_template": str(metadata["injection_template"]),
         "original_session_id": str(metadata["original_session_id"]),
         "hybrid_turn_role": str(metadata["hybrid_turn_role"]),
     }
+
+
+def validate_baseline_quality_signal_gate(
+    measurements: list[ProfileMeasurement],
+    fixture_rows: list[dict[str, Any]],
+) -> BaselineQualitySignalGateResult:
+    errors: list[str] = []
+    fixture_by_id: dict[str, dict[str, Any]] = {}
+    duplicate_ids: set[str] = set()
+    for row in fixture_rows:
+        request_id = str(row.get("request_id", "")).strip()
+        if not request_id:
+            errors.append("strict fixture contains a blank request_id")
+            continue
+        if request_id in fixture_by_id:
+            duplicate_ids.add(request_id)
+        fixture_by_id[request_id] = row
+    if duplicate_ids:
+        errors.append(f"strict fixture contains duplicate request_id values: {sorted(duplicate_ids)}")
+    if len(fixture_rows) != STRICT_GROUP_SIZE * len(STRICT_RISK_FAMILIES):
+        errors.append(f"strict fixture must contain 180 rows, got={len(fixture_rows)}")
+
+    fixture_group_counts = {family: 0 for family in STRICT_RISK_FAMILIES}
+    split_counts: dict[str, int] = {"calibration": 0, "eval": 0}
+    group_splits = {family: set() for family in STRICT_RISK_FAMILIES}
+    for request_id, row in fixture_by_id.items():
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            errors.append(f"request_id={request_id} metadata must be an object")
+            continue
+        family = str(metadata.get("risk_family", ""))
+        split = str(metadata.get("split", ""))
+        if family not in fixture_group_counts:
+            errors.append(f"request_id={request_id} has unsupported risk_family={family}")
+            continue
+        fixture_group_counts[family] += 1
+        if split not in split_counts:
+            errors.append(f"request_id={request_id} has unsupported split={split}")
+            continue
+        split_counts[split] += 1
+        group_splits[family].add(split)
+    for family, count in fixture_group_counts.items():
+        if count != STRICT_GROUP_SIZE:
+            errors.append(f"strict fixture requires {STRICT_GROUP_SIZE} rows for {family}, got={count}")
+        if group_splits[family] != {"calibration", "eval"}:
+            errors.append(f"{family} must cover calibration and eval")
+    if split_counts != {"calibration": 90, "eval": 90}:
+        errors.append(f"strict fixture requires 90 calibration and 90 eval rows, got={split_counts}")
+
+    measurement_by_request: dict[str, dict[str, ProfileMeasurement]] = {}
+    duplicate_measurements: set[tuple[str, str]] = set()
+    for measurement in measurements:
+        request_id = _fixture_request_id(measurement)
+        if request_id not in fixture_by_id or measurement.profile not in BASELINE_QUALITY_PROFILES:
+            continue
+        profile_rows = measurement_by_request.setdefault(request_id, {})
+        if measurement.profile in profile_rows:
+            duplicate_measurements.add((request_id, measurement.profile))
+        profile_rows[measurement.profile] = measurement
+    if duplicate_measurements:
+        errors.append(f"complete measurement contains duplicate request/profile rows: {sorted(duplicate_measurements)}")
+
+    complete_profiles: set[str] = set()
+    losses_by_group: dict[str, dict[str, list[float]]] = {
+        family: {profile: [] for profile in BASELINE_QUALITY_PROFILES}
+        for family in STRICT_RISK_FAMILIES
+    }
+    for request_id, fixture_row in fixture_by_id.items():
+        profile_rows = measurement_by_request.get(request_id, {})
+        missing_profiles = set(BASELINE_QUALITY_PROFILES) - set(profile_rows)
+        invalid_profiles = {
+            profile
+            for profile, measurement in profile_rows.items()
+            if not measurement.ok
+            or not measurement.measured
+            or measurement.quality_loss is None
+            or not math.isfinite(float(measurement.quality_loss))
+        }
+        if missing_profiles or invalid_profiles:
+            errors.append(
+                "complete measurement missing or invalid profiles: "
+                f"request_id={request_id} missing={sorted(missing_profiles)} invalid={sorted(invalid_profiles)}"
+            )
+            continue
+        complete_profiles.update(profile_rows)
+        metadata = fixture_row.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        family = str(metadata.get("risk_family", ""))
+        if family not in losses_by_group:
+            continue
+        losses = {profile: float(measurement.quality_loss) for profile, measurement in profile_rows.items()}
+        for profile, loss in losses.items():
+            losses_by_group[family][profile].append(loss)
+        derived_family = _derive_final_risk_family(losses)
+        if derived_family != family:
+            detail = "tie" if derived_family == "tie" else derived_family
+            errors.append(
+                "final-form measurement does not support fixture risk label: "
+                f"request_id={request_id} labeled={family} derived={detail}"
+            )
+
+    group_means = {
+        family: {
+            profile: round(sum(values) / len(values), 6)
+            for profile, values in profile_losses.items()
+            if values
+        }
+        for family, profile_losses in losses_by_group.items()
+    }
+    family_profiles = {
+        "kivi_sensitive": BASELINE_QUALITY_KIVI_PROFILES,
+        "h2o_sensitive": BASELINE_QUALITY_H2O_PROFILES,
+    }
+    qualifying_profiles: list[str] = []
+    sensitive_control_gaps: dict[str, float | None] = {}
+    for family, profiles in family_profiles.items():
+        sensitive_values = [group_means.get(family, {}).get(profile) for profile in profiles]
+        low_risk_values = [group_means.get("low_risk", {}).get(profile) for profile in profiles]
+        if any(value is None for value in sensitive_values + low_risk_values):
+            sensitive_control_gaps[family] = None
+            errors.append(f"{family} lacks complete sensitive-vs-low-risk evidence")
+            continue
+        sensitive_peak = max(float(value) for value in sensitive_values if value is not None)
+        low_risk_peak = max(float(value) for value in low_risk_values if value is not None)
+        gap = sensitive_peak - low_risk_peak
+        sensitive_control_gaps[family] = round(gap, 6)
+        qualifying_profiles.extend(
+            profile
+            for profile in profiles
+            if float(group_means[family][profile]) > QUALITY_GATE_THRESHOLD
+        )
+        if sensitive_peak <= QUALITY_GATE_THRESHOLD:
+            errors.append(f"{family} needs a profile group mean quality_loss > {QUALITY_GATE_THRESHOLD:.2f}")
+        if gap <= 0.0:
+            errors.append(f"{family} needs positive sensitive-vs-low-risk evidence, got={gap:.6f}")
+
+    return BaselineQualitySignalGateResult(
+        passed=not errors,
+        errors=errors,
+        fixture_group_counts=dict(sorted(fixture_group_counts.items())),
+        split_counts=dict(sorted(split_counts.items())),
+        complete_profiles=list(BASELINE_QUALITY_PROFILES) if set(BASELINE_QUALITY_PROFILES) <= complete_profiles else [],
+        qualifying_profiles=sorted(set(qualifying_profiles)),
+        group_means=group_means,
+        sensitive_control_gaps=sensitive_control_gaps,
+    )
+
+
+def _derive_final_risk_family(losses: dict[str, float]) -> str:
+    kivi_loss = max(losses[profile] for profile in BASELINE_QUALITY_KIVI_PROFILES)
+    h2o_loss = max(losses[profile] for profile in BASELINE_QUALITY_H2O_PROFILES)
+    if max(kivi_loss, h2o_loss) <= LOW_RISK_LOSS_THRESHOLD:
+        return "low_risk"
+    if kivi_loss >= SENSITIVE_LABEL_THRESHOLD and kivi_loss - h2o_loss >= FAMILY_GAP_THRESHOLD:
+        return "kivi_sensitive"
+    if h2o_loss >= SENSITIVE_LABEL_THRESHOLD and h2o_loss - kivi_loss >= FAMILY_GAP_THRESHOLD:
+        return "h2o_sensitive"
+    return "tie"
 
 
 def _load_fixture_rows(path: Path) -> list[dict[str, Any]]:

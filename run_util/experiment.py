@@ -52,7 +52,7 @@ from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
 from run_util.run_policies import run_policies
 from scripts.generate_pilot_session_trace_requests import build_split_risk_lookup, validate_split_balance
-from scripts.validate_trace_quality import validate_trace_quality
+from scripts.validate_trace_quality import validate_baseline_quality_signal_gate, validate_trace_quality
 from visual.plot_summary import plot_summary
 
 
@@ -63,6 +63,7 @@ PILOT_POLICY_OUTPUT = "out/policy_tables/pilot_smoke_measured_policy.csv"
 PILOT_SUMMARY_OUTPUT = "out/policy_tables/pilot_smoke_measured_summary.csv"
 PILOT_TRACE_SEMANTICS_GATE_OUTPUT = "out/profile_tables/pilot_session_trace_semantics_gate.json"
 PILOT_RISK_SIGNAL_GATE_OUTPUT = "out/profile_tables/pilot_session_risk_signal_gate.json"
+PILOT_BASELINE_QUALITY_SIGNAL_GATE_OUTPUT = "out/profile_tables/pilot_baseline_quality_signal_gate.json"
 PILOT_SPLIT_VALIDATION_OUTPUT = "out/profile_tables/pilot_session_trace_split_validation.html"
 
 def _run_stage(func: Callable[[argparse.Namespace], int], args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
@@ -416,6 +417,12 @@ def _attach_policy_comparison_status(payload: dict[str, Any], status: str) -> No
             metrics["policy_comparison_status"] = status
 
 
+def apply_signal_gate_policy_status(payload: dict[str, Any], *, gate_passed: bool) -> str:
+    status = "formally_comparable" if gate_passed else "risk_evidence_insufficient"
+    _attach_policy_comparison_status(payload, status)
+    return status
+
+
 def pilot_smoke_measured(args: argparse.Namespace) -> int:
     config_path = getattr(args, "config", PILOT_CONFIG)
     experiment_type = ""
@@ -458,6 +465,12 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
                         outputs.get("smoke_trace_quality_gate", PILOT_RISK_SIGNAL_GATE_OUTPUT),
                     )
                 ),
+                run_dir,
+            )
+        )
+        baseline_quality_signal_gate_output = str(
+            _resolve_run_output(
+                str(outputs.get("smoke_baseline_quality_signal_gate", PILOT_BASELINE_QUALITY_SIGNAL_GATE_OUTPUT)),
                 run_dir,
             )
         )
@@ -579,6 +592,7 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
     sweeps = _policy_sweep_points(config)
     trace_semantics_gate_payload: dict[str, Any] = {}
     risk_signal_gate_payload: dict[str, Any] = {}
+    baseline_quality_signal_gate_payload: dict[str, Any] = {}
     split_validation_payload: dict[str, Any] = {}
     policy_comparison_status = ""
     fixture_rows: list[dict[str, Any]] = []
@@ -688,6 +702,21 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
             run_payload = run.get("payload")
             if isinstance(run_payload, dict):
                 _attach_policy_comparison_status(run_payload, policy_comparison_status)
+    if experiment_type == "baseline_quality":
+        try:
+            quality_fixture_rows = _load_fixture_rows(str(config.get("data", {}).get("requests")))
+            quality_gate_result = validate_baseline_quality_signal_gate(measurements, quality_fixture_rows)
+            baseline_quality_signal_gate_payload = quality_gate_result.to_json()
+        except (FileNotFoundError, ValueError, KeyError) as exc:
+            baseline_quality_signal_gate_payload = {"passed": False, "errors": [str(exc)]}
+        policy_comparison_status = "formally_comparable" if baseline_quality_signal_gate_payload.get("passed") else "risk_evidence_insufficient"
+        baseline_quality_signal_gate_payload["policy_comparison_status"] = policy_comparison_status
+        _write_json_gate(baseline_quality_signal_gate_output, baseline_quality_signal_gate_payload)
+        for run in policy_runs:
+            run["policy_comparison_status"] = policy_comparison_status
+            run_payload = run.get("payload")
+            if isinstance(run_payload, dict):
+                apply_signal_gate_policy_status(run_payload, gate_passed=bool(baseline_quality_signal_gate_payload.get("passed")))
     payload = {
         "ok": policy_code == 0,
         "return_code": policy_code,
@@ -715,6 +744,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "trace_semantics_gate": trace_semantics_gate_payload,
         "risk_signal_gate_output": risk_signal_gate_output,
         "risk_signal_gate": risk_signal_gate_payload,
+        "baseline_quality_signal_gate_output": baseline_quality_signal_gate_output if experiment_type == "baseline_quality" else "",
+        "baseline_quality_signal_gate": baseline_quality_signal_gate_payload,
         "policy_comparison_status": policy_comparison_status,
         "policy": policy_payload,
         "policy_runs": policy_runs,

@@ -88,10 +88,10 @@ def test_validate_baseline_quality_fixture_rejects_missing_required_metadata(tmp
         validate_baseline_quality_fixture(fixture_path)
 
 
-def _hybrid_session_rows() -> list[dict[str, object]]:
+def _hybrid_session_rows(*, content_source_dataset: str = "longbench") -> list[dict[str, object]]:
     sessions: list[list[dict[str, object]]] = []
     session_index = 0
-    roles = ("sharegpt_opening", "sharegpt_opening", "longbench_content", "reference_recall", "reference_rewrite")
+    roles = ("sharegpt_opening", "sharegpt_opening", "content_query", "reference_recall", "reference_rewrite")
     for risk_family in ("kivi_sensitive", "h2o_sensitive", "low_risk"):
         for task in ("qa", "summary"):
             for split in ("calibration", "eval"):
@@ -112,10 +112,11 @@ def _hybrid_session_rows() -> list[dict[str, object]]:
                                 "turn_index": turn_index,
                                 "metadata": {
                                     "source": "hybrid_session_builder",
-                                    "source_dataset": "sharegpt_longbench_hybrid_session",
-                                    "content_source_dataset": "longbench" if injected else "sharegpt",
+                                    "source_dataset": f"sharegpt_{content_source_dataset}_hybrid_session",
+                                    "content_source_dataset": content_source_dataset if injected else "sharegpt",
                                     "content_source_request_id": content_request_id if injected else f"sharegpt-{session_index}-{turn_index}",
                                     "content_source_index": session_index if injected else session_index * 2 + turn_index,
+                                    "content_payload_hash": f"payload-{session_index:03d}" if injected else "",
                                     "injection_template": "template_a",
                                     "original_session_id": f"sharegpt-session-{session_index:03d}",
                                     "hybrid_turn_role": roles[turn_index],
@@ -124,6 +125,14 @@ def _hybrid_session_rows() -> list[dict[str, object]]:
                                 },
                             }
                         )
+                        if injected and content_source_dataset == "raghot_qa":
+                            session_rows[-1]["metadata"].update(
+                                {
+                                    "context_pack_hash": f"context-{session_index:03d}",
+                                    "supporting_fact_ids": [f"fact-{session_index:03d}"],
+                                    "packing_policy_version": "raghot_support_first_v1",
+                                }
+                            )
                     sessions.append(session_rows)
                     session_index += 1
 
@@ -158,6 +167,15 @@ def test_validate_baseline_session_fixture_accepts_exact_hybrid_contract(tmp_pat
     assert set(report["risk_task_split_session_counts"].values()) == {4}
 
 
+def test_validate_baseline_session_fixture_accepts_raghot_qa_provenance(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_raghot.jsonl"
+    _write_rows(fixture_path, _hybrid_session_rows(content_source_dataset="raghot_qa"))
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    assert validate_baseline_session_fixture(fixture_path)["row_count"] == 240
+
+
 def test_validate_baseline_session_fixture_rejects_missing_hybrid_metadata(tmp_path: Path) -> None:
     fixture_path = tmp_path / "baseline_session_missing_metadata.jsonl"
     rows = _hybrid_session_rows()
@@ -179,7 +197,37 @@ def test_validate_baseline_session_fixture_rejects_missing_longbench_provenance(
 
     from scripts.import_external_fixtures import validate_baseline_session_fixture
 
-    with pytest.raises(ValueError, match="LongBench"):
+    with pytest.raises(ValueError, match="content source"):
+        validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_baseline_session_fixture_rejects_missing_raghot_evidence(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_missing_raghot_evidence.jsonl"
+    rows = _hybrid_session_rows(content_source_dataset="raghot_qa")
+    del next(row for row in rows if row["turn_index"] == 2)["metadata"]["context_pack_hash"]
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="context_pack_hash"):
+        validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_baseline_session_fixture_rejects_forged_source_and_role(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "baseline_session_forged_source.jsonl"
+    rows = _hybrid_session_rows()
+    next(row for row in rows if row["turn_index"] == 2)["metadata"]["content_source_dataset"] = "forged_source"
+    _write_rows(fixture_path, rows)
+
+    from scripts.import_external_fixtures import validate_baseline_session_fixture
+
+    with pytest.raises(ValueError, match="content source"):
+        validate_baseline_session_fixture(fixture_path)
+
+    next(row for row in rows if row["turn_index"] == 2)["metadata"]["content_source_dataset"] = "longbench"
+    next(row for row in rows if row["turn_index"] == 2)["metadata"]["hybrid_turn_role"] = "reference_recall"
+    _write_rows(fixture_path, rows)
+    with pytest.raises(ValueError, match="hybrid_turn_role"):
         validate_baseline_session_fixture(fixture_path)
 
 

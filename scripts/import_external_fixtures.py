@@ -18,14 +18,30 @@ REQUIRED_METADATA = ("source", "source_dataset", "split", "risk_family")
 ALLOWED_QUALITY_TASKS = {"qa", "summary", "code"}
 REQUIRED_RISK_FAMILIES = {"low_risk"}
 HYBRID_SOURCE = "hybrid_session_builder"
-HYBRID_SOURCE_DATASET = "sharegpt_longbench_hybrid_session"
+SOURCE_REGISTRY = {
+    "longbench": {
+        "hybrid_source_dataset": "sharegpt_longbench_hybrid_session",
+        "required_metadata": (),
+    },
+    "raghot_qa": {
+        "hybrid_source_dataset": "sharegpt_raghot_qa_hybrid_session",
+        "required_metadata": (
+            "context_pack_hash",
+            "supporting_fact_ids",
+            "packing_policy_version",
+        ),
+    },
+}
 HYBRID_REQUIRED_METADATA = (
+    "original_session_id",
+    "hybrid_turn_role",
+)
+INJECTED_TURN_REQUIRED_METADATA = (
     "content_source_dataset",
     "content_source_request_id",
     "content_source_index",
+    "content_payload_hash",
     "injection_template",
-    "original_session_id",
-    "hybrid_turn_role",
 )
 SESSION_RISK_FAMILIES = ("kivi_sensitive", "h2o_sensitive", "low_risk")
 SESSION_TASKS = ("qa", "summary")
@@ -33,7 +49,7 @@ SESSION_SPLITS = ("calibration", "eval")
 SESSION_COUNT = 48
 TURNS_PER_SESSION = 5
 SESSIONS_PER_RISK_TASK_SPLIT = 4
-TURN_ROLES = ("sharegpt_opening", "sharegpt_opening", "longbench_content", "reference_recall", "reference_rewrite")
+TURN_ROLES = ("sharegpt_opening", "sharegpt_opening", "content_query", "reference_recall", "reference_rewrite")
 
 
 def main() -> int:
@@ -189,14 +205,22 @@ def validate_baseline_session_fixture(path: Path) -> dict[str, Any]:
             raise ValueError(f"baseline_session 风险记录只能是 QA/Summary: session={session_id}")
 
         injected_metadata = metadata_rows[2:]
-        if any(str(metadata["content_source_dataset"]).strip().lower() != "longbench" for metadata in injected_metadata):
-            raise ValueError(f"baseline_session 注入 turn 缺少 LongBench provenance: session={session_id}")
-        provenance_keys = ("content_source_request_id", "content_source_index", "injection_template")
+        content_sources = {str(metadata["content_source_dataset"]).strip().lower() for metadata in injected_metadata}
+        if len(content_sources) != 1 or next(iter(content_sources), "") not in SOURCE_REGISTRY:
+            raise ValueError(f"baseline_session 注入 turn 的 content source 不受支持: session={session_id}")
+        content_source = next(iter(content_sources))
+        expected_source_dataset = SOURCE_REGISTRY[content_source]["hybrid_source_dataset"]
+        if {str(metadata["source_dataset"]) for metadata in metadata_rows} != {expected_source_dataset}:
+            raise ValueError(
+                "baseline_session source_dataset 必须与 content source 注册表一致: "
+                f"session={session_id} content_source={content_source}"
+            )
+        provenance_keys = (*INJECTED_TURN_REQUIRED_METADATA, *SOURCE_REGISTRY[content_source]["required_metadata"])
         for key in provenance_keys:
             if len({str(metadata[key]) for metadata in injected_metadata}) != 1:
                 raise ValueError(f"baseline_session 注入 provenance 在 session 内不一致: session={session_id} field={key}")
         if len({str(row["reference"]) for row in ordered[2:]}) != 1:
-            raise ValueError(f"baseline_session turn2/turn3/turn4 必须复用 LongBench reference: session={session_id}")
+            raise ValueError(f"baseline_session turn2/turn3/turn4 必须复用 content reference: session={session_id}")
 
         risk_family = next(iter(session_risks))
         split = next(iter(session_splits))
@@ -273,8 +297,6 @@ def _validate_hybrid_session_row(
 ) -> None:
     if metadata.get("source") != HYBRID_SOURCE:
         raise ValueError(f"baseline_session source 必须是 {HYBRID_SOURCE}: row={row_index}")
-    if metadata.get("source_dataset") != HYBRID_SOURCE_DATASET:
-        raise ValueError(f"baseline_session source_dataset 必须是 {HYBRID_SOURCE_DATASET}: row={row_index}")
     for key in HYBRID_REQUIRED_METADATA:
         value = metadata.get(key)
         if value is None or value == "":
@@ -296,8 +318,19 @@ def _validate_hybrid_session_row(
     if turn_index >= 2:
         if task not in SESSION_TASKS:
             raise ValueError(f"baseline_session 风险记录只能是 QA/Summary: row={row_index}")
-        if str(metadata["content_source_dataset"]).strip().lower() != "longbench":
-            raise ValueError(f"baseline_session 注入 turn 缺少 LongBench provenance: row={row_index}")
+        content_source = str(metadata.get("content_source_dataset", "")).strip().lower()
+        source_spec = SOURCE_REGISTRY.get(content_source)
+        if source_spec is None:
+            raise ValueError(f"baseline_session 注入 turn 的 content source 不受支持: row={row_index}")
+        if metadata.get("source_dataset") != source_spec["hybrid_source_dataset"]:
+            raise ValueError(
+                "baseline_session source_dataset 必须与 content source 注册表一致: "
+                f"row={row_index} content_source={content_source}"
+            )
+        for key in (*INJECTED_TURN_REQUIRED_METADATA, *source_spec["required_metadata"]):
+            value = metadata.get(key)
+            if value is None or value == "" or value == []:
+                raise ValueError(f"baseline_session metadata 缺少 {key}: row={row_index}")
         if not str(row["reference"]).strip():
             raise ValueError(f"baseline_session 注入 turn reference 不能为空: row={row_index}")
 
