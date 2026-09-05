@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -234,3 +235,17 @@ def test_validate_baseline_session_fixture_rejects_duplicate_request_id(tmp_path
 
     with pytest.raises(ValueError, match="request_id.*不能重复"):
         validate_baseline_session_fixture(fixture_path)
+
+
+def test_validate_fixture_manifest_rejects_fixture_hash_mismatch(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "quality.jsonl"
+    rows = [{"request_id": "q", "task": "qa", "prompt": "p", "reference": "r", "metadata": {"source": "x", "source_dataset": "x", "split": "calibration", "risk_family": "low_risk"}},
+            {"request_id": "s", "task": "summary", "prompt": "p", "reference": "r", "metadata": {"source": "x", "source_dataset": "x", "split": "eval", "risk_family": "low_risk"}}]
+    _write_rows(fixture_path, rows)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"schema_version": 1, "fixture_hash": "forged", "rows": 2}), encoding="utf-8")
+
+    from scripts.import_external_fixtures import validate_fixture_manifest
+
+    with pytest.raises(ValueError, match="fixture hash"):
+        validate_fixture_manifest(fixture_path, manifest_path)

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_PATH="${1:-$ROOT_DIR/configs/pilot.yaml}"
 RUN_TAG="${2:-$(basename "$CONFIG_PATH" .yaml)}"
 CONDA_ENV="${CONDA_ENV:-tailguardkv-base}"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 LOG_DIR="$ROOT_DIR/out/logs"
 TS="$(date +%Y%m%d_%H%M%S)"
 LOG_PATH="$LOG_DIR/${RUN_TAG}_${TS}.nohup.log"
@@ -13,7 +14,7 @@ LATEST_PID_PATH="$LOG_DIR/${RUN_TAG}.pid"
 
 mkdir -p "$LOG_DIR"
 
-nohup setsid conda run --no-capture-output --cwd "$ROOT_DIR" -n "$CONDA_ENV" \
+nohup setsid flock -n "$LOG_DIR/gpu_smoke.lock" env CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES" conda run --no-capture-output --cwd "$ROOT_DIR" -n "$CONDA_ENV" \
   python "$ROOT_DIR/run_experiment.py" pilot-smoke-measured --config "$CONFIG_PATH" \
   > "$LOG_PATH" 2>&1 < /dev/null &
 PID=$!

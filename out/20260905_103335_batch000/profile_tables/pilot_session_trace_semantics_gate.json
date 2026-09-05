@@ -1,0 +1,36 @@
+{
+  "arrival_valid": true,
+  "errors": [
+    "trace replay did not produce a real pressure event"
+  ],
+  "fixture_valid": true,
+  "global_resident_evolution": true,
+  "global_resident_kv_mib": [
+    0.9296875,
+    2.078125,
+    3.8828125,
+    5.359375,
+    8.75,
+    20.5625,
+    33.578125,
+    43.0390625,
+    60.484375,
+    62.5625,
+    97.8359375,
+    100.4609375,
+    102.3203125,
+    137.375,
+    139.7265625
+  ],
+  "memory_budget_mib": 4900.0,
+  "passed": false,
+  "profile_history_fields_valid": true,
+  "profile_resident_fields_valid": true,
+  "profile_table_valid": true,
+  "real_pressure_event": false,
+  "replay_profile": "full_gpu",
+  "replay_rows": 15,
+  "session_reuse": true,
+  "session_valid": true,
+  "turn_valid": true
+}

@@ -1,0 +1,64 @@
+model:
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
+
+experiment:
+  type: baseline_session
+
+profiles:
+  adapters: [full, kivi, h2o]
+  names:
+    - full_gpu
+    - kivi_4bit_residual32
+    - kivi_4bit_residual64
+    - kivi_2bit_residual32
+    - kivi_2bit_residual64
+    - h2o_heavy10_recent10
+    - h2o_heavy15_recent15
+    - h2o_heavy20_recent20
+  specs:
+    full_gpu: {exact: true}
+    kivi_4bit_residual32: {exact: false}
+    kivi_4bit_residual64: {exact: false}
+    kivi_2bit_residual32: {exact: false}
+    kivi_2bit_residual64: {exact: false}
+    h2o_heavy10_recent10: {exact: false}
+    h2o_heavy15_recent15: {exact: false}
+    h2o_heavy20_recent20: {exact: false}
+
+policies:
+  record_rejected_unsafe: true
+  names: [full_lru, static_best, static_safe, utility_dynamic, uncalibrated_dynamic]
+
+pilot:
+  epsilons: [0.05]
+  deltas: [0.05]
+  memory_budgets_mib: [4900]
+
+data:
+  source: fixture
+  quality_mode: session_diagnostic
+  requests: data/fixtures/diagnostic_session27.jsonl
+  calibration_fraction: 0.5
+  max_requests: 135
+  diagnostic_only: true
+
+profile_smoke:
+  max_new_tokens: 16
+  profile_chunk_size: 1
+  use_persistent_workers: true
+  device_strategy: balanced_two_gpu
+  require_ttft: true
+  timeout_s: 180
+  repeat: 1
+  local_files_only: true
+  vllm_enforce_eager: true
+  vllm_gpu_memory_utilization: 0.75
+  vllm_max_model_len: 1024
+
+outputs:
+  smoke_profiles: out/profile_tables/diagnostic_session27_profiles.csv
+  smoke_session_trace: out/session_traces/diagnostic_session27_trace.csv
+  smoke_profile_checks: out/profile_tables/diagnostic_session27_profile_smoke.csv
+  smoke_policy: out/policy_tables/diagnostic_session27_policy.csv
+  smoke_summary: out/policy_tables/diagnostic_session27_summary.csv

@@ -1,0 +1,232 @@
+{
+  "diagnostic_only": true,
+  "sessions_per_batch": 1,
+  "profile_names": [
+    "full_gpu",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20"
+  ],
+  "batches": [
+    {
+      "batch_id": "batch000",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch000.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch000.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch000",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch001",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch001.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch001.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch001",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch002",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch002.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch002.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch002",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch003",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch003.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch003.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch003",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch004",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch004.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch004.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch004",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch005",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch005.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch005.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch005",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch006",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch006.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch006.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch006",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch007",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch007.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch007.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch007",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch008",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch008.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch008.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch008",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch009",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch009.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch009.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch009",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch010",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch010.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch010.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch010",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch011",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch011.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch011.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch011",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch012",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch012.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch012.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch012",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch013",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch013.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch013.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch013",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch014",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch014.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch014.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch014",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch015",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch015.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch015.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch015",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch016",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch016.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch016.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch016",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch017",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch017.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch017.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch017",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch018",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch018.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch018.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch018",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch019",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch019.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch019.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch019",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch020",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch020.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch020.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch020",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch021",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch021.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch021.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch021",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch022",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch022.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch022.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch022",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch023",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch023.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch023.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch023",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch024",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch024.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch024.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch024",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch025",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch025.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch025.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch025",
+      "sessions": 1,
+      "requests": 5
+    },
+    {
+      "batch_id": "batch026",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/fixtures/batch026.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/configs/batch026.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/diagnostic_session27_supervisor_single_20260905_124503/batch_outputs/batch026",
+      "sessions": 1,
+      "requests": 5
+    }
+  ]
+}

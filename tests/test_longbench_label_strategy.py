@@ -9,7 +9,8 @@ if str(LABELING_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(LABELING_SCRIPTS))
 
 
-from label_longbench_quality import compute_selection_targets, select_balanced_quality_rows
+from common import MAINSTREAM_H2O_PROFILES, MAINSTREAM_KIVI_PROFILES
+from label_longbench_quality import classify_profile_losses
 
 
 def _row(request_id: str, *, task: str, risk_family: str, prompt_len: int = 100) -> dict:
@@ -26,55 +27,11 @@ def _row(request_id: str, *, task: str, risk_family: str, prompt_len: int = 100)
     }
 
 
-def test_compute_selection_targets_uses_tie_pool_to_expand_sensitive_quota() -> None:
-    targets = compute_selection_targets(
-        strict_counts={
-            "kivi_sensitive": 11,
-            "h2o_sensitive": 11,
-            "low_risk": 542,
-        },
-        tie_sensitive_count=36,
-    )
-
-    assert targets == {
-        "kivi_sensitive": 29,
-        "h2o_sensitive": 29,
-        "low_risk": 60,
+def test_tie_sensitive_rows_are_not_eligible_for_sensitive_reserves() -> None:
+    losses = {
+        "full_gpu": 0.0,
+        **{profile: 0.07 for profile in MAINSTREAM_KIVI_PROFILES},
+        **{profile: 0.07 for profile in MAINSTREAM_H2O_PROFILES},
     }
 
-
-def test_select_balanced_quality_rows_backfills_from_tie_pool_and_preserves_summary_floor() -> None:
-    strict_rows = []
-    for index in range(11):
-        strict_rows.append(_row(f"kivi-{index}", task="qa", risk_family="kivi_sensitive"))
-        strict_rows.append(_row(f"h2o-{index}", task="code", risk_family="h2o_sensitive"))
-
-    tie_rows = []
-    for index in range(18):
-        tie_rows.append(_row(f"tie-qa-{index}", task="qa", risk_family="tie_sensitive"))
-        tie_rows.append(_row(f"tie-code-{index}", task="code", risk_family="tie_sensitive"))
-
-    low_risk_rows = []
-    for index in range(20):
-        low_risk_rows.append(_row(f"sum-{index}", task="summary", risk_family="low_risk"))
-    for index in range(20):
-        low_risk_rows.append(_row(f"qa-low-{index}", task="qa", risk_family="low_risk"))
-    for index in range(20):
-        low_risk_rows.append(_row(f"code-low-{index}", task="code", risk_family="low_risk"))
-
-    selected = select_balanced_quality_rows(strict_rows + tie_rows + low_risk_rows)
-
-    risk_counts: dict[str, int] = {}
-    task_counts: dict[str, int] = {}
-    for row in selected:
-        risk = str(row["metadata"]["risk_family"])
-        task = str(row["task"])
-        risk_counts[risk] = risk_counts.get(risk, 0) + 1
-        task_counts[task] = task_counts.get(task, 0) + 1
-
-    assert risk_counts == {
-        "kivi_sensitive": 29,
-        "h2o_sensitive": 29,
-        "low_risk": 60,
-    }
-    assert task_counts["summary"] >= 20
+    assert classify_profile_losses(losses) == "tie_sensitive"

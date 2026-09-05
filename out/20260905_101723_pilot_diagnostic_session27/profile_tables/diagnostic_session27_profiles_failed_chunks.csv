@@ -1,0 +1,11 @@
+adapter,budget_hit,error,evicted_kv_mib,extra_backend,extra_env,extra_failure_stage,extra_family,extra_model,extra_profile,extra_profile_note,extra_runtime_cuda_visible_devices,extra_runtime_device_strategy,extra_stage_decode_ms,extra_stage_generate_ms,extra_stage_model_load_ms,extra_stage_startup_ms,extra_stage_tokenize_ms,extra_stage_total_ms,extra_stage_transfer_ms,extra_unsupported,extra_worker_cuda_visible_devices,extra_worker_device_strategy,extra_worker_mode,kv_cache_memory_mib,kv_cumulative_mib,kv_incremental_mib,latency_ms,measured,ok,output_text,peak_memory_mib,profile,quality_loss,quality_score,recompute_ms,request_id,resident_kv_mib_after,resident_kv_mib_before,resident_memory_mib,restore_ms,session_id,ttft_ms,turn_index
+full,False,"ValueError: canonical_history_mismatch: canonical prompt is not a strict cached prefix
+Traceback (most recent call last):
+  File ""/DATACENTER3/zhenxiang.wang/work/TailGuardKV/profiles/qwen2_kv_runtime.py"", line 213, in worker_run_batch
+    results, state = _run_full_profile_batch_with_runtime(runtime, requests, state)
+  File ""/DATACENTER3/zhenxiang.wang/work/TailGuardKV/profiles/qwen2_kv_runtime.py"", line 561, in _run_full_profile_batch_with_runtime
+    session_request = _attach_session_cache(runtime, request)
+  File ""/DATACENTER3/zhenxiang.wang/work/TailGuardKV/profiles/qwen2_kv_runtime.py"", line 647, in _attach_session_cache
+    raise ValueError(""canonical_history_mismatch: canonical prompt is not a strict cached prefix"")
+ValueError: canonical_history_mismatch: canonical prompt is not a strict cached prefix
+",,qwen2_kv_runtime,tailguardkv-base,worker,full,/DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct,full_gpu,full/exact qwen2 runtime,"0,1",balanced_two_gpu,0.0,0.0,0.0,0.0,0.0,0.0,0.0,true,"0,1",balanced_two_gpu,single,,,,,False,False,,,full_gpu,,,,hybrid-session-000-turn-1__pressure_r1_c1,,,,,hybrid-session-000__pressure_r1_c1,,1

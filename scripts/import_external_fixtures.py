@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -41,10 +42,12 @@ def main() -> int:
     parser.add_argument("--kind", choices=("baseline_quality", "baseline_session"), required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", default="")
+    parser.add_argument("--manifest", default="")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
     source_path = Path(args.input)
+    manifest_report = validate_fixture_manifest(source_path, Path(args.manifest)) if args.manifest else {}
     if args.kind == "baseline_quality":
         report = validate_baseline_quality_fixture(source_path)
         destination = Path(args.output) if args.output else DEFAULT_BASELINE_QUALITY_DEST
@@ -53,7 +56,7 @@ def main() -> int:
         destination = Path(args.output) if args.output else DEFAULT_BASELINE_SESSION_DEST
 
     if args.validate_only:
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        print(json.dumps({**report, **manifest_report}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +67,7 @@ def main() -> int:
                 "kind": args.kind,
                 "input": str(source_path),
                 "output": str(destination),
-                "report": report,
+                "report": {**report, **manifest_report},
             },
             ensure_ascii=False,
             indent=2,
@@ -72,6 +75,27 @@ def main() -> int:
         )
     )
     return 0
+
+
+def validate_fixture_manifest(fixture_path: Path, manifest_path: Path) -> dict[str, Any]:
+    """Bind an imported fixture to a versioned external provenance manifest."""
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"fixture manifest 不存在: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or int(manifest.get("schema_version") or 0) != 1:
+        raise ValueError("fixture manifest schema_version 必须为 1")
+    rows = _read_rows(fixture_path)
+    actual_hash = _fixture_hash(rows)
+    if str(manifest.get("fixture_hash") or "") != actual_hash:
+        raise ValueError("fixture manifest fixture hash mismatch")
+    if int(manifest.get("rows") or -1) != len(rows):
+        raise ValueError("fixture manifest row count mismatch")
+    return {"manifest": str(manifest_path), "fixture_hash": actual_hash, "manifest_schema_version": 1}
+
+
+def _fixture_hash(rows: list[dict[str, Any]]) -> str:
+    payload = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def validate_baseline_quality_fixture(path: Path) -> dict[str, Any]:

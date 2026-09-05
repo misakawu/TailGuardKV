@@ -7,6 +7,11 @@ import time
 import traceback
 from typing import Any
 
+from run_util.canonical_history import (
+    CANONICAL_HISTORY_MODE,
+    CANONICAL_HISTORY_SOURCE_PROFILE,
+    canonical_history_hash,
+)
 from profiles.h2o_cache import H2OCache, H2OLayerState, build_h2o_cache
 from profiles.kivi_cache import KIVICache, KIVILayerState, build_kivi_cache
 from profiles.qwen2_h2o_runtime import Qwen2H2OAttention, h2o_sizes as _h2o_sizes_impl, prepare_h2o_runtime as _prepare_h2o_runtime_impl, reset_h2o_attention as _reset_h2o_attention_impl, run_h2o_request as _run_h2o_request_impl
@@ -52,6 +57,9 @@ def run_profile(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("dry_session"):
         return _run_dry_session_profile(payload)
     profile = str(payload.get("profile") or "")
+    canonical_error = _canonical_history_payload_error(payload)
+    if canonical_error:
+        return _failure(payload, canonical_error, failure_stage="canonical_history")
     try:
         if profile == "full_gpu":
             return _sanitize_public_result(_run_full_profile(payload))
@@ -374,16 +382,24 @@ def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dic
 
 
 def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
-    return _invoke_generate_decode(
+    cached_ids = payload.get("_runtime_cached_prompt_token_ids")
+    tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
+    if isinstance(cached_ids, list):
+        tokenized = _trim_tokenized_inputs(runtime["torch"], tokenized, prefix_len=len(cached_ids))
+    result = _invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
         runtime["device"],
         payload,
         runtime["torch"],
+        past_key_values=payload.get("_runtime_reusable_cache"),
+        tokenized_inputs=tokenized,
         stage_startup_ms=float(runtime.get("startup_ms") or 0.0),
         stage_model_load_ms=float(runtime.get("model_load_ms") or 0.0),
         worker_mode=worker_mode,
     )
+    result.update({"runtime_cache": result.get("past_key_values"), "runtime_prompt_token_ids": _request_prompt_token_ids(runtime, payload)})
+    return result
 
 
 def _run_kivi_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
@@ -464,6 +480,7 @@ def _ensure_worker_runtime(worker_state: dict[str, Any], profile: str, request: 
     else:
         raise ValueError(f"unsupported Qwen2 KV profile: {profile}")
     worker_state["runtime"] = runtime
+    runtime.setdefault("session_reuse", {})
     worker_state["runtime_profile"] = profile
     return runtime
 
@@ -541,7 +558,9 @@ def _run_full_profile_batch_with_runtime(
 ) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
     results = []
     for index, request in enumerate(requests):
-        result, state = _run_request_with_session(state, request, lambda item: _run_full_request(runtime, item, worker_mode="persistent"))
+        session_request = _attach_session_cache(runtime, request)
+        result, state = _run_request_with_session(state, session_request, lambda item: _run_full_request(runtime, item, worker_mode="persistent"))
+        _update_session_cache(runtime, session_request, result)
         results.append(result)
         if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
             results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
@@ -556,7 +575,9 @@ def _run_h2o_profile_batch_with_runtime(
 ) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
     results = []
     for index, request in enumerate(requests):
-        result, state = _run_request_with_session(state, request, lambda item: _run_h2o_request(runtime, item, worker_mode="persistent"))
+        session_request = _attach_session_cache(runtime, request)
+        result, state = _run_request_with_session(state, session_request, lambda item: _run_h2o_request(runtime, item, worker_mode="persistent"))
+        _update_session_cache(runtime, session_request, result)
         results.append(result)
         if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
             results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])
@@ -576,7 +597,11 @@ def _attach_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any])
     if not isinstance(entry, dict):
         request["_runtime_cache_rebuild_reason"] = "new_session"
         return request
-    if payload.get("history_turns"):
+    canonical_error = _canonical_history_payload_error(payload)
+    if canonical_error:
+        raise ValueError(canonical_error)
+    is_canonical = str(payload.get("canonical_history_mode") or "") == CANONICAL_HISTORY_MODE
+    if payload.get("history_turns") and not is_canonical:
         _clear_runtime_cache_entry(entry)
         session_reuse.pop(session_id, None)
         request["_runtime_cache_rebuild_reason"] = "history_turns_present"
@@ -595,6 +620,68 @@ def _attach_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any])
     request["_runtime_cached_prompt_token_ids"] = list(cached_prompt_token_ids)
     request["_runtime_cache_rebuild_reason"] = ""
     return request
+
+
+def _attach_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach a profile-local cache only for the exact canonical continuation."""
+    request = dict(payload)
+    session_id, profile = str(payload.get("session_id") or ""), str(payload.get("profile") or "")
+    if not session_id:
+        request["_runtime_cache_rebuild_reason"] = "no_session"
+        return request
+    canonical_error = _canonical_history_payload_error(payload)
+    if canonical_error:
+        raise ValueError(canonical_error)
+    is_canonical = str(payload.get("canonical_history_mode") or "") == CANONICAL_HISTORY_MODE
+    entry = runtime.setdefault("session_reuse", {}).get(session_id)
+    if not isinstance(entry, dict):
+        request["_runtime_cache_rebuild_reason"] = "new_session"
+        return request
+    if not is_canonical:
+        _clear_runtime_cache_entry(entry)
+        runtime["session_reuse"].pop(session_id, None)
+        request["_runtime_cache_rebuild_reason"] = "noncanonical_history"
+        return request
+    if str(entry.get("profile") or "") != profile:
+        raise ValueError("canonical_history_mismatch: cached profile differs from replay profile")
+    if int(entry.get("last_turn", -1)) != int(payload.get("turn_index") or 0) - 1:
+        raise ValueError("canonical_history_mismatch: cached turn is not the prior canonical turn")
+    if entry.get("canonical_history_hash") != payload.get("canonical_history_hash"):
+        raise ValueError("canonical_history_mismatch: cached canonical history hash differs")
+    cached_ids, prompt_ids = entry.get("prompt_token_ids"), _request_prompt_token_ids(runtime, payload)
+    if not isinstance(cached_ids, list) or prompt_ids[:len(cached_ids)] != cached_ids:
+        raise ValueError("canonical_history_mismatch: canonical prompt is not a strict cached prefix")
+    request.update({"_runtime_reusable_cache": entry.get("cache"), "_runtime_cached_prompt_token_ids": list(cached_ids), "_runtime_cache_rebuild_reason": ""})
+    return request
+
+
+def _update_session_cache(runtime: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> None:
+    if not bool(result.get("ok")) or not str(payload.get("session_id") or ""):
+        return
+    runtime.setdefault("session_reuse", {})[str(payload["session_id"])] = {
+        "profile": str(payload.get("profile") or ""), "cache": result.get("runtime_cache") or result.get("past_key_values"),
+        "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or _request_prompt_token_ids(runtime, payload)),
+        "canonical_history_hash": payload.get("canonical_history_hash"), "last_turn": int(payload.get("turn_index") or 0),
+    }
+
+
+def _canonical_history_payload_error(payload: dict[str, Any]) -> str:
+    mode = str(payload.get("canonical_history_mode") or "")
+    if not mode:
+        return ""
+    if mode != CANONICAL_HISTORY_MODE:
+        return "canonical_history_mismatch: unsupported canonical history mode"
+    if str(payload.get("canonical_history_source_profile") or "") != CANONICAL_HISTORY_SOURCE_PROFILE:
+        return "canonical_history_mismatch: canonical source profile must be full_gpu"
+    canonical_history = payload.get("canonical_history")
+    history_turns = payload.get("history_turns")
+    if not isinstance(canonical_history, list) or canonical_history != history_turns:
+        return "canonical_history_mismatch: rendered history differs from canonical fixture"
+    if not all(isinstance(item, str) for item in canonical_history):
+        return "canonical_history_mismatch: canonical history must contain strings"
+    if str(payload.get("canonical_history_hash") or "") != canonical_history_hash(canonical_history):
+        return "canonical_history_mismatch: canonical history hash mismatch"
+    return ""
 
 
 def _update_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> None:
@@ -639,6 +726,20 @@ def _request_prompt_token_ids(runtime: dict[str, Any], payload: dict[str, Any]) 
     while isinstance(values, list) and values and isinstance(values[0], list):
         values = values[0]
     return [int(token) for token in values]
+
+
+def _trim_tokenized_inputs(torch: Any, tokenized: dict[str, Any], *, prefix_len: int) -> dict[str, Any]:
+    del torch
+    trimmed = dict(tokenized)
+    for key, value in tuple(trimmed.items()):
+        if not hasattr(value, "__getitem__"):
+            continue
+        try:
+            suffix = value[:, prefix_len:]
+            trimmed[key] = suffix if int(suffix.shape[-1]) > 0 else value[:, -1:]
+        except (IndexError, TypeError, AttributeError):
+            continue
+    return trimmed
 
 
 def _run_request_with_session(

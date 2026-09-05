@@ -52,6 +52,9 @@ data:
 
 profile_smoke:
   max_new_tokens: 16
+  profile_chunk_size: 1
+  use_persistent_workers: true
+  device_strategy: balanced_two_gpu
   require_ttft: true
   timeout_s: 180
   repeat: 1

@@ -164,6 +164,12 @@ def _request_chunks(requests: list, chunk_size: int = DEFAULT_PROFILE_CHUNK_SIZE
 
 def _limit_requests_for_experiment(requests: list, max_requests: int, experiment_type: str) -> list:
     if experiment_type == "baseline_session":
+        if requests and all(
+            str(getattr(request, "metadata", {}).get("canonical_history_mode") or "")
+            == "full_gpu_generated_v1"
+            for request in requests
+        ):
+            return requests
         if max_requests <= 0 or len(requests) <= max_requests:
             return requests
         return sorted(

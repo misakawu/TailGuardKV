@@ -88,11 +88,18 @@ FORMAL_PROFILES = [
 ]
 
 SESSION_TRACE_PROFILES = [
-    *FORMAL_PROFILES,
+    "full_gpu",
     "kivi_4bit_residual16",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64",
     "kivi_2bit_residual16",
-    "h2o_heavy08_recent08",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
     "h2o_heavy05_recent05",
+    "h2o_heavy08_recent08",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20",
 ]
 
 
@@ -3323,7 +3330,7 @@ class TailGuardCoreTest(unittest.TestCase):
             ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"],
         )
         self.assertEqual(config_policies(pilot_50), ["full_lru", "static_best", "static_safe", "utility_dynamic", "uncalibrated_dynamic"])
-        self.assertEqual(exact_profiles(expected_profiles, pilot), {"full_gpu"})
+        self.assertEqual(exact_profiles(FORMAL_PROFILES, pilot), {"full_gpu"})
 
     def test_registry_rejects_structured_static_policy_config_after_cleanup(self) -> None:
         rows = [_measurement("c1", "full_gpu", 0.0)]

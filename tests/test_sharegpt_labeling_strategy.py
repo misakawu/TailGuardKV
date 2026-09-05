@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 
 LABELING_SCRIPTS = Path("/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling/scripts")
 if str(LABELING_SCRIPTS) not in sys.path:
@@ -91,7 +92,7 @@ def test_build_session_candidates_filters_sessions_by_effective_prompt_budget() 
     assert {row["session_id"] for row in candidates} == {"safe"}
 
 
-def test_build_fixture_allows_low_risk_only_sessions() -> None:
+def test_build_fixture_rejects_legacy_sessions_without_hybrid_provenance() -> None:
     candidate_rows = []
     measurements = []
     for session_index in range(2):
@@ -120,13 +121,11 @@ def test_build_fixture_allows_low_risk_only_sessions() -> None:
                 )()
             )
 
-    fixture, manifest = build_fixture(candidate_rows, measurements)
-
-    assert len(fixture) == 8
-    assert manifest["risk_distribution"] == {"low_risk": 8}
+    with pytest.raises(ValueError, match="invalid hybrid provenance"):
+        build_fixture(candidate_rows, measurements)
 
 
-def test_build_fixture_interleaves_sessions_in_pairs() -> None:
+def test_build_fixture_rejects_legacy_four_turn_sessions() -> None:
     candidate_rows = []
     measurements = []
     for session_index in range(4):
@@ -155,9 +154,5 @@ def test_build_fixture_interleaves_sessions_in_pairs() -> None:
                 )()
             )
 
-    fixture, _ = build_fixture(candidate_rows, measurements)
-    session_ids = [row["session_id"] for row in fixture[:6]]
-    turn_indices = [row["turn_index"] for row in fixture[:6]]
-
-    assert session_ids[:3] == ["s0", "s1", "s0"]
-    assert turn_indices[:3] == [0, 0, 1]
+    with pytest.raises(ValueError, match="invalid hybrid provenance"):
+        build_fixture(candidate_rows, measurements)

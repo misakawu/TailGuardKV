@@ -9,6 +9,7 @@ from typing import Any
 
 from run_util.core_types import ProfileMeasurement, Request
 from metrics.quality import compute_quality_loss, select_primary_loss
+from run_util.canonical_history import canonical_history_for_row, validate_canonical_history_rows
 
 QUALITY_MODE_BASELINE = "baseline"
 QUALITY_MODE_SESSION_DIAGNOSTIC = "session_diagnostic"
@@ -288,6 +289,20 @@ def _with_session_histories(requests: list[Request]) -> list[Request]:
         if request.session_id:
             grouped.setdefault(request.session_id, []).append(request)
 
+    canonical_rows = [
+        {
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "turn_index": request.turn_index,
+            "arrival_index": request.arrival_index,
+            "prompt": request.prompt,
+            "metadata": request.metadata,
+        }
+        for request in requests
+        if request.session_id
+    ]
+    validate_canonical_history_rows(canonical_rows)
+
     updated: dict[tuple[str, int, str], Request] = {}
     for session_id, session_requests in grouped.items():
         ordered = sorted(
@@ -308,13 +323,15 @@ def _with_session_histories(requests: list[Request]) -> list[Request]:
                     "session 请求 arrival_index 必须随 turn_index 非递减；"
                     f"session={session_id} turn_index={request.turn_index}"
                 )
+            explicit_history = canonical_history_for_row({"metadata": request.metadata})
             updated[(session_id, request.turn_index, request.request_id)] = replace(
                 request,
-                history_turns=tuple(history),
+                history_turns=explicit_history if explicit_history is not None else tuple(history),
             )
-            history.append(f"User: {request.prompt}")
-            if request.reference:
-                history.append(f"Assistant: {request.reference}")
+            if explicit_history is None:
+                history.append(f"User: {request.prompt}")
+                if request.reference:
+                    history.append(f"Assistant: {request.reference}")
             previous_arrival = request.arrival_index
             expected_turn += 1
 

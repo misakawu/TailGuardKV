@@ -192,3 +192,14 @@
 - 会话驻留、全局驻留、预算命中、`restore/recompute/evict` 这四类 backend 行为，必须都能从表里直接读出来。
 
 满足这三条，这张 smoke 表才有资格拿来给后面的 TailGuard 或 Oracle 做参照。
+
+## 降级 Diagnostic Smoke（2026-09-05）
+
+当 ShareGPT skeleton 池不足以形成正式的 48-session canonical fixture 时，可以运行
+diagnostic-only smoke 用于检查 GPU runtime、profile 覆盖和日志链路。该模式当前固定为
+27 个 session、135 个请求，使用重新生成的候选，不导入 `baseline_*_external.jsonl`。
+
+它不满足正式 baseline 的样本量、canonical bootstrap/replay、512-token final-form
+preflight 或风险分布要求。因此其 policy 表和任何数值都不可与正式 baseline、TailGuard
+或 Oracle 比较，不能用于论文结论或替代质量/session gate。所有输出必须保留
+`diagnostic_only=true` provenance。

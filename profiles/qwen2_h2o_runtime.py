@@ -97,11 +97,16 @@ def run_h2o_request(
         }
     )
     reset_h2o_attention(runtime["model"], tracker, sizes["heavy_size"], sizes["recent_size"])
-    cache = build_h2o_cache(
+    reusable_cache = payload.get("_runtime_reusable_cache")
+    cache = reusable_cache if isinstance(reusable_cache, H2OCache) else build_h2o_cache(
         runtime["model"].config,
         heavy_size=sizes["heavy_size"],
         recent_size=sizes["recent_size"],
     )
+    tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
+    cached_ids = payload.get("_runtime_cached_prompt_token_ids")
+    if isinstance(cached_ids, list):
+        tokenized = _suffix_inputs(tokenized, len(cached_ids))
     result = invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
@@ -109,6 +114,7 @@ def run_h2o_request(
         payload,
         runtime["torch"],
         past_key_values=cache,
+        tokenized_inputs=tokenized,
         stage_startup_ms=float(runtime["startup_ms"]),
         stage_model_load_ms=float(runtime["model_load_ms"]),
         worker_mode=worker_mode,
@@ -121,6 +127,9 @@ def run_h2o_request(
             "h2o_recent_ratio": float(payload.get("h2o_recent_ratio") or 0.1),
             "h2o_heavy_size": sizes["heavy_size"],
             "h2o_recent_size": sizes["recent_size"],
+            "cache_reused": isinstance(reusable_cache, H2OCache),
+            "runtime_cache": result.get("past_key_values", cache),
+            "runtime_prompt_token_ids": _token_ids_list(runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")["input_ids"]),
         }
     )
     if result.get("ok") and tracker["h2o_prune_events"] <= 0:
@@ -133,6 +142,31 @@ def run_h2o_request(
         )
         result["failure_stage"] = "generate"
     return result
+
+
+def _suffix_inputs(tokenized: dict[str, Any], prefix_len: int) -> dict[str, Any]:
+    result = dict(tokenized)
+    for key, value in tuple(result.items()):
+        try:
+            suffix = value[:, prefix_len:]
+            result[key] = suffix if int(suffix.shape[-1]) > 0 else value[:, -1:]
+        except (AttributeError, IndexError, TypeError):
+            continue
+    return result
+
+
+def _token_ids_list(input_ids: Any) -> list[int]:
+    values = input_ids
+    if hasattr(values, "detach"):
+        values = values.detach()
+    if hasattr(values, "cpu"):
+        values = values.cpu()
+    if not hasattr(values, "tolist"):
+        return []
+    values = values.tolist()
+    while isinstance(values, list) and values and isinstance(values[0], list):
+        values = values[0]
+    return [int(value) for value in values]
 
 
 class Qwen2H2OAttention:

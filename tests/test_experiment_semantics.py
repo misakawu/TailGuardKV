@@ -194,6 +194,26 @@ def test_pilot_session_trace_limit_preserves_pressure_arrival_order() -> None:
     validate_requests_for_experiment_type(limited, "baseline_session")
 
 
+def test_canonical_probe_is_not_truncated_by_max_requests() -> None:
+    trace = [
+        Request(
+            f"session-{session}_turn-{turn}",
+            "qa",
+            "prompt",
+            session_id=f"session-{session}",
+            turn_index=turn,
+            arrival_index=turn * 6 + session,
+            metadata={"canonical_history_mode": "full_gpu_generated_v1"},
+        )
+        for turn in range(5)
+        for session in range(6)
+    ]
+
+    limited = _limit_requests_for_experiment(trace, 12, "baseline_session")
+
+    assert len(limited) == 30
+
+
 def test_session_profile_validation_requires_resident_fields() -> None:
     with pytest.raises(ValueError, match="resident_kv_mib"):
         validate_profile_measurements(
