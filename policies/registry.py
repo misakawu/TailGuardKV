@@ -55,8 +55,6 @@ def build_policies(
                     delta,
                     exact_profiles,
                     memory_budget_mib,
-                    memory_weight=float(options.get("memory_weight", 0.05)),
-                    loss_weight=float(options.get("loss_weight", 1000.0)),
                     record_rejected_unsafe=record_rejected_unsafe,
                 )
             )

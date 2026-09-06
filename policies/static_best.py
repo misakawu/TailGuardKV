@@ -17,7 +17,7 @@ class StaticBestPolicy(StatsPolicy):
         memory_budget_mib: float = float("inf"),
     ) -> None:
         super().__init__("static_best", calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib=memory_budget_mib)
-        self.profile = self._best_profile(use_tail_constraint=False)
+        self.profile = self._best_static_best_profile()
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         candidate = self._candidate_action(request, self.profile, cache_state)

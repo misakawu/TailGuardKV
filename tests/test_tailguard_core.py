@@ -3111,7 +3111,7 @@ class TailGuardCoreTest(unittest.TestCase):
 
         action = policy.decide(Request("e1", "qa", "prompt", metadata={"task": "qa", "length_bucket": "short"}), None, None)
 
-        self.assertEqual(action.profile, "h2o_heavy_hitter")
+        self.assertEqual(action.profile, "kivi_4bit")
 
 
     def test_utility_dynamic_uses_lossy_candidates_before_exact_fallback(self) -> None:

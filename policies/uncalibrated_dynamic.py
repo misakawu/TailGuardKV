@@ -33,8 +33,8 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                 candidate = self._candidate_action(request, profile, cache_state)
                 eligible_lossy.append(
                     (
-                        pred_loss,
                         candidate.predicted_ttft_ms,
+                        pred_loss,
                         candidate.projected_memory_mib,
                         profile,
                     )

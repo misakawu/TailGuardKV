@@ -221,6 +221,47 @@ class StatsPolicy(Policy):
                 best_score = score
         return best_profile or self._fallback_profile()
 
+    def _best_static_best_profile(self) -> str:
+        fastest_lossy = ""
+        fastest_lossy_ttft = inf
+        for profile in self._candidate_profiles(include_exact=False):
+            stat = self.stats.get(profile)
+            if stat is None or stat.known_loss_count == 0 or self._loss_or_inf(profile) > self.epsilon:
+                continue
+            ttft = self._ttft_or_inf(profile)
+            if ttft < fastest_lossy_ttft:
+                fastest_lossy = profile
+                fastest_lossy_ttft = ttft
+
+        fastest_exact = self._fastest_exact_profile()
+        exact_ttft = self._ttft_or_inf(fastest_exact)
+        if fastest_lossy and fastest_lossy_ttft <= 0.95 * exact_ttft:
+            return fastest_lossy
+        return fastest_exact
+
+    def _lowest_empirical_loss_lossy_profile(self) -> str:
+        best_profile = ""
+        best_loss = inf
+        for profile in self._candidate_profiles(include_exact=False):
+            stat = self.stats.get(profile)
+            if stat is None or stat.known_loss_count == 0:
+                continue
+            loss = self._loss_or_inf(profile)
+            if loss < best_loss:
+                best_profile = profile
+                best_loss = loss
+        return best_profile or self._fastest_exact_profile()
+
+    def _ttft_normalizer(self) -> float:
+        values = [self._ttft_or_inf(profile) for profile in self.profiles]
+        finite_values = [value for value in values if isfinite(value) and value > 0.0]
+        return max(finite_values, default=1.0)
+
+    def _kv_normalizer(self) -> float:
+        values = [self._memory_or_inf(profile) for profile in self.profiles]
+        finite_values = [value for value in values if isfinite(value) and value > 0.0]
+        return max(finite_values, default=1.0)
+
     def _predict_and_guard(self, request: Request, profile: str) -> tuple[float, float, bool, str]:
         pred_loss = self.predictor.predict_loss(request, profile)
         risk_upper = self.guard.risk_upper(request, profile, pred_loss)

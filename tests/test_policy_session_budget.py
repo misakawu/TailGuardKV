@@ -586,7 +586,7 @@ def test_full_lru_reports_state_aware_budget_projection() -> None:
     assert action.reason == "full precision exact profile"
 
 
-def test_static_best_prefers_lossy_profile_when_lossy_is_deployable() -> None:
+def test_static_best_keeps_full_when_lossy_has_no_ttft_benefit() -> None:
     calibration = [
         _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
         _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.01, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
@@ -603,10 +603,10 @@ def test_static_best_prefers_lossy_profile_when_lossy_is_deployable() -> None:
 
     action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
 
-    assert action.profile == "kivi_4bit_residual32"
+    assert action.profile == "full_gpu"
 
 
-def test_static_safe_does_not_mark_fallback_when_initialized_to_exact_profile() -> None:
+def test_static_safe_records_lossy_primary_when_it_falls_back_to_exact() -> None:
     calibration = [
         _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
         _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.20, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
@@ -624,7 +624,8 @@ def test_static_safe_does_not_mark_fallback_when_initialized_to_exact_profile() 
     action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
 
     assert action.profile == "full_gpu"
-    assert not action.fallback_reason
+    assert action.rejected_profile == "kivi_4bit_residual32"
+    assert action.fallback_reason == "calibrated unsafe"
 
 
 def test_policy_run_record_keeps_policy_and_backend_budget_signals_separate() -> None:

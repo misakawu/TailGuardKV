@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from math import inf
+from math import inf, sqrt
 
 from run_util.core_types import Action, ActionDecision, CacheState, DeviceState, ProfileMeasurement, Request
 from policies.base import StatsPolicy
@@ -21,9 +21,14 @@ class UtilityDynamicPolicy(StatsPolicy):
         record_rejected_unsafe: bool = False,
     ) -> None:
         super().__init__("utility_dynamic", calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib=memory_budget_mib)
+        # Retained as constructor attributes for legacy callers; policy scoring is fixed by the experiment design.
         self.memory_weight = memory_weight
         self.loss_weight = loss_weight
         self.record_rejected_unsafe = record_rejected_unsafe
+        self.dual_lambda = 0.0
+        self._decision_count = 0
+        self._ttft_scale = self._ttft_normalizer()
+        self._kv_scale = self._kv_normalizer()
 
     def decide(self, request: Request, cache_state: CacheState, device_state: DeviceState) -> Action:
         best_profile = self._fallback_profile()
@@ -34,11 +39,18 @@ class UtilityDynamicPolicy(StatsPolicy):
                 budget_filtered = True
                 continue
             pred_loss = self.predictor.predict_loss(request, profile)
-            score = self._ttft_or_inf(profile) + self.memory_weight * self._memory_or_inf(profile) + self.loss_weight * pred_loss
+            score = (
+                self._ttft_or_inf(profile) / self._ttft_scale
+                + 0.25 * self._memory_or_inf(profile) / self._kv_scale
+                + self.dual_lambda * (pred_loss - self.epsilon)
+            )
             if score < best_score:
                 best_profile = profile
                 best_score = score
         candidate = self._candidate_action(request, best_profile, cache_state)
+        self._decision_count += 1
+        residual = candidate.pred_loss - self.epsilon
+        self.dual_lambda = max(0.0, self.dual_lambda + 0.5 / sqrt(self._decision_count) * residual)
         return self._finalize_action(
             ActionDecision(
                 profile=best_profile,
