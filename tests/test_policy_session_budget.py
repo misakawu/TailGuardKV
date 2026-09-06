@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import argparse
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +21,7 @@ from run_util.derive_session_budgets import (
     derive_full_no_eviction_budgets,
     configured_memory_budgets,
 )
-from run_util.experiment import _policy_sweep_points
+from run_util.experiment import _policy_sweep_points, pilot_smoke_measured
 from run_util import run_policies as run_policies_module
 
 
@@ -208,6 +210,79 @@ def test_session27_policy_input_honors_configured_session_split() -> None:
         )
 
     split.assert_called_once_with(measurements, split_seed=20260906, stratify_session=True)
+
+
+def test_session27_runner_derives_run_scoped_budgets_without_a_prior_artifact(tmp_path: Path) -> None:
+    config_path = tmp_path / "session27.yaml"
+    run_dir = tmp_path / "run"
+    config_path.write_text(
+        "\n".join(
+            [
+                "experiment:",
+                "  type: baseline_session",
+                "profiles:",
+                "  adapters: [full]",
+                "  names: [full_gpu]",
+                "  specs: {full_gpu: {exact: true}}",
+                "policies:",
+                "  names: [full_lru]",
+                "pilot:",
+                "  epsilons: [0.05]",
+                "  deltas: [0.05]",
+                "  memory_budgets_json: out/profile_tables/session27_budgets.json",
+                "  memory_budget_percentiles: [p25, p50, p75, p90]",
+                "data:",
+                "  requests: data/fixtures/diagnostic_session27.jsonl",
+                "  split_seed: 20260906",
+                "  stratify_session: true",
+                "outputs:",
+                "  smoke_profiles: out/profile_tables/session27_profiles.csv",
+                "  smoke_policy: out/policy_tables/session27_policy.csv",
+                "  smoke_summary: out/policy_tables/session27_summary.csv",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    policy_budgets: list[float] = []
+    measurements = [
+        _measurement("s1_t0", "full_gpu", session_id="s1", turn_index=0, kv_cumulative_mib=10.0)
+    ]
+
+    def fake_build(args) -> int:
+        print(json.dumps({"rows": 1, "output": args.output}))
+        return 0
+
+    def fake_policies(args) -> int:
+        policy_budgets.append(float(args.memory_budget_mib))
+        print(json.dumps({"rows": 1, "memory_budget_mib": args.memory_budget_mib, "summary": {}}))
+        return 0
+
+    class Gate:
+        html = "<html></html>"
+
+        @staticmethod
+        def to_json():
+            return {"passed": True}
+
+    payloads = []
+    with (
+        patch("run_util.experiment.build_profile_table", side_effect=fake_build),
+        patch("run_util.experiment.read_measurements", return_value=measurements),
+        patch("run_util.experiment.run_policies", side_effect=fake_policies),
+        patch("run_util.experiment.validate_split_balance", return_value=Gate()),
+        patch("run_util.experiment.build_split_risk_lookup", return_value={}),
+        patch("run_util.experiment.validate_trace_semantics", return_value={"passed": True}),
+        patch("run_util.experiment.validate_trace_quality", return_value=Gate()),
+        patch("run_util.experiment.plot_summary", return_value=[]),
+        patch("run_util.experiment._print_and_write", side_effect=payloads.append),
+    ):
+        code = pilot_smoke_measured(
+            argparse.Namespace(config=str(config_path), run_dir=str(run_dir), total_summary_output="")
+        )
+    assert code == 0, payloads
+
+    assert policy_budgets == [10.0, 10.0, 10.0, 10.0]
+    assert (run_dir / "profile_tables" / "session27_budgets.json").exists()
 
 
 def test_tailguard_can_fallback_to_full_cpu_and_recompute() -> None:

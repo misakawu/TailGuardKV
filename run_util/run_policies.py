@@ -38,9 +38,10 @@ def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str
     pilot = config.get("pilot", {})
     epsilon = first_number(args.epsilon, pilot.get("epsilons"), default=0.2, name="epsilon")
     delta = first_number(args.delta, pilot.get("deltas"), default=0.05, name="delta")
+    requested_budget = getattr(args, "memory_budget_mib", None)
     memory_budget_mib = first_number(
-        getattr(args, "memory_budget_mib", None),
-        configured_memory_budgets(pilot),
+        requested_budget,
+        [] if requested_budget is not None else configured_memory_budgets(pilot),
         default=float("inf"),
         name="memory-budget-mib",
     )

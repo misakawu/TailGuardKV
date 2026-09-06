@@ -50,7 +50,7 @@ from run_util.experiment_common import (
 from run_util.experiment_summary import summary_rows, write_summary, write_total_policy_summary
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
-from run_util.derive_session_budgets import configured_memory_budgets
+from run_util.derive_session_budgets import configured_memory_budgets, derive_full_no_eviction_budgets
 from run_util.run_policies import run_policies
 from scripts.generate_pilot_session_trace_requests import build_split_risk_lookup, validate_split_balance
 from scripts.validate_trace_quality import validate_trace_quality
@@ -408,6 +408,30 @@ def _write_json_gate(path: str, payload: dict[str, Any]) -> None:
     )
 
 
+def _write_run_scoped_session_budgets(
+    config: dict[str, Any],
+    measurements: list[ProfileMeasurement],
+    run_dir: Path,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    pilot = config.get("pilot", {})
+    pilot = pilot if isinstance(pilot, dict) else {}
+    source = pilot.get("memory_budgets_json")
+    if not source:
+        return config, "", {}
+    budget_output = str(_resolve_run_output(str(source), run_dir))
+    payload = derive_full_no_eviction_budgets(
+        measurements,
+        full_profile=str(pilot.get("full_profile", "full_gpu")),
+        split_seed=int(config.get("data", {}).get("split_seed", 20260906)),
+    )
+    _write_json_gate(budget_output, payload)
+    return (
+        {**config, "pilot": {**pilot, "memory_budgets_json": budget_output, "memory_budget_measurements": ""}},
+        budget_output,
+        payload,
+    )
+
+
 def _attach_policy_comparison_status(payload: dict[str, Any], status: str) -> None:
     payload["policy_comparison_status"] = status
     summary = payload.get("summary")
@@ -498,6 +522,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         dry_run=False,
     )
     session_trace_payload: dict[str, Any] = {}
+    budget_output = ""
+    budget_payload: dict[str, Any] = {}
     replay_measurements_path = profile_output
     if experiment_type == "baseline_session":
         try:
@@ -578,7 +604,28 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         _print_and_write(payload)
         return 2
 
-    sweeps = _policy_sweep_points(config)
+    try:
+        sweep_config, budget_output, budget_payload = _write_run_scoped_session_budgets(
+            config,
+            measurements,
+            run_dir,
+        )
+        sweeps = _policy_sweep_points(sweep_config)
+    except (FileNotFoundError, ValueError) as exc:
+        payload = {
+            "ok": False,
+            "return_code": 2,
+            "step": "derive_session_budgets",
+            "error": str(exc),
+            "config": config_path,
+            "run_dir": str(run_dir),
+            "experiment_type": experiment_type,
+            "summary_output": summary_output,
+            "total_summary_output": total_summary_output,
+            "profile": profile_payload,
+        }
+        _print_and_write(payload)
+        return 2
     trace_semantics_gate_payload: dict[str, Any] = {}
     risk_signal_gate_payload: dict[str, Any] = {}
     split_validation_payload: dict[str, Any] = {}
@@ -711,6 +758,8 @@ def pilot_smoke_measured(args: argparse.Namespace) -> int:
         "memory_budget_mib": policy_payload.get("memory_budget_mib"),
         "profile": profile_payload,
         "session_trace": session_trace_payload,
+        "budget_output": budget_output,
+        "budget": budget_payload,
         "split_validation_output": split_validation_output,
         "split_validation": split_validation_payload,
         "trace_semantics_gate_output": trace_semantics_gate_output,
