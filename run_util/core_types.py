@@ -527,6 +527,11 @@ class PolicyRunRecord:
     global_resident_kv_mib: float | None = None
     global_budget_mib: float | None = None
     quality_loss: float | None = None
+    audit_selected: bool = False
+    predicted_quality_loss: float | None = None
+    observed_quality_loss: float | None = None
+    quality_estimate: float | None = None
+    primary_profile: str = ""
     exact: bool = False
     oracle: bool = False
     pred_loss: float | None = None
@@ -588,6 +593,11 @@ class PolicyRunRecord:
         active_session_count: float | None = None,
         budget_hit: bool = False,
         policy_budget_filtered: bool | None = None,
+        audit_selected: bool = False,
+        predicted_quality_loss: float | None = None,
+        observed_quality_loss: float | None = None,
+        quality_estimate: float | None = None,
+        primary_profile: str = "",
     ) -> "PolicyRunRecord":
         policy_filtered = budget_hit if policy_budget_filtered is None else policy_budget_filtered
         backend_budget_hit = bool(backend_result.budget_hit)
@@ -624,6 +634,11 @@ class PolicyRunRecord:
             global_resident_kv_mib=backend_result.global_resident_kv_mib,
             global_budget_mib=backend_result.global_budget_mib,
             quality_loss=backend_result.quality_loss,
+            audit_selected=audit_selected,
+            predicted_quality_loss=predicted_quality_loss,
+            observed_quality_loss=observed_quality_loss,
+            quality_estimate=quality_estimate,
+            primary_profile=primary_profile,
             exact=action_profile in exact_profiles,
             oracle=oracle,
             pred_loss=pred_loss,

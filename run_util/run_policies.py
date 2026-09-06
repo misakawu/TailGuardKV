@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
+from math import sqrt
 from pathlib import Path
+from random import Random
 
 from backends.base import Backend
 from backends.measured_replay import MeasuredReplayBackend
@@ -32,6 +35,10 @@ from policies import build_policies
 from policies.base import Policy
 from profiles.registry import build_profile_adapters
 from run_util.cli_common import add_policy_arguments, first_number, print_error, run_command
+
+
+SHADOW_AUDIT_RATE = 0.10
+SHADOW_AUDIT_SEED = 20260906
 
 
 def _configured_backend_name(config: dict, requested: str | None = None) -> str:
@@ -183,6 +190,7 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         active_session_count=None,
         budget_hit=action.budget_hit if action is not None else False,
         policy_budget_filtered=action.policy_budget_filtered if action is not None else False,
+        primary_profile=(action.rejected_profile or action.profile) if action is not None else profile,
     )
 
 
@@ -224,6 +232,7 @@ def _record_from_backend_result(
         active_session_count=_active_session_count(backend_result.extra),
         budget_hit=action.budget_hit,
         policy_budget_filtered=action.policy_budget_filtered,
+        primary_profile=action.rejected_profile or action.profile,
     )
 
 
@@ -232,6 +241,71 @@ def _active_session_count(extra: dict[str, object]) -> float | None:
     if isinstance(active, (list, tuple)):
         return float(len(active))
     return None
+
+
+def _request_key(request: Request) -> tuple[str, int, str]:
+    return (request.session_id or "", request.turn_index, request.request_id)
+
+
+def _shadow_audit_request_keys(requests: list[Request]) -> set[tuple[str, int, str]]:
+    """Choose one fixed 10% request sample shared by every policy run."""
+    keys = sorted({_request_key(request) for request in requests})
+    sample_size = int(len(keys) * SHADOW_AUDIT_RATE)
+    if sample_size == 0:
+        return set()
+    return set(Random(SHADOW_AUDIT_SEED).sample(keys, sample_size))
+
+
+def _record_quality_audit(
+    record: PolicyRunRecord,
+    *,
+    audit_selected: bool,
+) -> PolicyRunRecord:
+    predicted = record.pred_loss
+    observed = record.quality_loss if audit_selected else None
+    estimate = predicted
+    if audit_selected and predicted is not None and observed is not None:
+        estimate = predicted + (observed - predicted) / SHADOW_AUDIT_RATE
+    return replace(
+        record,
+        audit_selected=audit_selected,
+        predicted_quality_loss=predicted,
+        observed_quality_loss=observed,
+        quality_estimate=estimate,
+        audit_rate=SHADOW_AUDIT_RATE,
+    )
+
+
+def _correct_utility_dynamic_lambda(
+    policy: Policy,
+    *,
+    lambda_before: float | None,
+    quality_estimate: float | None,
+) -> None:
+    if policy.name != "utility_dynamic" or lambda_before is None or quality_estimate is None:
+        return
+    decision_count = getattr(policy, "_decision_count", 0)
+    if not isinstance(decision_count, int) or decision_count <= 0:
+        return
+    policy.dual_lambda = max(
+        0.0,
+        lambda_before + 0.5 / sqrt(decision_count) * (quality_estimate - policy.epsilon),
+    )
+
+
+def _add_shadow_audit_summary(
+    summary: dict[str, dict[str, object]],
+    records: list[PolicyRunRecord],
+) -> dict[str, dict[str, object]]:
+    by_policy: dict[str, list[PolicyRunRecord]] = {}
+    for record in records:
+        by_policy.setdefault(record.policy, []).append(record)
+    for policy, rows in by_policy.items():
+        estimates = [record.quality_estimate for record in rows if record.quality_estimate is not None]
+        metrics = summary.setdefault(policy, {})
+        metrics["mean_quality_estimate"] = sum(estimates) / len(estimates) if estimates else float("nan")
+        metrics["audit_sample_count"] = float(sum(record.audit_selected for record in rows))
+    return summary
 
 
 def _policy_rows_with_provenance(records: list[PolicyRunRecord], config: dict) -> list[dict[str, object]]:
@@ -258,6 +332,12 @@ def _run_policy_matrix(
 ) -> list[PolicyRunRecord]:
     records: list[PolicyRunRecord] = []
     eval_only = evaluation_request_keys is not None
+    audit_requests = replay_requests
+    if eval_only:
+        audit_requests = [
+            request for request in replay_requests if _request_key(request) in evaluation_request_keys
+        ]
+    audit_request_keys = _shadow_audit_request_keys(audit_requests)
     for policy in policies:
         if hasattr(backend, "reset"):
             backend.reset()
@@ -266,8 +346,9 @@ def _run_policy_matrix(
             replay_requests,
             key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index),
         ):
-            request_key = (request.session_id or "", request.turn_index, request.request_id)
+            request_key = _request_key(request)
             emit_record = (not eval_only) or (request_key in evaluation_request_keys)
+            lambda_before = getattr(policy, "dual_lambda", None) if policy.name == "utility_dynamic" else None
             try:
                 action = policy.decide(request, cache_state, DeviceState())
             except Exception as exc:
@@ -283,7 +364,16 @@ def _run_policy_matrix(
                 validate_backend_results([backend_result], path=f"{policy.name}:{request.request_id}")
                 cache_state = getattr(backend, "cache_state", cache_state)
                 if emit_record:
-                    records.append(_record_from_backend_result(policy, request, action, backend_result, exact))
+                    record = _record_quality_audit(
+                        _record_from_backend_result(policy, request, action, backend_result, exact),
+                        audit_selected=request_key in audit_request_keys,
+                    )
+                    _correct_utility_dynamic_lambda(
+                        policy,
+                        lambda_before=lambda_before,
+                        quality_estimate=record.quality_estimate,
+                    )
+                    records.append(record)
             except Exception as exc:
                 if emit_record:
                     records.append(_failure_record(policy, request, exc, action=action, exact=exact))
@@ -351,13 +441,13 @@ def run_policies(args: argparse.Namespace) -> int:
     try:
         write_csv(Path(output), _policy_rows_with_provenance(records, config))
         validate_experiment_policy_records(records, experiment_type, output)
-        summary = MetricCollector().summarize_policy_runs(
+        summary = _add_shadow_audit_summary(MetricCollector().summarize_policy_runs(
             records,
             epsilon=epsilon,
             delta=delta,
             exact_profiles=exact,
             experiment_type=experiment_type,
-        )
+        ), records)
         print(
             json.dumps(
                 json_ready({
