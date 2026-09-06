@@ -8,6 +8,10 @@
 - 全局约束：session27 输出必须带 `diagnostic_only=true`；质量与 violation 均为 `risk_evidence_insufficient`，不能作为 tail SLO 结论；随机种子固定为 `20260906`；预算 B 取 full、无驱逐扫描的 P25/P50/P75/P90；总体 P95 必须由合并后的逐轮记录计算，不能平均 batch P95。
 
 ### 本次恢复状态（2026-09-06 后续交接）
+### 本次恢复状态（2026-09-06 后续交接）
+
+- Task 0（兼容性）已闭环：四个 labeling 源脚本迁回仓库 `scripts/`（`common.py`、`label_longbench_quality.py`、`label_sharegpt_sessions.py`、`prepare_sharegpt_session_candidates.py`，原样复制自备份目录），`tests/test_longbench_label_strategy.py` 与 `tests/test_sharegpt_labeling_strategy.py` 改为从仓库 `scripts/` 导入；全量 pytest 447 passed（含 Task5 新增用例）。
+- Task 0 2-session online GPU 冒烟通过（`out/task0_gpu_smoke/`，未提交）：`OnlineQwenSessionBackend` + persistent worker、设备 0/1、B=1024、`max_new_tokens=1`；两 session 第二轮均 `cache_reused=true`，TTFT 真实且无 profile 表回放（`replay_source` 为空）；s1 首轮含模型加载约 40.4 s、复用轮 110.7 ms，s2 首轮 120.6 ms、复用轮 104.3 ms；进程退出 0。
 
 - Task 4 follow-up 已提交：`f09fa94 fix: make policy csv provenance reliable and shadow audits observed-only`（基于 `d67f8b1`）。
 - 独立复审 PASS（两轮：初审 With fixes → 复审 Ready to commit Yes，无 Critical/Important）。

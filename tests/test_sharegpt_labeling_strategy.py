@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-LABELING_SCRIPTS = Path("/DATACENTER3/zhenxiang.wang/work/TailGuardKV-labeling/scripts")
+LABELING_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(LABELING_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(LABELING_SCRIPTS))
 
