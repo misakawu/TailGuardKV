@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
+
+import pytest
 
 from backends.measured_replay import MeasuredReplayBackend
 from policies.full_lru import FullLRUPolicy
@@ -12,7 +15,12 @@ from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
 from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
 from run_util.data_utils import requests_from_measurements, split_measurements
-from run_util.derive_session_budgets import derive_full_no_eviction_budgets
+from run_util.derive_session_budgets import (
+    derive_full_no_eviction_budgets,
+    configured_memory_budgets,
+)
+from run_util.experiment import _policy_sweep_points
+from run_util import run_policies as run_policies_module
 
 
 def _measurement(
@@ -143,6 +151,63 @@ def test_session27_full_no_eviction_budget_scan_uses_global_occupancy_quantiles(
     assert payload["diagnostic_only"] is True
     assert payload["quality_status"] == "risk_evidence_insufficient"
     assert payload["violation_status"] == "risk_evidence_insufficient"
+
+
+def test_session27_budget_json_drives_the_four_policy_sweep_points(tmp_path) -> None:
+    budget_path = tmp_path / "budgets.json"
+    budget_path.write_text(
+        json.dumps(
+            {
+                "diagnostic_only": True,
+                "quality_status": "risk_evidence_insufficient",
+                "violation_status": "risk_evidence_insufficient",
+                "percentiles_mib": {"p25": 10.0, "p50": 20.0, "p75": 30.0, "p90": 40.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = {
+        "pilot": {
+            "epsilons": [0.05],
+            "deltas": [0.05],
+            "memory_budgets_json": str(budget_path),
+            "memory_budget_percentiles": ["p25", "p50", "p75", "p90"],
+        }
+    }
+
+    assert configured_memory_budgets(config["pilot"]) == [10.0, 20.0, 30.0, 40.0]
+    assert _policy_sweep_points(config) == [
+        {"epsilon": 0.05, "delta": 0.05, "memory_budget_mib": budget}
+        for budget in [10.0, 20.0, 30.0, 40.0]
+    ]
+
+
+def test_session27_budget_json_missing_reports_the_reproducible_generation_command(tmp_path) -> None:
+    with pytest.raises(ValueError, match="python3 -m run_util.derive_session_budgets"):
+        configured_memory_budgets(
+            {
+                "memory_budgets_json": str(tmp_path / "missing.json"),
+                "memory_budget_percentiles": ["p25", "p50", "p75", "p90"],
+                "memory_budget_measurements": "out/profile_tables/diagnostic_session27_profiles.csv",
+            }
+        )
+
+
+def test_session27_policy_input_honors_configured_session_split() -> None:
+    config = {"data": {"split_seed": 20260906, "stratify_session": True}}
+    measurements = _session_measurements("s1", task="qa", length_bucket="short", turn_depth=1)
+
+    with patch.object(run_policies_module, "read_measurements", return_value=measurements), patch.object(
+        run_policies_module, "validate_profile_measurements"
+    ), patch.object(run_policies_module, "split_measurements", return_value=(measurements, [])) as split:
+        run_policies_module._load_replay_inputs(
+            type("Args", (), {"measurements": "unused.csv", "allow_dry_run_replay": False})(),
+            ["full_gpu"],
+            "baseline_session",
+            config,
+        )
+
+    split.assert_called_once_with(measurements, split_seed=20260906, stratify_session=True)
 
 
 def test_tailguard_can_fallback_to_full_cpu_and_recompute() -> None:

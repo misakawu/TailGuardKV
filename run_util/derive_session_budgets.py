@@ -14,6 +14,53 @@ SESSION27_SPLIT_SEED = 20260906
 _BUDGET_QUANTILES = (("p25", 0.25), ("p50", 0.50), ("p75", 0.75), ("p90", 0.90))
 
 
+def configured_memory_budgets(pilot: dict[str, Any]) -> list[float]:
+    """Return configured B values, resolving session27's generated budget JSON when present."""
+    source = pilot.get("memory_budgets_json")
+    if not source:
+        raw_budgets = pilot.get("memory_budgets_mib")
+        if raw_budgets is None:
+            return []
+        values = [raw_budgets] if isinstance(raw_budgets, (str, int, float)) else list(raw_budgets)
+        return [_finite_budget(value, "memory_budgets_mib") for value in values]
+
+    path = Path(str(source))
+    if not path.exists():
+        measurements = str(pilot.get("memory_budget_measurements") or "out/profile_tables/diagnostic_session27_profiles.csv")
+        raise ValueError(
+            f"session27 预算文件不存在: {path}; 请先运行: "
+            f"python3 -m run_util.derive_session_budgets --measurements {measurements} --output {path}"
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"session27 预算文件不是合法 JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"session27 预算 JSON 顶层必须是 mapping: {path}")
+    if payload.get("diagnostic_only") is not True:
+        raise ValueError(f"session27 预算 JSON 必须标记 diagnostic_only=true: {path}")
+    for field in ("quality_status", "violation_status"):
+        if payload.get(field) != "risk_evidence_insufficient":
+            raise ValueError(f"session27 预算 JSON 的 {field} 必须为 risk_evidence_insufficient: {path}")
+    percentile_values = payload.get("percentiles_mib")
+    if not isinstance(percentile_values, dict):
+        raise ValueError(f"session27 预算 JSON 缺少 percentiles_mib: {path}")
+    requested = pilot.get("memory_budget_percentiles") or [name for name, _ in _BUDGET_QUANTILES]
+    if not isinstance(requested, list) or requested != [name for name, _ in _BUDGET_QUANTILES]:
+        raise ValueError("session27 memory_budget_percentiles 必须为 [p25, p50, p75, p90]")
+    return [_finite_budget(percentile_values.get(name), f"percentiles_mib.{name}") for name in requested]
+
+
+def _finite_budget(value: Any, name: str) -> float:
+    try:
+        budget = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} 必须是有限数值") from exc
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError(f"{name} 必须是正的有限数值")
+    return budget
+
+
 def derive_full_no_eviction_budgets(
     measurements: list[ProfileMeasurement],
     *,

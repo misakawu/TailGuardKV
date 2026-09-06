@@ -445,7 +445,7 @@ def split_measurements(
     for row in measurements:
         sessions.setdefault(row.session_id or row.request_id, []).append(row)
     if len(sessions) <= 1:
-        return measurements, []
+        return (measurements, []) if stratify_session else (measurements, measurements)
 
     if not stratify_session:
         calibration_ids = set(sorted(sessions)[: max(1, len(sessions) // 2)])

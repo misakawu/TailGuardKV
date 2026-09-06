@@ -21,6 +21,7 @@ from run_util.experiment_common import (
     validate_profile_measurements,
     write_csv,
 )
+from run_util.derive_session_budgets import configured_memory_budgets
 from metrics import MetricCollector
 from policies import build_policies
 from policies.base import Policy
@@ -39,7 +40,7 @@ def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str
     delta = first_number(args.delta, pilot.get("deltas"), default=0.05, name="delta")
     memory_budget_mib = first_number(
         getattr(args, "memory_budget_mib", None),
-        pilot.get("memory_budgets_mib"),
+        configured_memory_budgets(pilot),
         default=float("inf"),
         name="memory-budget-mib",
     )
@@ -50,6 +51,7 @@ def _load_replay_inputs(
     args: argparse.Namespace,
     profiles: list[str],
     experiment_type: str,
+    config: dict,
 ) -> tuple[list, list, list[Request], set[tuple[str, int, str]]]:
     measurements = read_measurements(Path(args.measurements))
     validate_profile_measurements(
@@ -61,9 +63,12 @@ def _load_replay_inputs(
     )
     if not args.allow_dry_run_replay and any(not measurement.measured for measurement in measurements):
         raise ValueError("run-policies 默认拒绝 dry-run replay；请提供 measured=True 的 profile 表。")
-    # Replay consumes the profile table's recorded split; session27 online runs use the seeded splitter directly.
+    data_config = config.get("data", {})
+    data_config = data_config if isinstance(data_config, dict) else {}
     calibration_measurements, evaluation_measurements = split_measurements(
-        measurements, stratify_session=False
+        measurements,
+        split_seed=int(data_config.get("split_seed", 20260906)),
+        stratify_session=bool(data_config.get("stratify_session", False)),
     )
     replay_measurements = measurements if experiment_type == "baseline_session" else evaluation_measurements
     replay_requests = requests_from_measurements(replay_measurements)
@@ -239,6 +244,7 @@ def run_policies(args: argparse.Namespace) -> int:
             args,
             profiles,
             experiment_type,
+            config,
         )
         backend = MeasuredReplayBackend(
             measurements,

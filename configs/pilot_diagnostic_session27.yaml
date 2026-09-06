@@ -33,7 +33,9 @@ policies:
 pilot:
   epsilons: [0.05]
   deltas: [0.05]
+  # Generate this clean-checkout input before a policy sweep with derive_session_budgets.
   memory_budgets_json: out/profile_tables/diagnostic_session27_full_no_eviction_budgets.json
+  memory_budget_measurements: out/profile_tables/diagnostic_session27_profiles.csv
   memory_budget_percentiles: [p25, p50, p75, p90]
 
 data:

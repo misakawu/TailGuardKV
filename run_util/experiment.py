@@ -50,6 +50,7 @@ from run_util.experiment_common import (
 from run_util.experiment_summary import summary_rows, write_summary, write_total_policy_summary
 from run_util.build_profile_table import build_profile_table
 from run_util.cli_common import first_number
+from run_util.derive_session_budgets import configured_memory_budgets
 from run_util.run_policies import run_policies
 from scripts.generate_pilot_session_trace_requests import build_split_risk_lookup, validate_split_balance
 from scripts.validate_trace_quality import validate_trace_quality
@@ -95,7 +96,8 @@ def _policy_sweep_points(config: dict[str, Any]) -> list[dict[str, float]]:
     pilot = pilot if isinstance(pilot, dict) else {}
     epsilons = _number_list(pilot.get("epsilons"), default=0.2, name="epsilon")
     deltas = _number_list(pilot.get("deltas"), default=0.05, name="delta")
-    budgets = _number_list(pilot.get("memory_budgets_mib"), default=float("inf"), name="memory-budget-mib")
+    configured_budgets = configured_memory_budgets(pilot)
+    budgets = configured_budgets or _number_list(None, default=float("inf"), name="memory-budget-mib")
     return [
         {"epsilon": epsilon, "delta": delta, "memory_budget_mib": memory_budget_mib}
         for epsilon, delta, memory_budget_mib in product(epsilons, deltas, budgets)
