@@ -260,9 +260,14 @@ class MetricCollector:
                 "policy_budget_filter_rate": policy_budget_filter_count / len(rows) if rows else float("nan"),
                 "restore_count": float(restore_count),
                 "restore_time_ms": _mean(restore_times),
+                "restore_time_ms_total": _total(restore_times),
                 "recompute_count": float(recompute_count),
                 "recompute_time_ms": _mean(recompute_times),
+                "recompute_time_ms_total": _total(recompute_times),
                 "queue_delay_ms": _mean(queue_delays),
+                "queue_event_count": float(queue_event_count),
+                "evict_event_count": float(evict_event_count),
+                "budget_hit_count": float(budget_hit_count),
                 "triggered_restore": bool(restore_count),
                 "triggered_recompute": bool(recompute_count),
                 "triggered_evict": bool(evict_event_count),
@@ -286,11 +291,16 @@ class MetricCollector:
             if is_quality:
                 for field in (
                     "budget_hit_rate",
+                    "budget_hit_count",
                     "restore_count",
                     "restore_time_ms",
+                    "restore_time_ms_total",
                     "recompute_count",
                     "recompute_time_ms",
+                    "recompute_time_ms_total",
                     "queue_delay_ms",
+                    "queue_event_count",
+                    "evict_event_count",
                     "triggered_restore",
                     "triggered_recompute",
                     "triggered_evict",
@@ -317,6 +327,10 @@ class MetricCollector:
                 }
             )
         return summary
+
+
+def _total(values: list[float]) -> float:
+    return sum(value for value in values if value is not None and not isnan(value))
 
 
 def _mean(values: list[float]) -> float:

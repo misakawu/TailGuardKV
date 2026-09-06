@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,112 +12,14 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from metrics import MetricCollector
-from run_util.core_types import PolicyRunRecord
 from run_util.experiment_common import json_ready
 from run_util.experiment_summary import TOTAL_POLICY_SUMMARY_COLUMNS, add_shadow_audit_metrics
+from run_util.session_aggregation import _record_from_row, parse_sweep_filename
 from visual.plot_summary import plot_summary
-
-
-FILENAME_RE = re.compile(
-    r"pilot_smoke_measured_policy_eps(?P<epsilon>[0-9mp]+)_delta(?P<delta>[0-9mp]+)_mem(?P<memory>[0-9mp]+)\.csv$"
-)
-
-
-def _parse_number(token: str) -> float:
-    return float(token.replace("p", ".").replace("m", "-"))
-
-
-def parse_sweep_filename(filename: str) -> dict[str, float]:
-    match = FILENAME_RE.search(Path(filename).name)
-    if not match:
-        raise ValueError(f"无法从文件名解析 sweep 参数: {filename}")
-    return {
-        "epsilon": _parse_number(match.group("epsilon")),
-        "delta": _parse_number(match.group("delta")),
-        "memory_budget_mib": _parse_number(match.group("memory")),
-    }
 
 
 def _parse_bool(value: str | None) -> bool:
     return str(value).strip().lower() == "true"
-
-
-def _parse_float(value: str | None) -> float | None:
-    if value is None:
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    return float(text)
-
-
-def _parse_int(value: str | None) -> int:
-    parsed = _parse_float(value)
-    return int(parsed) if parsed is not None else 0
-
-
-def _record_from_row(row: dict[str, str]) -> PolicyRunRecord:
-    return PolicyRunRecord(
-        policy=row["policy"],
-        request_id=row["request_id"],
-        action_profile=row["action_profile"],
-        ok=_parse_bool(row.get("ok")),
-        measured=_parse_bool(row.get("measured")),
-        backend_name=row.get("backend_name") or "",
-        session_id=row.get("session_id") or None,
-        turn_index=_parse_int(row.get("turn_index")),
-        task=row.get("task") or "unknown",
-        length_bucket=row.get("length_bucket") or "unknown",
-        placeholder=_parse_bool(row.get("placeholder")),
-        reason=row.get("reason") or "",
-        error=row.get("error") or None,
-        latency_ms=_parse_float(row.get("latency_ms")),
-        ttft_ms=_parse_float(row.get("ttft_ms")),
-        peak_memory_mib=_parse_float(row.get("peak_memory_mib")),
-        kv_cache_memory_mib=_parse_float(row.get("kv_cache_memory_mib")),
-        resident_memory_mib=_parse_float(row.get("resident_memory_mib")),
-        kv_cumulative_mib=_parse_float(row.get("kv_cumulative_mib")),
-        kv_incremental_mib=_parse_float(row.get("kv_incremental_mib")),
-        resident_kv_mib_before=_parse_float(row.get("resident_kv_mib_before")),
-        resident_kv_mib_after=_parse_float(row.get("resident_kv_mib_after")),
-        restore_ms=_parse_float(row.get("restore_ms")),
-        recompute_ms=_parse_float(row.get("recompute_ms")),
-        queue_delay_ms=_parse_float(row.get("queue_delay_ms")),
-        evicted_kv_mib=_parse_float(row.get("evicted_kv_mib")),
-        budget_hit=_parse_bool(row.get("budget_hit")),
-        policy_budget_filtered=_parse_bool(row.get("policy_budget_filtered")),
-        backend_budget_hit=_parse_bool(row.get("backend_budget_hit")),
-        global_resident_kv_mib=_parse_float(row.get("global_resident_kv_mib")),
-        global_budget_mib=_parse_float(row.get("global_budget_mib")),
-        quality_loss=_parse_float(row.get("quality_loss")),
-        audit_selected=_parse_bool(row.get("audit_selected")),
-        predicted_quality_loss=_parse_float(row.get("predicted_quality_loss")),
-        observed_quality_loss=_parse_float(row.get("observed_quality_loss")),
-        quality_estimate=_parse_float(row.get("quality_estimate")),
-        primary_profile=row.get("primary_profile") or "",
-        exact=_parse_bool(row.get("exact")),
-        oracle=_parse_bool(row.get("oracle")),
-        pred_loss=_parse_float(row.get("pred_loss")),
-        risk_upper=_parse_float(row.get("risk_upper")),
-        safe=None if row.get("safe", "").strip() == "" else _parse_bool(row.get("safe")),
-        epsilon=_parse_float(row.get("epsilon")),
-        delta=_parse_float(row.get("delta")),
-        fallback_reason=row.get("fallback_reason") or "",
-        safety_reason=row.get("safety_reason") or "",
-        rejected_profile=row.get("rejected_profile") or "",
-        rejected_pred_loss=_parse_float(row.get("rejected_pred_loss")),
-        rejected_risk_upper=_parse_float(row.get("rejected_risk_upper")),
-        candidate_safe_count=_parse_float(row.get("candidate_safe_count")),
-        controller_overhead_ms=_parse_float(row.get("controller_overhead_ms")),
-        controller_qrp_ms=_parse_float(row.get("controller_qrp_ms")),
-        controller_cg_ms=_parse_float(row.get("controller_cg_ms")),
-        controller_stc_ms=_parse_float(row.get("controller_stc_ms")),
-        oracle_cost_ms=_parse_float(row.get("oracle_cost_ms")),
-        optimality_gap=_parse_float(row.get("optimality_gap")),
-        audit_rate=_parse_float(row.get("audit_rate")),
-        drift_state=row.get("drift_state") or "",
-        active_session_count=_parse_float(row.get("active_session_count")),
-    )
 
 
 def _source_provenance(rows: list[dict[str, str]], source_dir: Path) -> dict[str, Any]:
@@ -167,8 +68,16 @@ def _csv_value(value: Any) -> Any:
     return json_ready(value)
 
 
+def _is_sweep_csv(name: str) -> bool:
+    try:
+        parse_sweep_filename(name)
+    except ValueError:
+        return False
+    return True
+
+
 def _policy_csvs(policy_dir: Path) -> list[Path]:
-    return sorted(path for path in policy_dir.glob("*.csv") if FILENAME_RE.search(path.name))
+    return sorted(path for path in policy_dir.glob("*.csv") if _is_sweep_csv(path.name))
 
 
 def aggregate_directory(policy_dir: str | Path, output_csv: str | Path) -> tuple[Path, list[Path]]:
