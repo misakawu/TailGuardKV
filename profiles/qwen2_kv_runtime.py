@@ -198,12 +198,14 @@ def worker_init(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[s
 
 def worker_run_batch(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
     requests = list(payload.get("requests") or [])
+    evicted_sessions = _evict_worker_sessions(worker_state, payload.get("evict_sessions"))
     if not requests:
         return {
             "ok": True,
             "results": [],
             "worker": _worker_metadata(worker_state),
-            "session_runtime_state": SessionRuntimeState().to_payload(),
+            "session_runtime_state": _session_state_from_payload(payload.get("session_runtime_state")).to_payload(),
+            "evicted_sessions": evicted_sessions,
         }
     state = _session_state_from_payload(payload.get("session_runtime_state"))
     profile = str(payload.get("profile") or requests[0].get("profile") or "")
@@ -524,6 +526,30 @@ def _clear_worker_runtime(worker_state: dict[str, Any]) -> None:
     worker_state.pop("runtime_profile", None)
     if isinstance(runtime, dict):
         _release_runtime_resources(runtime)
+
+
+def _evict_worker_sessions(worker_state: dict[str, Any], raw_sessions: object) -> list[str]:
+    if not isinstance(raw_sessions, list):
+        return []
+    runtime = worker_state.get("runtime")
+    session_reuse = runtime.get("session_reuse") if isinstance(runtime, dict) else None
+    if not isinstance(session_reuse, dict):
+        return []
+    evicted: list[str] = []
+    for raw_session in raw_sessions:
+        session_id = str(raw_session)
+        entry = session_reuse.pop(session_id, None)
+        if not isinstance(entry, dict):
+            continue
+        _clear_runtime_cache_entry(entry)
+        entry.clear()
+        evicted.append(session_id)
+    if evicted:
+        torch = runtime.get("torch")
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and cuda.is_available():
+            cuda.empty_cache()
+    return evicted
 
 
 def _persistent_worker_fatal_error(results: list[dict[str, Any]]) -> str:

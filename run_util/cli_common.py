@@ -49,6 +49,7 @@ def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--epsilon")
     parser.add_argument("--delta")
     parser.add_argument("--memory-budget-mib")
+    parser.add_argument("--backend", choices=("online_qwen", "measured_replay"))
     parser.add_argument("--use-pandas-replay", action="store_true")
     parser.add_argument("--allow-dry-run-replay", action="store_true")
 

@@ -4,15 +4,20 @@ import argparse
 import json
 from pathlib import Path
 
+from backends.base import Backend
 from backends.measured_replay import MeasuredReplayBackend
+from backends.qwen_session import OnlineQwenSessionBackend
 from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
 from run_util.experiment_common import (
+    config_adapters,
     config_policies,
     config_experiment_type,
     config_profiles,
+    config_runtime,
     exact_profiles,
     json_ready,
     load_config,
+    load_requests,
     read_measurements,
     requests_from_measurements,
     split_measurements,
@@ -25,7 +30,39 @@ from run_util.derive_session_budgets import configured_memory_budgets
 from metrics import MetricCollector
 from policies import build_policies
 from policies.base import Policy
+from profiles.registry import build_profile_adapters
 from run_util.cli_common import add_policy_arguments, first_number, print_error, run_command
+
+
+def _configured_backend_name(config: dict, requested: str | None = None) -> str:
+    policies = config.get("policies", {})
+    name = requested or (policies.get("backend", "measured_replay") if isinstance(policies, dict) else "measured_replay")
+    normalized = str(name or "measured_replay").strip().lower()
+    if normalized not in {"online_qwen", "measured_replay"}:
+        raise ValueError(f"policies.backend only supports online_qwen or measured_replay: {normalized}")
+    return normalized
+
+
+def _load_online_evaluation_requests(
+    config: dict,
+    evaluation_request_keys: set[tuple[str, int, str]],
+) -> list[Request]:
+    fixture_requests, _ = load_requests(config)
+    selected = [
+        request
+        for request in fixture_requests
+        if (request.session_id or "", request.turn_index, request.request_id) in evaluation_request_keys
+    ]
+    selected_keys = {
+        (request.session_id or "", request.turn_index, request.request_id)
+        for request in selected
+    }
+    missing = sorted(evaluation_request_keys - selected_keys)
+    if missing:
+        raise ValueError(f"online Qwen fixture is missing evaluation requests: {missing[:3]}")
+    if not selected:
+        raise ValueError("online Qwen fixture has no evaluation requests")
+    return sorted(selected, key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index))
 
 
 def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str], list[str | dict], float, float, float]:
@@ -200,7 +237,7 @@ def _active_session_count(extra: dict[str, object]) -> float | None:
 def _run_policy_matrix(
     policies: list[Policy],
     replay_requests: list[Request],
-    backend: MeasuredReplayBackend,
+    backend: Backend,
     exact: set[str],
     evaluation_request_keys: set[tuple[str, int, str]] | None = None,
 ) -> list[PolicyRunRecord]:
@@ -209,7 +246,7 @@ def _run_policy_matrix(
     for policy in policies:
         if hasattr(backend, "reset"):
             backend.reset()
-        cache_state = CacheState()
+        cache_state = getattr(backend, "cache_state", CacheState())
         for request in sorted(
             replay_requests,
             key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index),
@@ -223,9 +260,13 @@ def _run_policy_matrix(
                     records.append(_failure_record(policy, request, exc, exact=exact))
                 continue
             try:
-                backend_result = backend.run([request], [action.profile])[0]
+                execute = getattr(backend, "execute", None)
+                if callable(execute):
+                    backend_result = execute(request, action, cache_state)
+                else:
+                    backend_result = backend.run([request], [action.profile])[0]
                 validate_backend_results([backend_result], path=f"{policy.name}:{request.request_id}")
-                cache_state = backend.cache_state
+                cache_state = getattr(backend, "cache_state", cache_state)
                 if emit_record:
                     records.append(_record_from_backend_result(policy, request, action, backend_result, exact))
             except Exception as exc:
@@ -247,12 +288,20 @@ def run_policies(args: argparse.Namespace) -> int:
             experiment_type,
             config,
         )
-        backend = MeasuredReplayBackend(
-            measurements,
-            allow_dry_run=args.allow_dry_run_replay,
-            use_pandas=getattr(args, "use_pandas_replay", False),
-            global_budget_mib=memory_budget_mib,
-        )
+        backend_name = _configured_backend_name(config, getattr(args, "backend", None))
+        if backend_name == "online_qwen":
+            replay_requests = _load_online_evaluation_requests(config, evaluation_request_keys)
+            backend: Backend = OnlineQwenSessionBackend(
+                adapters=build_profile_adapters(config_adapters(config), config_runtime(config)),
+                global_budget_mib=memory_budget_mib,
+            )
+        else:
+            backend = MeasuredReplayBackend(
+                measurements,
+                allow_dry_run=args.allow_dry_run_replay,
+                use_pandas=getattr(args, "use_pandas_replay", False),
+                global_budget_mib=memory_budget_mib,
+            )
         exact = exact_profiles(profiles, config)
         policies = _build_policy_set(
             policy_names,
@@ -271,13 +320,18 @@ def run_policies(args: argparse.Namespace) -> int:
     except Exception as exc:
         print_error(exc)
         return 1
-    records = _run_policy_matrix(
-        policies,
-        replay_requests,
-        backend,
-        exact,
-        evaluation_request_keys if experiment_type == "baseline_session" else None,
-    )
+    try:
+        records = _run_policy_matrix(
+            policies,
+            replay_requests,
+            backend,
+            exact,
+            evaluation_request_keys if backend_name == "measured_replay" and experiment_type == "baseline_session" else None,
+        )
+    finally:
+        close = getattr(backend, "close", None)
+        if callable(close):
+            close()
 
     try:
         write_csv(Path(output), [record.to_row() for record in records])
@@ -297,7 +351,11 @@ def run_policies(args: argparse.Namespace) -> int:
                     "epsilon": epsilon,
                     "delta": delta,
                     "memory_budget_mib": memory_budget_mib,
+                    "backend": backend_name,
                     "experiment_type": experiment_type,
+                    "diagnostic_only": bool(config.get("data", {}).get("diagnostic_only", False)),
+                    "quality_status": "risk_evidence_insufficient" if config.get("data", {}).get("diagnostic_only") else "",
+                    "violation_status": "risk_evidence_insufficient" if config.get("data", {}).get("diagnostic_only") else "",
                     "summary": summary,
                 }),
                 ensure_ascii=False,
@@ -311,7 +369,7 @@ def run_policies(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="用同一 measured-replay backend 运行策略。")
+    parser = argparse.ArgumentParser(description="Run policies on an online Qwen or explicit measured-replay backend.")
     add_policy_arguments(parser)
     return parser
 

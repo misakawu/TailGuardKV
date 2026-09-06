@@ -822,6 +822,8 @@ def _qwen2_payload(
     memory_budget_mib: float | None = None,
 ) -> dict[str, object]:
     return {
+        "request_id": request.request_id,
+        "task": request.task,
         "profile": spec.name,
         "model_name": model_name,
         "prompt": request.effective_prompt,
