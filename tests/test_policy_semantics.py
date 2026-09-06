@@ -15,7 +15,7 @@ def _measurement(
     profile: str,
     *,
     loss: float,
-    ttft_ms: float,
+    ttft_ms: float | None,
     kv_mib: float = 10.0,
 ) -> ProfileMeasurement:
     return ProfileMeasurement(
@@ -77,41 +77,32 @@ def test_static_best_uses_merged_calibration_p95_point_estimates() -> None:
     assert policy.decide(_request(), CacheState(), DeviceState()).profile == "lossy_steady"
 
 
-def test_static_best_keeps_exact_when_exact_merged_p95_ttft_is_infinite() -> None:
-    calibration = [
-        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=float("inf")),
-        _measurement("c2", "full_gpu", loss=0.0, ttft_ms=float("inf")),
-        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=10.0),
-        _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
-    ]
-    policy = StaticBestPolicy(
-        calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
-    )
-
-    assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
-
-
-def test_static_best_keeps_exact_when_exact_calibration_ttft_contains_nan() -> None:
-    calibration = [
-        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=float("nan")),
-        _measurement("c2", "full_gpu", loss=0.0, ttft_ms=100.0),
-        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=10.0),
-        _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
-    ]
-    policy = StaticBestPolicy(
-        calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
-    )
-
-    assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
-
-
-def test_static_best_keeps_exact_when_lossy_calibration_ttft_contains_nan() -> None:
+@pytest.mark.parametrize("invalid_profile", ["full_gpu", "lossy_fast"])
+@pytest.mark.parametrize(
+    "invalid_ttft",
+    [float("nan"), None, "missing", float("inf"), -float("inf")],
+    ids=["nan", "none", "missing", "positive_inf", "negative_inf"],
+)
+def test_static_best_keeps_exact_when_calibration_ttft_is_invalid(
+    invalid_profile: str, invalid_ttft: float | None | str
+) -> None:
     calibration = [
         _measurement("c1", "full_gpu", loss=0.0, ttft_ms=100.0),
         _measurement("c2", "full_gpu", loss=0.0, ttft_ms=100.0),
-        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=float("nan")),
+        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=10.0),
         _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
     ]
+    if invalid_ttft == "missing":
+        calibration = [row for row in calibration if row.profile != invalid_profile]
+    else:
+        calibration.append(
+            _measurement(
+                "invalid",
+                invalid_profile,
+                loss=0.0 if invalid_profile == "full_gpu" else 0.01,
+                ttft_ms=invalid_ttft,
+            )
+        )
     policy = StaticBestPolicy(
         calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
     )
