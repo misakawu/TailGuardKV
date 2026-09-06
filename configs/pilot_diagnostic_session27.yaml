@@ -33,13 +33,16 @@ policies:
 pilot:
   epsilons: [0.05]
   deltas: [0.05]
-  memory_budgets_mib: [4900]
+  memory_budgets_json: out/profile_tables/diagnostic_session27_full_no_eviction_budgets.json
+  memory_budget_percentiles: [p25, p50, p75, p90]
 
 data:
   source: fixture
   quality_mode: session_diagnostic
   requests: data/fixtures/diagnostic_session27.jsonl
   calibration_fraction: 0.5
+  split_seed: 20260906
+  stratify_session: true
   max_requests: 135
   diagnostic_only: true
 

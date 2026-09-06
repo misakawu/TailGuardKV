@@ -61,7 +61,10 @@ def _load_replay_inputs(
     )
     if not args.allow_dry_run_replay and any(not measurement.measured for measurement in measurements):
         raise ValueError("run-policies 默认拒绝 dry-run replay；请提供 measured=True 的 profile 表。")
-    calibration_measurements, evaluation_measurements = split_measurements(measurements)
+    # Replay consumes the profile table's recorded split; session27 online runs use the seeded splitter directly.
+    calibration_measurements, evaluation_measurements = split_measurements(
+        measurements, stratify_session=False
+    )
     replay_measurements = measurements if experiment_type == "baseline_session" else evaluation_measurements
     replay_requests = requests_from_measurements(replay_measurements)
     evaluation_requests = requests_from_measurements(evaluation_measurements)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import random
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
@@ -428,16 +429,41 @@ def requests_from_measurements(measurements: list[ProfileMeasurement]) -> list[R
     return list(seen.values())
 
 
-def split_measurements(measurements: list[ProfileMeasurement]) -> tuple[list[ProfileMeasurement], list[ProfileMeasurement]]:
-    calibration = [row for row in measurements if row.extra.get("split") == "calibration"]
-    evaluation = [row for row in measurements if row.extra.get("split") != "calibration"]
-    if calibration and evaluation:
-        return calibration, evaluation
-    session_ids = sorted({row.session_id or row.request_id for row in measurements})
-    if len(session_ids) <= 1:
-        return measurements, measurements
-    cutoff = max(1, len(session_ids) // 2)
-    calibration_ids = set(session_ids[:cutoff])
+def split_measurements(
+    measurements: list[ProfileMeasurement],
+    *,
+    split_seed: int = 20260906,
+    stratify_session: bool = True,
+) -> tuple[list[ProfileMeasurement], list[ProfileMeasurement]]:
+    if not stratify_session:
+        calibration = [row for row in measurements if row.extra.get("split") == "calibration"]
+        evaluation = [row for row in measurements if row.extra.get("split") != "calibration"]
+        if calibration and evaluation:
+            return calibration, evaluation
+
+    sessions: dict[str, list[ProfileMeasurement]] = {}
+    for row in measurements:
+        sessions.setdefault(row.session_id or row.request_id, []).append(row)
+    if len(sessions) <= 1:
+        return measurements, []
+
+    if not stratify_session:
+        calibration_ids = set(sorted(sessions)[: max(1, len(sessions) // 2)])
+    else:
+        strata: dict[tuple[str, str, int], list[str]] = {}
+        for session_id, rows in sessions.items():
+            first = min(rows, key=lambda row: (row.turn_index, row.request_id, row.profile))
+            stratum = (
+                str(first.extra.get("task") or "unknown"),
+                str(first.extra.get("length_bucket") or "unknown"),
+                max(row.turn_index for row in rows),
+            )
+            strata.setdefault(stratum, []).append(session_id)
+        calibration_ids: set[str] = set()
+        for stratum, session_ids in strata.items():
+            ordered = sorted(session_ids)
+            random.Random(f"{split_seed}:{stratum}").shuffle(ordered)
+            calibration_ids.update(ordered[: max(1, len(ordered) // 2)])
     return (
         [row for row in measurements if (row.session_id or row.request_id) in calibration_ids],
         [row for row in measurements if (row.session_id or row.request_id) not in calibration_ids],

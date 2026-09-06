@@ -11,7 +11,8 @@ from policies.tailguard import TailGuardPolicy
 from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
 from run_util.core_types import BackendResult, CacheState, DeviceState, PolicyRunRecord, ProfileMeasurement, Request
-from run_util.data_utils import requests_from_measurements
+from run_util.data_utils import requests_from_measurements, split_measurements
+from run_util.derive_session_budgets import derive_full_no_eviction_budgets
 
 
 def _measurement(
@@ -44,6 +45,104 @@ def _measurement(
         quality_loss=quality_loss,
         extra={"task": "chat", "length_bucket": "short", "split": "calibration"},
     )
+
+
+def _session_measurements(
+    session_id: str,
+    *,
+    task: str,
+    length_bucket: str,
+    turn_depth: int,
+) -> list[ProfileMeasurement]:
+    return [
+        ProfileMeasurement(
+            request_id=f"{session_id}_t{turn_index}",
+            session_id=session_id,
+            turn_index=turn_index,
+            profile="full_gpu",
+            adapter="test",
+            ok=True,
+            measured=True,
+            extra={"task": task, "length_bucket": length_bucket, "split": "candidate"},
+        )
+        for turn_index in range(turn_depth + 1)
+    ]
+
+
+def test_session27_split_keeps_sessions_stratified_and_seeded() -> None:
+    measurements = [
+        measurement
+        for session_id, task, bucket, depth in [
+            ("qa_short_a", "qa", "short", 1),
+            ("qa_short_b", "qa", "short", 1),
+            ("qa_long_a", "qa", "long", 2),
+            ("qa_long_b", "qa", "long", 2),
+            ("summary_short_a", "summary", "short", 1),
+            ("summary_short_b", "summary", "short", 1),
+            ("summary_long_a", "summary", "long", 2),
+            ("summary_long_b", "summary", "long", 2),
+        ]
+        for measurement in _session_measurements(
+            session_id, task=task, length_bucket=bucket, turn_depth=depth
+        )
+    ]
+
+    calibration, evaluation = split_measurements(
+        measurements, split_seed=20260906, stratify_session=True
+    )
+    repeat_calibration, repeat_evaluation = split_measurements(
+        measurements, split_seed=20260906, stratify_session=True
+    )
+
+    calibration_sessions = {row.session_id for row in calibration}
+    evaluation_sessions = {row.session_id for row in evaluation}
+    assert calibration_sessions.isdisjoint(evaluation_sessions)
+    assert calibration_sessions | evaluation_sessions == {row.session_id for row in measurements}
+    assert {row.session_id for row in repeat_calibration} == calibration_sessions
+    assert {row.session_id for row in repeat_evaluation} == evaluation_sessions
+
+    def strata(rows: list[ProfileMeasurement]) -> set[tuple[str, str, int]]:
+        by_session: dict[str, list[ProfileMeasurement]] = {}
+        for row in rows:
+            by_session.setdefault(row.session_id or row.request_id, []).append(row)
+        return {
+            (
+                str(session_rows[0].extra["task"]),
+                str(session_rows[0].extra["length_bucket"]),
+                max(row.turn_index for row in session_rows),
+            )
+            for session_rows in by_session.values()
+        }
+
+    assert strata(calibration) == strata(evaluation)
+
+
+def test_session27_split_does_not_duplicate_a_single_session() -> None:
+    calibration, evaluation = split_measurements(
+        _session_measurements("only", task="qa", length_bucket="short", turn_depth=1),
+        split_seed=20260906,
+        stratify_session=True,
+    )
+
+    assert {row.session_id for row in calibration}.isdisjoint({row.session_id for row in evaluation})
+
+
+def test_session27_full_no_eviction_budget_scan_uses_global_occupancy_quantiles() -> None:
+    measurements = [
+        _measurement("s1_t0", "full_gpu", session_id="s1", turn_index=0, kv_cumulative_mib=10.0),
+        _measurement("s2_t0", "full_gpu", session_id="s2", turn_index=0, kv_cumulative_mib=20.0),
+        _measurement("s1_t1", "full_gpu", session_id="s1", turn_index=1, kv_cumulative_mib=25.0),
+        _measurement("s2_t1", "full_gpu", session_id="s2", turn_index=1, kv_cumulative_mib=35.0),
+    ]
+
+    payload = derive_full_no_eviction_budgets(measurements, split_seed=20260906)
+
+    assert [row["occupancy_mib"] for row in payload["occupancy_sequence"]] == [10.0, 30.0, 45.0, 60.0]
+    assert payload["memory_budgets_mib"] == [25.0, 37.5, 48.75, 55.5]
+    assert payload["percentiles_mib"] == {"p25": 25.0, "p50": 37.5, "p75": 48.75, "p90": 55.5}
+    assert payload["diagnostic_only"] is True
+    assert payload["quality_status"] == "risk_evidence_insufficient"
+    assert payload["violation_status"] == "risk_evidence_insufficient"
 
 
 def test_tailguard_can_fallback_to_full_cpu_and_recompute() -> None:
