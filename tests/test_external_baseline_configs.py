@@ -13,6 +13,13 @@ def test_external_baseline_quality_config_points_to_imported_fixture() -> None:
     assert config["data"]["quality_mode"] == "baseline"
     assert config["data"]["requests"] == "data/fixtures/baseline_quality_external.jsonl"
     assert config["data"]["max_requests"] == 180
+    assert config["profile_smoke"]["profile_chunk_size"] == 1
+    assert config["profile_smoke"]["use_persistent_workers"] is True
+    assert config["profile_smoke"]["full_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["kivi_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["h2o_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["vllm_gpu_memory_utilization"] == 0.55
+    assert config["profile_smoke"]["vllm_max_model_len"] == 1024
 
 
 def test_external_baseline_session_config_points_to_imported_fixture() -> None:
@@ -23,6 +30,13 @@ def test_external_baseline_session_config_points_to_imported_fixture() -> None:
     assert config["data"]["quality_mode"] == "session_diagnostic"
     assert config["data"]["requests"] == "data/fixtures/baseline_session_external.jsonl"
     assert config["data"]["max_requests"] == 240
+    assert config["profile_smoke"]["profile_chunk_size"] == 1
+    assert config["profile_smoke"]["use_persistent_workers"] is True
+    assert config["profile_smoke"]["full_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["kivi_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["h2o_cuda_visible_devices"] == "0,1"
+    assert config["profile_smoke"]["vllm_gpu_memory_utilization"] == 0.55
+    assert config["profile_smoke"]["vllm_max_model_len"] == 1024
     assert config["outputs"]["smoke_trace_semantics_gate"].endswith("_trace_semantics_gate.json")
     assert config["outputs"]["smoke_risk_signal_gate"].endswith("_risk_signal_gate.json")
 

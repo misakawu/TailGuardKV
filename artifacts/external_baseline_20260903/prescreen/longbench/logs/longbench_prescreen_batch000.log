@@ -1,0 +1,6 @@
+ERROR conda.cli.main_run:execute(148): `conda run python -m run_util.build_profile_table --config artifacts/external_baseline_20260903/prescreen/longbench/configs/longbench_prescreen_batch000.yaml --output artifacts/external_baseline_20260903/prescreen/longbench/longbench_prescreen_batch000.csv --no-dry-run` failed. (See above for error)
+{
+  "error": "配置文件不存在: artifacts/external_baseline_20260903/prescreen/longbench/configs/longbench_prescreen_batch000.yaml",
+  "ok": false,
+  "output": "artifacts/external_baseline_20260903/prescreen/longbench/longbench_prescreen_batch000.csv"
+}

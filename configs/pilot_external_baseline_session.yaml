@@ -55,9 +55,17 @@ profile_smoke:
   require_ttft: true
   timeout_s: 180
   repeat: 1
+  profile_chunk_size: 1
+  use_persistent_workers: true
   local_files_only: true
+  full_device_strategy: balanced_two_gpu
+  full_cuda_visible_devices: "0,1"
+  kivi_device_strategy: balanced_two_gpu
+  kivi_cuda_visible_devices: "0,1"
+  h2o_device_strategy: balanced_two_gpu
+  h2o_cuda_visible_devices: "0,1"
   vllm_enforce_eager: true
-  vllm_gpu_memory_utilization: 0.75
+  vllm_gpu_memory_utilization: 0.55
   vllm_max_model_len: 1024
 
 outputs:
