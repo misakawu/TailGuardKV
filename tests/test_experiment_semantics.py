@@ -440,3 +440,106 @@ def test_run_policies_replays_full_session_history_but_only_outputs_eval_rows() 
             or float(record["queue_delay_ms"] or 0.0) > 0.0
             for record in records
         )
+
+
+def test_run_policies_csv_rows_carry_source_config_and_run_dir_provenance() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        config_path = tmp / "configs" / "baseline_session.yaml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            "\n".join(
+                [
+                    "experiment:",
+                    "  type: baseline_session",
+                    "profiles:",
+                    "  names:",
+                    "    - full_gpu",
+                    "policies:",
+                    "  names:",
+                    "    - full_lru",
+                    "pilot:",
+                    "  memory_budgets_mib:",
+                    "    - 50",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        measurements_path = tmp / "measured.csv"
+        history0 = json.dumps([])
+        history1 = json.dumps(["User: s1 turn0", "Assistant: reply0"])
+        history2 = json.dumps(["User: s2 turn0", "Assistant: reply0"])
+        spec = [
+            ("s1_t0", "s1", 0, "calibration", 0, "s1 turn0", history0, 30.0, 0.0, 8.0),
+            ("s2_t0", "s2", 0, "calibration", 1, "s2 turn0", history0, 30.0, 0.0, 8.0),
+            ("s1_t1", "s1", 1, "eval", 2, "s1 turn1", history1, 20.0, 30.0, 10.0),
+            ("s2_t1", "s2", 1, "eval", 3, "s2 turn1", history2, 20.0, 30.0, 10.0),
+        ]
+        rows = []
+        for request_id, session_id, turn_index, split, arrival_index, prompt_text, history_turns, resident_after, resident_before, ttft in spec:
+            rows.append(
+                ProfileMeasurement(
+                    request_id=request_id,
+                    session_id=session_id,
+                    turn_index=turn_index,
+                    profile="full_gpu",
+                    adapter="test",
+                    ok=True,
+                    measured=True,
+                    output_text="turn%d" % turn_index,
+                    latency_ms=ttft,
+                    ttft_ms=ttft,
+                    peak_memory_mib=35.0,
+                    kv_cache_memory_mib=resident_after,
+                    resident_memory_mib=resident_after,
+                    kv_incremental_mib=5.0 if turn_index else 30.0,
+                    kv_cumulative_mib=35.0,
+                    resident_kv_mib_before=resident_before,
+                    resident_kv_mib_after=resident_after,
+                    quality_loss=0.0,
+                    extra={
+                        "task": "chat",
+                        "length_bucket": "short",
+                        "split": split,
+                        "arrival_index": arrival_index,
+                        "prompt_text": prompt_text,
+                        "history_turns": history_turns,
+                        "effective_prompt_chars": len(prompt_text),
+                    },
+                )
+            )
+        write_csv(measurements_path, [row.to_row() for row in rows])
+
+        policy_dir = tmp / "policy_tables"
+        output_path = policy_dir / "pilot_smoke_measured_policy_eps0p05_delta0p05_mem50.csv"
+        args = argparse.Namespace(
+            config=str(config_path),
+            measurements=str(measurements_path),
+            output=str(output_path),
+            profiles=None,
+            policies=None,
+            epsilon=0.05,
+            delta=0.05,
+            memory_budget_mib=50.0,
+            allow_dry_run_replay=False,
+            use_pandas_replay=False,
+        )
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            code = run_policies(args)
+
+        assert code == 0, stream.getvalue()
+        with output_path.open("r", encoding="utf-8", newline="") as handle:
+            records = list(csv.DictReader(handle))
+        assert records
+        assert all(record["config"] == str(config_path) for record in records)
+        assert all(record["run_dir"] == str(tmp) for record in records)
+
+        from scripts.aggregate_baseline_wide_sweep import aggregate_directory
+
+        summary_path, _ = aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
+        with summary_path.open("r", encoding="utf-8", newline="") as handle:
+            [summary] = list(csv.DictReader(handle))
+        assert summary["config"] == str(config_path)
+        assert summary["run_dir"] == str(tmp)

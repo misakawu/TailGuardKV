@@ -126,6 +126,76 @@ def test_same_profile_consecutive_turn_reuses_resident_kv_and_fixture_history() 
     ]
 
 
+def test_full_shadow_execution_does_not_mutate_online_policy_state() -> None:
+    backend, workers = _backend({"s1_t0": 10.0})
+    request = Request("s1_t0", "qa", "question", session_id="s1", turn_index=0, arrival_index=0)
+    initial_state = backend.cache_state
+
+    shadow = backend.execute_full_shadow(request, initial_state)
+
+    assert shadow.ok is True
+    assert shadow.profile == "full_gpu"
+    assert shadow.output_text == "generated:s1_t0"
+    assert backend.cache_state is initial_state
+    assert backend._online_histories == {}
+    assert backend._loaded_profile is None
+    [measurement, eviction] = workers["full"].messages
+    assert measurement["requests"][0]["request_id"] == "s1_t0"
+    assert eviction["evict_sessions"] == ["s1"]
+    assert list(backend._shadow_workers) == ["full"]
+
+
+def test_full_shadow_rebuilds_history_without_reusing_the_serving_worker_cache() -> None:
+    created_workers: list[FakeOnlineWorker] = []
+
+    def factory(**kwargs) -> FakeOnlineWorker:
+        del kwargs
+        worker = FakeOnlineWorker({"s1_t0": 10.0, "s1_t1": 14.0})
+        created_workers.append(worker)
+        return worker
+
+    backend = OnlineQwenSessionBackend(
+        adapters=[FullKVAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+        global_budget_mib=100.0,
+        worker_factory=factory,
+    )
+    first = Request("s1_t0", "qa", "first", session_id="s1", turn_index=0, arrival_index=0)
+    second = Request("s1_t1", "qa", "second", session_id="s1", turn_index=1, arrival_index=1)
+    backend.execute(first, Action("full_gpu"), backend.cache_state)
+
+    backend.execute_full_shadow(second, backend.cache_state)
+
+    shadow_message = created_workers[1].messages[0]["requests"][0]
+    assert shadow_message["online_cache_reuse_expected"] is False
+    assert shadow_message["prompt"] == "User: first\nAssistant: generated:s1_t0\nUser: second\nAssistant:"
+    assert created_workers[1].messages[1]["evict_sessions"] == ["s1"]
+
+
+def test_close_tears_down_shadow_workers() -> None:
+    created_workers: list[FakeOnlineWorker] = []
+
+    def factory(**kwargs) -> FakeOnlineWorker:
+        del kwargs
+        worker = FakeOnlineWorker({"s1_t0": 10.0})
+        created_workers.append(worker)
+        return worker
+
+    backend = OnlineQwenSessionBackend(
+        adapters=[FullKVAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+        global_budget_mib=100.0,
+        worker_factory=factory,
+    )
+    request = Request("s1_t0", "qa", "question", session_id="s1", turn_index=0, arrival_index=0)
+
+    backend.execute_full_shadow(request, backend.cache_state)
+    assert backend._shadow_workers != {}
+
+    backend.close()
+
+    assert created_workers[0].closed is True
+    assert backend._shadow_workers == {}
+
+
 def test_incompatible_profile_switch_records_online_recompute() -> None:
     backend, _ = _backend({"s1_t0": 10.0, "s1_t1": 6.0})
     turn0 = Request("s1_t0", "chat", "hello", session_id="s1", turn_index=0, arrival_index=0)
@@ -677,8 +747,12 @@ def test_policy_csv_rows_persist_session27_diagnostic_provenance() -> None:
     [row] = _policy_rows_with_provenance(
         [record],
         {"data": {"diagnostic_only": True}},
+        source_config="configs/pilot_diagnostic_session27.yaml",
+        run_dir="out/diagnostic_session27",
     )
 
     assert row["diagnostic_only"] is True
     assert row["quality_status"] == "risk_evidence_insufficient"
     assert row["violation_status"] == "risk_evidence_insufficient"
+    assert row["config"] == "configs/pilot_diagnostic_session27.yaml"
+    assert row["run_dir"] == "out/diagnostic_session27"

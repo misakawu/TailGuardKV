@@ -38,6 +38,7 @@ class OnlineQwenSessionBackend(Backend):
         self._worker_factory = worker_factory
         self._clock = clock or (lambda: time.perf_counter() * 1000.0)
         self._workers: dict[str, Any] = {}
+        self._shadow_workers: dict[str, Any] = {}
         self._online_histories: dict[str, list[str]] = {}
         self._loaded_profile: str | None = None
         self._global_budget_mib = float(global_budget_mib) if global_budget_mib > 0 else inf
@@ -52,7 +53,10 @@ class OnlineQwenSessionBackend(Backend):
     def close(self) -> None:
         for worker in self._workers.values():
             worker.close()
+        for worker in self._shadow_workers.values():
+            worker.close()
         self._workers.clear()
+        self._shadow_workers.clear()
         self._loaded_profile = None
 
     def __enter__(self) -> "OnlineQwenSessionBackend":
@@ -78,6 +82,68 @@ class OnlineQwenSessionBackend(Backend):
             if queue_delay_ms < 0.01:
                 queue_delay_ms = 0.0
             return self._execute_locked(request, action, cache_state, queue_delay_ms)
+
+    def execute_full_shadow(self, request: Request, cache_state: CacheState) -> BackendResult:
+        """Run an exact full-profile audit without changing serving state."""
+        exact_profiles = sorted(name for name, spec in self._specs.items() if spec.exact)
+        if not exact_profiles:
+            raise ValueError("online Qwen backend has no exact profile for shadow audit")
+        profile = exact_profiles[0]
+        spec = self._specs[profile]
+        adapter = self._adapters[spec.family]
+        shadow_state = CacheState(global_budget_mib=cache_state.global_budget_mib)
+        measurement = adapter.profile_many(
+            [self._online_execution_request(request, profile, shadow_state, reset_history=False)],
+            profile,
+            dry_run=False,
+            session_runtime={"state": _runtime_state_payload(shadow_state)},
+            memory_budget_mib=None,
+            persistent_worker=self._shadow_worker(adapter),
+        )[0]
+        result = BackendResult.from_profile_measurement(
+            measurement,
+            backend_name=self.name,
+            replay_source="shadow_full_audit",
+            extra={"shadow_execution": True},
+        )
+        self._evict_shadow_session(adapter, request.session_id or request.request_id, shadow_state)
+        return result
+
+    def _evict_shadow_session(
+        self,
+        adapter: ProfileAdapter,
+        session_id: str,
+        shadow_state: CacheState,
+    ) -> None:
+        """Release the audited session's KV on the shadow worker after use.
+
+        A failed eviction drops the whole shadow worker so the next audit starts
+        cold; the already-completed audit keeps its cold full-profile result.
+        """
+        worker = self._shadow_workers.get(adapter.name)
+        if worker is None:
+            return
+        try:
+            result = worker.request(
+                {
+                    "op": "run_batch",
+                    "requests": [],
+                    "evict_sessions": [session_id],
+                    "session_runtime_state": _runtime_state_payload(shadow_state),
+                },
+                timeout_s=30,
+            )
+            if not isinstance(result, dict) or not bool(result.get("ok")):
+                raise RuntimeError("shadow worker cache control failed")
+            evicted_sessions = result.get("evicted_sessions")
+            if not isinstance(evicted_sessions, list) or not {session_id}.issubset(
+                {str(item) for item in evicted_sessions}
+            ):
+                raise RuntimeError("shadow worker cache control failed")
+        except Exception:
+            worker = self._shadow_workers.pop(adapter.name, None)
+            if worker is not None:
+                worker.close()
 
     def _execute_locked(
         self,
@@ -314,9 +380,16 @@ class OnlineQwenSessionBackend(Backend):
             persistent_worker=worker,
         )[0]
 
-    def _online_execution_request(self, request: Request, profile: str, cache_state: CacheState) -> Request:
+    def _online_execution_request(
+        self,
+        request: Request,
+        profile: str,
+        cache_state: CacheState,
+        *,
+        reset_history: bool = True,
+    ) -> Request:
         session_id = request.session_id or request.request_id
-        if request.turn_index == 0:
+        if reset_history and request.turn_index == 0:
             self._online_histories[session_id] = []
         history = list(self._online_histories.get(session_id, ()))
         reuse_expected = (
@@ -352,6 +425,19 @@ class OnlineQwenSessionBackend(Backend):
                 pythonpath=getattr(adapter, "pythonpath", ()),
             )
             self._workers[adapter.name] = worker
+        return worker
+
+    def _shadow_worker(self, adapter: ProfileAdapter):
+        worker = self._shadow_workers.get(adapter.name)
+        if worker is None:
+            worker = self._worker_factory(
+                adapter=adapter.name,
+                env_name=adapter.env,
+                runtime_module="profiles.qwen2_kv_runtime",
+                runtime_config=adapter.runtime_config,
+                pythonpath=getattr(adapter, "pythonpath", ()),
+            )
+            self._shadow_workers[adapter.name] = worker
         return worker
 
     def _prepare_profile_runtime(

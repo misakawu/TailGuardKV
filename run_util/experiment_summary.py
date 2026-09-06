@@ -76,6 +76,9 @@ SUMMARY_KEY_COLUMNS = [
 TOTAL_POLICY_SUMMARY_COLUMNS = [
     "config",
     "run_dir",
+    "diagnostic_only",
+    "quality_status",
+    "violation_status",
     "policy",
     "memory_budget_mib",
     "epsilon",
@@ -140,6 +143,33 @@ def _csv_value(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(json_ready(value), ensure_ascii=False, sort_keys=True)
     return json_ready(value)
+
+
+def add_shadow_audit_metrics(
+    summary: dict[str, dict[str, Any]],
+    records: list[Any],
+) -> dict[str, dict[str, Any]]:
+    """Attach shadow-audit metrics per policy.
+
+    ``audit_sample_count`` counts rows with an actually observed audit loss; a
+    sampled row that has no reference or whose shadow execution failed keeps a
+    prediction estimate but is not reported as an observed audit sample.
+    """
+    by_policy: dict[str, list[Any]] = {}
+    for record in records:
+        by_policy.setdefault(record.policy, []).append(record)
+    for policy, policy_records in by_policy.items():
+        estimates = [record.quality_estimate for record in policy_records if record.quality_estimate is not None]
+        metrics = summary.setdefault(policy, {})
+        metrics["mean_quality_estimate"] = sum(estimates) / len(estimates) if estimates else float("nan")
+        metrics["audit_sample_count"] = float(
+            sum(
+                1
+                for record in policy_records
+                if record.audit_selected and record.observed_quality_loss is not None
+            )
+        )
+    return summary
 
 
 def _summary_error(payload: dict[str, Any]) -> Any:
@@ -263,6 +293,9 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     {
                         "config": payload.get("config"),
                         "run_dir": payload.get("run_dir", ""),
+                        "diagnostic_only": run_payload.get("diagnostic_only", payload.get("diagnostic_only", False)),
+                        "quality_status": run_payload.get("quality_status", payload.get("quality_status", "")),
+                        "violation_status": run_payload.get("violation_status", payload.get("violation_status", "")),
                         "policy": policy,
                         "memory_budget_mib": policy_run.get("memory_budget_mib"),
                         "epsilon": policy_run.get("epsilon"),
@@ -289,6 +322,18 @@ def total_policy_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                         {
                             "config": payload.get("config"),
                             "run_dir": payload.get("run_dir", ""),
+                            "diagnostic_only": policy_payload.get(
+                                "diagnostic_only",
+                                payload.get("diagnostic_only", False),
+                            ),
+                            "quality_status": policy_payload.get(
+                                "quality_status",
+                                payload.get("quality_status", ""),
+                            ),
+                            "violation_status": policy_payload.get(
+                                "violation_status",
+                                payload.get("violation_status", ""),
+                            ),
                             "policy": policy,
                             "memory_budget_mib": payload.get("memory_budget_mib"),
                             "epsilon": payload.get("epsilon"),

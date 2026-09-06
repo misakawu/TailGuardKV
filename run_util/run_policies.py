@@ -30,7 +30,9 @@ from run_util.experiment_common import (
     write_csv,
 )
 from run_util.derive_session_budgets import configured_memory_budgets
+from run_util.experiment_summary import add_shadow_audit_metrics
 from metrics import MetricCollector
+from metrics.quality import compute_quality_loss
 from policies import build_policies
 from policies.base import Policy
 from profiles.registry import build_profile_adapters
@@ -259,10 +261,18 @@ def _shadow_audit_request_keys(requests: list[Request]) -> set[tuple[str, int, s
 def _record_quality_audit(
     record: PolicyRunRecord,
     *,
+    request: Request,
+    backend_result: BackendResult,
     audit_selected: bool,
+    full_shadow_result: BackendResult | None = None,
 ) -> PolicyRunRecord:
     predicted = record.pred_loss
-    observed = record.quality_loss if audit_selected else None
+    observed = None
+    if audit_selected:
+        if backend_result.backend_name == "online_qwen":
+            observed = _online_shadow_quality_loss(request, backend_result, full_shadow_result)
+        else:
+            observed = record.quality_loss
     estimate = predicted
     if audit_selected and predicted is not None and observed is not None:
         estimate = predicted + (observed - predicted) / SHADOW_AUDIT_RATE
@@ -274,6 +284,25 @@ def _record_quality_audit(
         quality_estimate=estimate,
         audit_rate=SHADOW_AUDIT_RATE,
     )
+
+
+def _online_shadow_quality_loss(
+    request: Request,
+    candidate_result: BackendResult,
+    full_shadow_result: BackendResult | None,
+) -> float | None:
+    if (
+        not request.reference
+        or not candidate_result.ok
+        or not candidate_result.output_text
+        or full_shadow_result is None
+        or not full_shadow_result.ok
+        or not full_shadow_result.output_text
+    ):
+        return None
+    candidate_loss, _ = compute_quality_loss(request.task, candidate_result.output_text, request.reference)
+    full_loss, _ = compute_quality_loss(request.task, full_shadow_result.output_text, request.reference)
+    return max(0.0, min(1.0, candidate_loss - full_loss))
 
 
 def _correct_utility_dynamic_lambda(
@@ -297,18 +326,34 @@ def _add_shadow_audit_summary(
     summary: dict[str, dict[str, object]],
     records: list[PolicyRunRecord],
 ) -> dict[str, dict[str, object]]:
-    by_policy: dict[str, list[PolicyRunRecord]] = {}
-    for record in records:
-        by_policy.setdefault(record.policy, []).append(record)
-    for policy, rows in by_policy.items():
-        estimates = [record.quality_estimate for record in rows if record.quality_estimate is not None]
-        metrics = summary.setdefault(policy, {})
-        metrics["mean_quality_estimate"] = sum(estimates) / len(estimates) if estimates else float("nan")
-        metrics["audit_sample_count"] = float(sum(record.audit_selected for record in rows))
-    return summary
+    return add_shadow_audit_metrics(summary, records)
 
 
-def _policy_rows_with_provenance(records: list[PolicyRunRecord], config: dict) -> list[dict[str, object]]:
+def _failure_audit_record(
+    record: PolicyRunRecord,
+    *,
+    audit_selected: bool,
+    predicted: float | None,
+) -> PolicyRunRecord:
+    if not audit_selected:
+        return record
+    return replace(
+        record,
+        audit_selected=True,
+        predicted_quality_loss=predicted,
+        observed_quality_loss=None,
+        quality_estimate=predicted,
+        audit_rate=SHADOW_AUDIT_RATE,
+    )
+
+
+def _policy_rows_with_provenance(
+    records: list[PolicyRunRecord],
+    config: dict,
+    *,
+    source_config: str = "",
+    run_dir: str = "",
+) -> list[dict[str, object]]:
     data_config = config.get("data", {})
     diagnostic_only = bool(data_config.get("diagnostic_only", False)) if isinstance(data_config, dict) else False
     risk_status = "risk_evidence_insufficient" if diagnostic_only else ""
@@ -318,6 +363,8 @@ def _policy_rows_with_provenance(records: list[PolicyRunRecord], config: dict) -
             "diagnostic_only": diagnostic_only,
             "quality_status": risk_status,
             "violation_status": risk_status,
+            "config": source_config,
+            "run_dir": run_dir,
         }
         for record in records
     ]
@@ -348,14 +395,28 @@ def _run_policy_matrix(
         ):
             request_key = _request_key(request)
             emit_record = (not eval_only) or (request_key in evaluation_request_keys)
+            audit_selected = request_key in audit_request_keys
             lambda_before = getattr(policy, "dual_lambda", None) if policy.name == "utility_dynamic" else None
             try:
                 action = policy.decide(request, cache_state, DeviceState())
             except Exception as exc:
                 if emit_record:
-                    records.append(_failure_record(policy, request, exc, exact=exact))
+                    records.append(
+                        _failure_audit_record(
+                            _failure_record(policy, request, exc, exact=exact),
+                            audit_selected=audit_selected,
+                            predicted=None,
+                        )
+                    )
                 continue
             try:
+                full_shadow_result = None
+                shadow_execute = getattr(backend, "execute_full_shadow", None)
+                if audit_selected and getattr(backend, "name", "") == "online_qwen" and callable(shadow_execute):
+                    try:
+                        full_shadow_result = shadow_execute(request, cache_state)
+                    except Exception:
+                        full_shadow_result = None
                 execute = getattr(backend, "execute", None)
                 if callable(execute):
                     backend_result = execute(request, action, cache_state)
@@ -366,7 +427,10 @@ def _run_policy_matrix(
                 if emit_record:
                     record = _record_quality_audit(
                         _record_from_backend_result(policy, request, action, backend_result, exact),
-                        audit_selected=request_key in audit_request_keys,
+                        request=request,
+                        backend_result=backend_result,
+                        audit_selected=audit_selected,
+                        full_shadow_result=full_shadow_result,
                     )
                     _correct_utility_dynamic_lambda(
                         policy,
@@ -376,8 +440,21 @@ def _run_policy_matrix(
                     records.append(record)
             except Exception as exc:
                 if emit_record:
-                    records.append(_failure_record(policy, request, exc, action=action, exact=exact))
+                    records.append(
+                        _failure_audit_record(
+                            _failure_record(policy, request, exc, action=action, exact=exact),
+                            audit_selected=audit_selected,
+                            predicted=action.pred_loss if action is not None else None,
+                        )
+                    )
     return records
+
+
+def _policy_output_run_dir(output: str) -> str:
+    path = Path(output)
+    if path.parent.name == "policy_tables":
+        return str(path.parent.parent)
+    return str(path.parent)
 
 
 def run_policies(args: argparse.Namespace) -> int:
@@ -439,7 +516,15 @@ def run_policies(args: argparse.Namespace) -> int:
             close()
 
     try:
-        write_csv(Path(output), _policy_rows_with_provenance(records, config))
+        write_csv(
+            Path(output),
+            _policy_rows_with_provenance(
+                records,
+                config,
+                source_config=str(args.config),
+                run_dir=_policy_output_run_dir(output),
+            ),
+        )
         validate_experiment_policy_records(records, experiment_type, output)
         summary = _add_shadow_audit_summary(MetricCollector().summarize_policy_runs(
             records,

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from run_util.core_types import PolicyRunRecord
 from run_util.experiment_common import load_config, write_csv
+from run_util.run_policies import _policy_rows_with_provenance
 
 from scripts.aggregate_baseline_wide_sweep import aggregate_directory, parse_sweep_filename
 from scripts.baseline_wide_sweep_grid import load_sweep_grid
@@ -125,6 +126,175 @@ class BaselineWideSweepTest(unittest.TestCase):
             self.assertEqual(len(plots), 4)
             for plot in plots:
                 self.assertTrue(plot.exists(), plot)
+
+    def test_aggregate_directory_preserves_shadow_audit_quality_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_dir = Path(tmpdir) / "policy_tables"
+            policy_dir.mkdir(parents=True)
+            records = [
+                PolicyRunRecord(
+                    policy="utility_dynamic",
+                    request_id="s1_t0",
+                    session_id="s1",
+                    turn_index=0,
+                    action_profile="lossy",
+                    primary_profile="lossy",
+                    backend_name="online_qwen",
+                    ok=True,
+                    measured=True,
+                    ttft_ms=10.0,
+                    latency_ms=12.0,
+                    peak_memory_mib=10.0,
+                    kv_cache_memory_mib=10.0,
+                    quality_loss=None,
+                    audit_selected=False,
+                    predicted_quality_loss=0.1,
+                    observed_quality_loss=None,
+                    quality_estimate=0.1,
+                ),
+                PolicyRunRecord(
+                    policy="utility_dynamic",
+                    request_id="s2_t0",
+                    session_id="s2",
+                    turn_index=0,
+                    action_profile="lossy",
+                    primary_profile="lossy",
+                    backend_name="online_qwen",
+                    ok=True,
+                    measured=True,
+                    ttft_ms=11.0,
+                    latency_ms=13.0,
+                    peak_memory_mib=11.0,
+                    kv_cache_memory_mib=11.0,
+                    quality_loss=None,
+                    audit_selected=True,
+                    predicted_quality_loss=0.1,
+                    observed_quality_loss=0.3,
+                    quality_estimate=2.1,
+                ),
+            ]
+            write_csv(
+                policy_dir / "pilot_smoke_measured_policy_eps0p05_delta0p05_mem1000.csv",
+                [record.to_row() for record in records],
+            )
+
+            summary_path, _ = aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
+
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                [summary] = list(csv.DictReader(handle))
+            self.assertAlmostEqual(float(summary["mean_quality_estimate"]), 1.1)
+            self.assertEqual(float(summary["audit_sample_count"]), 1.0)
+
+    def test_aggregate_directory_preserves_diagnostic_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_dir = Path(tmpdir) / "policy_tables"
+            policy_dir.mkdir(parents=True)
+            record = PolicyRunRecord(
+                policy="full_lru",
+                request_id="s1_t0",
+                session_id="s1",
+                turn_index=0,
+                action_profile="full_gpu",
+                backend_name="online_qwen",
+                ok=True,
+                measured=True,
+                ttft_ms=10.0,
+                latency_ms=12.0,
+                peak_memory_mib=10.0,
+                kv_cache_memory_mib=10.0,
+                quality_loss=0.0,
+                audit_selected=True,
+                quality_estimate=0.0,
+            )
+            write_csv(
+                policy_dir / "pilot_smoke_measured_policy_eps0p05_delta0p05_mem1000.csv",
+                _policy_rows_with_provenance(
+                    [record],
+                    {"data": {"diagnostic_only": True}},
+                    source_config="configs/pilot_diagnostic_session27.yaml",
+                    run_dir="out/diagnostic_session27",
+                ),
+            )
+
+            summary_path, _ = aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
+
+            with summary_path.open("r", encoding="utf-8", newline="") as handle:
+                [summary] = list(csv.DictReader(handle))
+            self.assertEqual(summary["diagnostic_only"], "True")
+            self.assertEqual(summary["quality_status"], "risk_evidence_insufficient")
+            self.assertEqual(summary["violation_status"], "risk_evidence_insufficient")
+            self.assertEqual(summary["config"], "configs/pilot_diagnostic_session27.yaml")
+            self.assertEqual(summary["run_dir"], "out/diagnostic_session27")
+
+    def test_aggregate_directory_rejects_diagnostic_csv_without_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_dir = Path(tmpdir) / "policy_tables"
+            policy_dir.mkdir(parents=True)
+            record = PolicyRunRecord(
+                policy="full_lru",
+                request_id="s1_t0",
+                session_id="s1",
+                turn_index=0,
+                action_profile="full_gpu",
+                backend_name="online_qwen",
+                ok=True,
+                measured=True,
+                ttft_ms=10.0,
+                latency_ms=12.0,
+                peak_memory_mib=10.0,
+                kv_cache_memory_mib=10.0,
+                quality_loss=0.0,
+            )
+            write_csv(
+                policy_dir / "pilot_smoke_measured_policy_eps0p05_delta0p05_mem1000.csv",
+                [
+                    {
+                        **record.to_row(),
+                        "diagnostic_only": True,
+                        "quality_status": "risk_evidence_insufficient",
+                        "violation_status": "risk_evidence_insufficient",
+                    }
+                ],
+            )
+
+            with self.assertRaises(ValueError):
+                aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
+
+    def test_aggregate_directory_rejects_mixed_provenance_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_dir = Path(tmpdir) / "policy_tables"
+            policy_dir.mkdir(parents=True)
+            record = PolicyRunRecord(
+                policy="full_lru",
+                request_id="s1_t0",
+                session_id="s1",
+                turn_index=0,
+                action_profile="full_gpu",
+                backend_name="online_qwen",
+                ok=True,
+                measured=True,
+                ttft_ms=10.0,
+                latency_ms=12.0,
+                peak_memory_mib=10.0,
+                kv_cache_memory_mib=10.0,
+                quality_loss=0.0,
+            )
+            for filename, config, run_dir in (
+                ("pilot_smoke_measured_policy_eps0p05_delta0p05_mem1000.csv", "configs/run_a.yaml", "out/run_a"),
+                ("pilot_smoke_measured_policy_eps0p05_delta0p05_mem1500.csv", "configs/run_b.yaml", "out/run_b"),
+            ):
+                write_csv(
+                    policy_dir / filename,
+                    _policy_rows_with_provenance(
+                        [record],
+                        {"data": {"diagnostic_only": True}},
+                        source_config=config,
+                        run_dir=run_dir,
+                    ),
+                )
+
+            with self.assertRaises(ValueError):
+                aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
 
 
 if __name__ == "__main__":
