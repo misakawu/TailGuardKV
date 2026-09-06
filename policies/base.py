@@ -324,7 +324,7 @@ def _profile_stats(
         losses = [row.quality_loss for row in rows if row.quality_loss is not None]
         if profile in exact_profiles and not losses:
             losses = [0.0 for row in rows if row.ok and row.measured and row.output_text]
-        ttfts = [row.ttft_ms for row in rows if row.ttft_ms is not None]
+        ttfts = [row.ttft_ms for row in rows]
         memories = [row.peak_memory_mib for row in rows if row.peak_memory_mib is not None]
         kv_memories = [row.kv_cache_memory_mib for row in rows if row.kv_cache_memory_mib is not None]
         incremental_kv = [row.kv_incremental_mib for row in rows if row.kv_incremental_mib is not None]
@@ -335,7 +335,7 @@ def _profile_stats(
             known_loss_count=len(losses),
             mean_loss=(sum(losses) / len(losses) if losses else None),
             violation_rate=(sum(1 for loss in losses if loss > epsilon) / len(losses) if losses else None),
-            p95_ttft_ms=(_percentile(ttfts, 0.95) if ttfts else None),
+            p95_ttft_ms=_ttft_percentile(ttfts),
             p95_peak_memory_mib=(_percentile(memories, 0.95) if memories else None),
             p95_kv_cache_memory_mib=(_percentile(kv_memories, 0.95) if kv_memories else None),
             p95_kv_incremental_mib=(_percentile(incremental_kv, 0.95) if incremental_kv else None),
@@ -350,3 +350,12 @@ def _percentile(values: list[float], quantile: float) -> float:
         return inf
     index = min(len(finite_values) - 1, max(0, int(round((len(finite_values) - 1) * quantile))))
     return finite_values[index]
+
+
+def _ttft_percentile(values: list[float | None]) -> float | None:
+    if not values:
+        return None
+    finite_values = [value for value in values if value is not None and isfinite(value)]
+    if len(finite_values) != len(values):
+        return inf
+    return _percentile(finite_values, 0.95)

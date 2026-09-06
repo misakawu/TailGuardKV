@@ -91,6 +91,34 @@ def test_static_best_keeps_exact_when_exact_merged_p95_ttft_is_infinite() -> Non
     assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
 
 
+def test_static_best_keeps_exact_when_exact_calibration_ttft_contains_nan() -> None:
+    calibration = [
+        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=float("nan")),
+        _measurement("c2", "full_gpu", loss=0.0, ttft_ms=100.0),
+        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=10.0),
+        _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
+    ]
+    policy = StaticBestPolicy(
+        calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
+    )
+
+    assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
+
+
+def test_static_best_keeps_exact_when_lossy_calibration_ttft_contains_nan() -> None:
+    calibration = [
+        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=100.0),
+        _measurement("c2", "full_gpu", loss=0.0, ttft_ms=100.0),
+        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=float("nan")),
+        _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
+    ]
+    policy = StaticBestPolicy(
+        calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
+    )
+
+    assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
+
+
 def test_static_safe_records_primary_lossy_profile_when_conformal_guard_falls_back() -> None:
     calibration = [
         _measurement("c1", "full_gpu", loss=0.0, ttft_ms=100.0),
