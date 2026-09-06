@@ -466,6 +466,9 @@ class OnlineQwenSessionBackend(Backend):
         )
         if not isinstance(result, dict) or not bool(result.get("ok")):
             raise RuntimeError("worker cache control failed")
+        evicted_sessions = result.get("evicted_sessions")
+        if not isinstance(evicted_sessions, list) or not set(sessions).issubset({str(item) for item in evicted_sessions}):
+            raise RuntimeError("worker cache control failed")
 
 
 def _drop_session(state: CacheState, session_id: str, profile: str, kv_mib: float) -> CacheState:

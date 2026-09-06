@@ -8,6 +8,7 @@ from unittest.mock import patch
 from backends.qwen_session import OnlineQwenSessionBackend
 from profiles.base import PersistentWorkerFatalError
 from profiles.full import FullKVAdapter
+from profiles.generation_timing import generate_with_first_token_timing
 from profiles.kivi import KIVIAdapter
 from profiles import qwen2_kv_runtime
 from run_util.canonical_history import canonical_history_hash
@@ -35,6 +36,7 @@ class FakeOnlineWorker:
                 "results": [],
                 "worker": {"mode": "persistent"},
                 "session_runtime_state": message.get("session_runtime_state") or {"sessions": {}},
+                "evicted_sessions": list(message.get("evict_sessions") or []),
             }
         request = requests[0]
         request_id = str(request["request_id"])
@@ -165,20 +167,22 @@ def test_global_lru_evicts_oldest_session_when_online_measurement_exceeds_budget
 
 def test_failed_budget_evict_control_invalidates_all_residents_and_closes_worker() -> None:
     class FailingControlWorker(FakeOnlineWorker):
-        def __init__(self, kv_by_request: dict[str, float | None], *, raise_error: bool) -> None:
+        def __init__(self, kv_by_request: dict[str, float | None], *, mode: str) -> None:
             super().__init__(kv_by_request)
-            self.raise_error = raise_error
+            self.mode = mode
 
         def request(self, message: dict[str, object], *, timeout_s: int) -> dict[str, object]:
             if message.get("evict_sessions"):
                 self.messages.append(message)
-                if self.raise_error:
+                if self.mode == "raise":
                     raise RuntimeError("worker exited during eviction")
+                if self.mode == "incomplete_ack":
+                    return {"ok": True, "evicted_sessions": []}
                 return {"ok": False, "error": "worker exited during eviction"}
             return super().request(message, timeout_s=timeout_s)
 
-    for raise_error in (False, True):
-        worker = FailingControlWorker({"s1_t0": 10.0, "s2_t0": 10.0}, raise_error=raise_error)
+    for mode in ("failed_response", "raise", "incomplete_ack"):
+        worker = FailingControlWorker({"s1_t0": 10.0, "s2_t0": 10.0}, mode=mode)
         backend = OnlineQwenSessionBackend(
             adapters=[FullKVAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
             global_budget_mib=15.0,
@@ -204,6 +208,94 @@ def test_failed_budget_evict_control_invalidates_all_residents_and_closes_worker
         assert backend.cache_state.get_resident_kv("s1", "full_gpu") == 0.0
         assert backend.cache_state.get_resident_kv("s2", "full_gpu") == 0.0
         assert worker.closed is True
+
+
+def test_reused_cache_decode_positions_include_prefix_for_all_session27_tokens() -> None:
+    class Tensor:
+        def __init__(self, values: list[list[int]]) -> None:
+            self.values = values
+            self.shape = (len(values), len(values[0]))
+
+        def __getitem__(self, index):
+            del index
+            return self
+
+        def item(self) -> int:
+            return self.values[0][0]
+
+    class Logits:
+        def __init__(self, token: int) -> None:
+            self.token = token
+
+        def __getitem__(self, index):
+            del index
+            return self
+
+    class Output:
+        def __init__(self, token: int) -> None:
+            self.logits = Logits(token)
+            self.past_key_values = object()
+
+    class Torch:
+        cuda = SimpleNamespace(synchronize=lambda device: None)
+
+        @staticmethod
+        def argmax(logits, *, dim, keepdim) -> Tensor:
+            del dim, keepdim
+            return Tensor([[logits.token]])
+
+        @staticmethod
+        def cat(values, *, dim) -> Tensor:
+            assert dim == -1
+            return Tensor([[item for tensor in values for item in tensor.values[0]]])
+
+        @staticmethod
+        def ones_like(token: Tensor) -> Tensor:
+            return Tensor([[1] * token.shape[-1]])
+
+        @staticmethod
+        def arange(start, end, *, device) -> int:
+            assert device == "cuda"
+            assert end == start + 1
+            return start
+
+    class Tokenizer:
+        eos_token_id = 999
+
+        @staticmethod
+        def decode(tokens, *, skip_special_tokens):
+            del skip_special_tokens
+            return ",".join(str(token) for token in tokens)
+
+    class Model:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def __call__(self, **kwargs) -> Output:
+            self.calls.append(kwargs)
+            return Output(100 + len(self.calls))
+
+        @staticmethod
+        def prepare_inputs_for_generation(input_ids, **kwargs) -> dict[str, object]:
+            return {"input_ids": input_ids, **kwargs}
+
+    model = Model()
+    generate_with_first_token_timing(
+        model,
+        Tokenizer(),
+        Torch(),
+        {
+            "input_ids": Tensor([[1, 2, 3, 4, 5, 6, 7]]),
+            "attention_mask": Tensor([[1] * 15]),
+        },
+        request_start=0.0,
+        device="cuda",
+        max_new_tokens=16,
+        past_key_values=object(),
+        has_cuda=False,
+    )
+
+    assert [call["cache_position"] for call in model.calls[1:]] == list(range(15, 30))
 
 
 def test_profile_runtime_switch_invalidates_other_sessions_from_the_released_runtime() -> None:

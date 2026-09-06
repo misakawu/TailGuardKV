@@ -58,9 +58,13 @@ def generate_with_first_token_timing(
         eos_token_id = pad_token_id
 
     attention_mask = inputs.get("attention_mask")
+    prompt_len = (
+        int(attention_mask.shape[-1])
+        if attention_mask is not None and hasattr(attention_mask, "shape")
+        else int(inputs["input_ids"].shape[-1])
+    )
     attention_mask = _extend_attention_mask(torch, attention_mask, next_token)
     decode_input_ids = next_token
-    prompt_len = int(inputs["input_ids"].shape[-1])
 
     while len(generated_tokens) < max_new_tokens and generated_tokens[-1] != eos_token_id:
         cache_position = _cache_position(torch, device, prompt_len + len(generated_tokens) - 1)
