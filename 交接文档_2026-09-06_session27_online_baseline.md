@@ -8,8 +8,10 @@
 - 全局约束：session27 输出必须带 `diagnostic_only=true`；质量与 violation 均为 `risk_evidence_insufficient`，不能作为 tail SLO 结论；随机种子固定为 `20260906`；预算 B 取 full、无驱逐扫描的 P25/P50/P75/P90；总体 P95 必须由合并后的逐轮记录计算，不能平均 batch P95。
 
 ### 本次恢复状态（2026-09-06 后续交接）
-### 本次恢复状态（2026-09-06 后续交接）
 
+- Task 6 完整 27-session 流程已启动：`out/session27_online_20260906_184717`（9 批 profile-only 分批测量 → merged → budgets → 四档 B sweeps → 聚合与 acceptance）。当前按用户指示视作运行完毕但尚未核对输出；后续需检查该 run root 下 `acceptance.json`、`policy_tables/`（四档 B CSV、`session27_total_summary.csv`、`session27_events.csv`、`baseline_smoke.md`、四张图）并记录 B 敏感性/事件分解结论。运行产物均不提交。
+- Task 6 Step1（2-session、单 B、五策略 online smoke）已通过：`out/session27_task6_step1/run_online_smoke/acceptance.json` passed。9 批 profile 合并成功、budgets 生成（2-session 下 P25=4.40234 MiB），单档 B sweep returncode 0，五策略 CSV 行均 `backend_name=online_qwen`、`measured=true`、含 TTFT 与 backend 事件、无回放；四张 `summary_policy_*.png` 与 total summary/events/baseline_smoke.md 齐备。quality/violation 均为 `risk_evidence_insufficient`（图表相应标注或占位）。B 对 TTFT/backend 事件不敏感，结论按事件分解记录，不调整策略制造预设排序。
+- Task 5（merged per-turn 汇总与四图）已完成并提交：`a105311 fix: aggregate policy metrics from turn records`。`run_util/session_aggregation.py` 提供 `aggregate_policy_csvs`/`summarize_cells`/事件 CSV/session 点 CSV/markdown 输出，bootstrap CI 种子 `20260906`；`visual/plot_summary.py` 增加 CI 误差带、`risk_evidence_insufficient` 标注与散点，并支持空指标时补占位图（`always_emit_all`）。全量 pytest `447 passed, 3 subtests passed`。
 - Task 0（兼容性）已闭环：四个 labeling 源脚本迁回仓库 `scripts/`（`common.py`、`label_longbench_quality.py`、`label_sharegpt_sessions.py`、`prepare_sharegpt_session_candidates.py`，原样复制自备份目录），`tests/test_longbench_label_strategy.py` 与 `tests/test_sharegpt_labeling_strategy.py` 改为从仓库 `scripts/` 导入；全量 pytest 447 passed（含 Task5 新增用例）。
 - Task 0 2-session online GPU 冒烟通过（`out/task0_gpu_smoke/`，未提交）：`OnlineQwenSessionBackend` + persistent worker、设备 0/1、B=1024、`max_new_tokens=1`；两 session 第二轮均 `cache_reused=true`，TTFT 真实且无 profile 表回放（`replay_source` 为空）；s1 首轮含模型加载约 40.4 s、复用轮 110.7 ms，s2 首轮 120.6 ms、复用轮 104.3 ms；进程退出 0。
 
@@ -75,6 +77,9 @@
 
 ### 5. 正确汇总与四张图
 
+当前状态：已完成（`a105311`），见上方恢复状态。
+
+
 修改 `run_util/experiment_summary.py` 和 `visual/plot_summary.py`，并新增 session summary 测试。
 
 - 对 merged per-turn records 计算每个 `(B, epsilon, delta, policy)` 的总体 P95、均值、动作分布和 backend 事件。
@@ -83,6 +88,9 @@
 - 新增事件汇总 CSV，联读 TTFT、budget hit、restore、recompute、queue。
 
 ### 6. 端到端诊断与验收
+
+当前状态：Step1 冒烟通过；完整 27-session 流程已在 `out/session27_online_20260906_184717` 启动并视作运行完毕（输出待核对）。
+
 
 修改 `scripts/run_diagnostic_session_batches.py`、配置和交接文档。
 

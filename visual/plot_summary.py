@@ -281,10 +281,35 @@ def group_rows_any(constraint: tuple[str, str], rows: list[dict[str, str]]) -> b
     )
 
 
+def _placeholder_chart(output: Path, title: str, ylabel: str, *, risk_label: bool) -> None:
+    """Write a chart file when a metric has no plottable rows (diagnostic runs)."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig, axis = plt.subplots(figsize=(7.0, 4.5))
+    axis.axis("off")
+    lines = [f"{title}\n{ylabel}: no rows in this diagnostic run"]
+    if risk_label:
+        lines.append(RISK_LABEL)
+    axis.text(
+        0.5,
+        0.5,
+        "\n".join(lines),
+        ha="center",
+        va="center",
+        fontsize=10,
+        transform=axis.transAxes,
+        color="#666666",
+    )
+    fig.tight_layout()
+    fig.savefig(output, dpi=160)
+    plt.close(fig)
+
+
 def plot_summary(
     summary_csv: str | Path,
     output_dir: str | Path | None = None,
     session_points_csv: str | Path | None = None,
+    *,
+    always_emit_all: bool = False,
 ) -> list[Path]:
     summary_path = Path(summary_csv)
     destination = Path(output_dir) if output_dir is not None else summary_path.parent
@@ -295,6 +320,12 @@ def plot_summary(
         chart = _line_chart(rows, metric, destination / filename, title, ylabel, session_rows=session_rows)
         if chart is not None:
             outputs.append(chart)
+            continue
+        if not always_emit_all:
+            continue
+        placeholder = destination / filename
+        _placeholder_chart(placeholder, title, ylabel, risk_label=metric in RISK_ANNOTATED_CHARTS)
+        outputs.append(placeholder)
     return outputs
 
 

@@ -359,6 +359,35 @@ def run_batches(
     return 0
 
 
+def _profile_output_name(item: dict[str, Any]) -> str:
+    """Resolve the batch's profile CSV basename from its written batch config."""
+    try:
+        config = yaml.safe_load(Path(item["config"]).read_text(encoding="utf-8")) or {}
+        outputs = config.get("outputs") or {}
+        return Path(str(outputs.get("smoke_profiles") or "diagnostic_session27_profiles.csv")).name
+    except (OSError, yaml.YAMLError):
+        return "diagnostic_session27_profiles.csv"
+
+
+def child_command(repo_root: Path, args: argparse.Namespace, item: dict[str, Any]) -> list[str]:
+    """Build the batch child command; --profile-only measures profiles without policy runs."""
+    python_command = ["python", "run_experiment.py", "pilot-smoke-measured", "--config", item["config"], "--run-dir", item["run_dir"]]
+    if args.profile_only:
+        run_dir = Path(item["run_dir"])
+        profile_output = run_dir / "profile_tables" / _profile_output_name(item)
+        python_command = [
+            "python",
+            "-m",
+            "run_util.build_profile_table",
+            "--config",
+            item["config"],
+            "--output",
+            str(profile_output),
+            "--no-dry-run",
+        ]
+    return ["conda", "run", "--no-capture-output", "--cwd", str(repo_root), "-n", args.conda_env, *python_command]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", required=True)
@@ -367,6 +396,7 @@ def main() -> int:
     parser.add_argument("--sessions-per-batch", type=int, default=3)
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--profile-only", action="store_true", help="只测量 profiles，不跑 policy 实验轨")
     args = parser.parse_args()
     root = Path(args.run_root).resolve()
     batches = materialize_session_batches(Path(args.fixture), root / "fixtures", sessions_per_batch=args.sessions_per_batch)
@@ -384,9 +414,9 @@ def main() -> int:
         print(json.dumps(manifest, ensure_ascii=False))
         return 0
     repo_root = Path(__file__).resolve().parent.parent
+
     def run_child(item: dict[str, Any]) -> int:
-        command = ["conda", "run", "--no-capture-output", "--cwd", str(repo_root), "-n", args.conda_env, "python", "run_experiment.py", "pilot-smoke-measured", "--config", item["config"], "--run-dir", item["run_dir"]]
-        completed = subprocess.run(command, cwd=repo_root)
+        completed = subprocess.run(child_command(repo_root, args, item), cwd=repo_root)
         return completed.returncode
 
     return run_batches(manifest, root, repo_root, args.conda_env, run_child)

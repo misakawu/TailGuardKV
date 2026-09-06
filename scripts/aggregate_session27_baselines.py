@@ -50,7 +50,7 @@ def aggregate_session27(input_dirs: list[str], output_root: str) -> dict[str, An
     summary_path = write_summary_csv(rows, root / TOTAL_SUMMARY_NAME)
     events_path = write_events_csv(rows, root / EVENTS_NAME)
     points_path = write_session_points_csv(rows, root / SESSION_POINTS_NAME)
-    plots = plot_summary(summary_path, root, session_points_csv=points_path)
+    plots = plot_summary(summary_path, root, session_points_csv=points_path, always_emit_all=True)
     markdown_path = write_baseline_smoke_markdown(rows, rows, root / SMOKE_MARKDOWN_NAME)
     return {
         "ok": True,
