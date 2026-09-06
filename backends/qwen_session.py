@@ -196,10 +196,50 @@ class OnlineQwenSessionBackend(Backend):
             cumulative_after=cumulative_after,
             resident_after=measured_resident,
         )
-        state, budget_victims, budget_evicted_mib = self._enforce_budget(state, current_session_id=session_id)
+        budget_victims = self._budget_victims(state, current_session_id=session_id)
+        budget_evicted_mib = sum(item[2] for item in budget_victims)
         budget_hit = bool(budget_victims)
-        for victim_session, victim_profile, _ in budget_victims:
-            self._evict_runtime_session(victim_profile, victim_session)
+        try:
+            for victim_session, victim_profile, _ in budget_victims:
+                self._evict_runtime_session(victim_profile, victim_session)
+        except Exception:
+            state, state_lost_victims = _invalidate_all_residents(state)
+            self.close()
+            cache_events = [
+                *runtime_cache_events,
+                *_worker_state_lost_events(state_lost_victims, state),
+            ]
+            self.cache_state = state
+            self._record_online_output(request, measurement.output_text)
+            return replace(
+                baseline,
+                kv_cache_memory_mib=0.0,
+                resident_memory_mib=0.0,
+                kv_incremental_mib=max(0.0, measured_resident - resident_before),
+                kv_cumulative_mib=cumulative_after,
+                resident_kv_mib_before=resident_before,
+                resident_kv_mib_after=0.0,
+                restore_ms=restore_ms,
+                recompute_ms=recompute_ms,
+                queue_delay_ms=queue_delay_ms,
+                evicted_kv_mib=sum(item[2] for item in state_lost_victims),
+                budget_hit=True,
+                global_resident_kv_mib=state.global_resident_kv_mib,
+                global_budget_mib=self._global_budget_mib,
+                extra={
+                    **baseline.extra,
+                    "active_sessions": state.active_sessions,
+                    "event_kind": "evict",
+                    "event_reason": "worker_state_lost",
+                    "victim_session": ",".join(item[0] for item in state_lost_victims),
+                    "budget_resolution": "worker_state_lost",
+                    "cache_events": cache_events,
+                    "online_source": "persistent_qwen_worker",
+                    "runtime_transition_ms": transition_ms,
+                    "cache_control_error": "worker cache control failed",
+                },
+            )
+        state = self._drop_victims(state, budget_victims)
 
         resident_after = state.get_resident_kv(session_id, profile)
         event_kind = "recompute" if (switched or was_dropped) else "evict" if budget_victims else "resident"
@@ -368,33 +408,43 @@ class OnlineQwenSessionBackend(Backend):
             next_state = replace(next_state, session_resident_kv_mib=residents)
         return next_state
 
-    def _enforce_budget(
+    def _budget_victims(
         self,
         state: CacheState,
         *,
         current_session_id: str,
-    ) -> tuple[CacheState, list[tuple[str, str, float]], float]:
+    ) -> list[tuple[str, str, float]]:
         if not isfinite(self._global_budget_mib) or state.global_resident_kv_mib <= self._global_budget_mib:
-            return state, [], 0.0
+            return []
         ordered = sorted(
             state.active_sessions,
             key=lambda session_id: (state.session_last_access_index.get(session_id, 0), session_id),
         )
         other_sessions = [session_id for session_id in ordered if session_id != current_session_id]
         victims: list[tuple[str, str, float]] = []
-        next_state = state
+        resident_mib = state.global_resident_kv_mib
         for victim_session in [*other_sessions, current_session_id]:
-            if next_state.global_resident_kv_mib <= self._global_budget_mib:
+            if resident_mib <= self._global_budget_mib:
                 break
-            victim_profile = next_state.get_current_profile(victim_session)
+            victim_profile = state.get_current_profile(victim_session)
             if not victim_profile:
                 continue
-            victim_mib = next_state.get_resident_kv(victim_session, victim_profile)
+            victim_mib = state.get_resident_kv(victim_session, victim_profile)
             if victim_mib <= 0:
                 continue
             victims.append((victim_session, victim_profile, victim_mib))
-            next_state = _drop_session(next_state, victim_session, victim_profile, victim_mib)
-        return next_state, victims, sum(item[2] for item in victims)
+            resident_mib = max(0.0, resident_mib - victim_mib)
+        return victims
+
+    def _drop_victims(
+        self,
+        state: CacheState,
+        victims: list[tuple[str, str, float]],
+    ) -> CacheState:
+        next_state = state
+        for session_id, profile, kv_mib in victims:
+            next_state = _drop_session(next_state, session_id, profile, kv_mib)
+        return next_state
 
     def _evict_runtime_session(self, profile: str, session_id: str) -> None:
         spec = self._specs.get(profile)
@@ -405,7 +455,7 @@ class OnlineQwenSessionBackend(Backend):
             self._send_cache_control(worker, [session_id])
 
     def _send_cache_control(self, worker: Any, sessions: list[str]) -> None:
-        worker.request(
+        result = worker.request(
             {
                 "op": "run_batch",
                 "requests": [],
@@ -414,6 +464,8 @@ class OnlineQwenSessionBackend(Backend):
             },
             timeout_s=30,
         )
+        if not isinstance(result, dict) or not bool(result.get("ok")):
+            raise RuntimeError("worker cache control failed")
 
 
 def _drop_session(state: CacheState, session_id: str, profile: str, kv_mib: float) -> CacheState:

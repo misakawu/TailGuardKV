@@ -385,17 +385,20 @@ def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dic
 
 def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
     reusable_cache = payload.get("_runtime_reusable_cache")
+    runtime_cache = reusable_cache if reusable_cache is not None else _new_dynamic_cache()
     cached_ids = payload.get("_runtime_cached_prompt_token_ids")
     tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
     if isinstance(cached_ids, list):
         tokenized = _trim_tokenized_inputs(runtime["torch"], tokenized, prefix_len=len(cached_ids))
+    if reusable_cache is not None:
+        tokenized = _with_reused_cache_positions(runtime["torch"], tokenized, reusable_cache)
     result = _invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
         runtime["device"],
         payload,
         runtime["torch"],
-        past_key_values=reusable_cache,
+        past_key_values=runtime_cache,
         tokenized_inputs=tokenized,
         stage_startup_ms=float(runtime.get("startup_ms") or 0.0),
         stage_model_load_ms=float(runtime.get("model_load_ms") or 0.0),
@@ -410,6 +413,46 @@ def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worke
         }
     )
     return result
+
+
+def _new_dynamic_cache() -> Any:
+    """Keep Qwen2 on Transformers' public cache API instead of legacy tuples."""
+    try:
+        from transformers.cache_utils import DynamicCache
+
+        return DynamicCache()
+    except ImportError:
+        return None
+
+
+def _with_reused_cache_positions(torch: Any, tokenized: dict[str, Any], cache: Any) -> dict[str, Any]:
+    """Make a suffix prefill compatible with the cache's public logical length."""
+    get_seq_length = getattr(cache, "get_seq_length", None)
+    if not callable(get_seq_length):
+        return tokenized
+    try:
+        prefix_len = int(get_seq_length())
+        input_ids = tokenized["input_ids"]
+        current_len = int(input_ids.shape[-1])
+        if prefix_len <= 0 or current_len <= 0:
+            return tokenized
+        result = dict(tokenized)
+        attention_mask = result.get("attention_mask")
+        if attention_mask is not None:
+            prefix_mask = torch.ones(
+                (int(attention_mask.shape[0]), prefix_len),
+                dtype=attention_mask.dtype,
+                device=attention_mask.device,
+            )
+            result["attention_mask"] = torch.cat([prefix_mask, attention_mask], dim=-1)
+        result["cache_position"] = torch.arange(
+            prefix_len,
+            prefix_len + current_len,
+            device=input_ids.device,
+        )
+        return result
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return tokenized
 
 
 def _run_kivi_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:

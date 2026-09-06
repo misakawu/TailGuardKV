@@ -163,6 +163,49 @@ def test_global_lru_evicts_oldest_session_when_online_measurement_exceeds_budget
     assert controls[-1]["evict_sessions"] == ["s1"]
 
 
+def test_failed_budget_evict_control_invalidates_all_residents_and_closes_worker() -> None:
+    class FailingControlWorker(FakeOnlineWorker):
+        def __init__(self, kv_by_request: dict[str, float | None], *, raise_error: bool) -> None:
+            super().__init__(kv_by_request)
+            self.raise_error = raise_error
+
+        def request(self, message: dict[str, object], *, timeout_s: int) -> dict[str, object]:
+            if message.get("evict_sessions"):
+                self.messages.append(message)
+                if self.raise_error:
+                    raise RuntimeError("worker exited during eviction")
+                return {"ok": False, "error": "worker exited during eviction"}
+            return super().request(message, timeout_s=timeout_s)
+
+    for raise_error in (False, True):
+        worker = FailingControlWorker({"s1_t0": 10.0, "s2_t0": 10.0}, raise_error=raise_error)
+        backend = OnlineQwenSessionBackend(
+            adapters=[FullKVAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+            global_budget_mib=15.0,
+            worker_factory=lambda **kwargs: worker,
+        )
+        backend.execute(
+            Request("s1_t0", "chat", "one", session_id="s1", arrival_index=0),
+            Action("full_gpu"),
+            CacheState(global_budget_mib=15.0),
+        )
+
+        result = backend.execute(
+            Request("s2_t0", "chat", "two", session_id="s2", arrival_index=1),
+            Action("full_gpu"),
+            backend.cache_state,
+        )
+
+        assert result.ok is True
+        assert result.extra["event_reason"] == "worker_state_lost"
+        assert result.extra["cache_control_error"] == "worker cache control failed"
+        assert {event["session_id"] for event in result.extra["cache_events"]} == {"s1", "s2"}
+        assert backend.cache_state.global_resident_kv_mib == 0.0
+        assert backend.cache_state.get_resident_kv("s1", "full_gpu") == 0.0
+        assert backend.cache_state.get_resident_kv("s2", "full_gpu") == 0.0
+        assert worker.closed is True
+
+
 def test_profile_runtime_switch_invalidates_other_sessions_from_the_released_runtime() -> None:
     backend, _ = _backend({"s1_t0": 10.0, "s2_t0": 10.0, "s2_t1": 6.0})
     state = CacheState(global_budget_mib=100.0)
@@ -449,6 +492,85 @@ def test_real_full_request_passes_attached_online_cache_to_generate() -> None:
 
     assert captured["past_key_values"] is cache
     assert result["cache_reused"] is True
+
+
+def test_real_full_request_starts_with_a_dynamic_cache() -> None:
+    dynamic_cache = object()
+    captured: dict[str, object] = {}
+
+    def tokenize(prompt: str, *, return_tensors: str) -> dict[str, object]:
+        del prompt, return_tensors
+        return {"input_ids": [[1]]}
+
+    def generate(model, tokenizer, device, payload, torch, **kwargs):
+        del model, tokenizer, device, payload, torch
+        captured.update(kwargs)
+        return {"ok": True, "past_key_values": dynamic_cache}
+
+    runtime = {"model": object(), "tokenizer": tokenize, "device": "cuda", "torch": object()}
+    with (
+        patch("profiles.qwen2_kv_runtime._new_dynamic_cache", return_value=dynamic_cache),
+        patch("profiles.qwen2_kv_runtime._invoke_generate_decode", side_effect=generate),
+    ):
+        qwen2_kv_runtime._run_full_request(runtime, {"prompt": "first"}, worker_mode="persistent")
+
+    assert captured["past_key_values"] is dynamic_cache
+
+
+def test_real_full_request_offsets_reused_cache_attention_mask_and_positions() -> None:
+    class Cache:
+        @staticmethod
+        def get_seq_length() -> int:
+            return 3
+
+    class Tensor:
+        def __init__(self, values: list[int]) -> None:
+            self.values = values
+            self.shape = (1, len(values))
+            self.dtype = "long"
+            self.device = "cuda"
+
+        def tolist(self) -> list[list[int]]:
+            return [self.values]
+
+    class Torch:
+        @staticmethod
+        def ones(shape, *, dtype, device) -> Tensor:
+            assert dtype == "long"
+            assert device == "cuda"
+            return Tensor([1] * shape[-1])
+
+        @staticmethod
+        def cat(values, *, dim) -> Tensor:
+            assert dim == -1
+            return Tensor([value for tensor in values for value in tensor.values])
+
+        @staticmethod
+        def arange(start, end, *, device) -> list[int]:
+            assert device == "cuda"
+            return list(range(start, end))
+
+    captured: dict[str, object] = {}
+
+    def tokenize(prompt: str, *, return_tensors: str) -> dict[str, Tensor]:
+        assert prompt == "\nUser: second\nAssistant:"
+        assert return_tensors == "pt"
+        return {"input_ids": Tensor([11, 12]), "attention_mask": Tensor([1, 1])}
+
+    def generate(model, tokenizer, device, payload, torch, **kwargs):
+        del model, tokenizer, device, payload, torch
+        captured.update(kwargs)
+        return {"ok": True, "past_key_values": Cache()}
+
+    runtime = {"model": object(), "tokenizer": tokenize, "device": "cuda", "torch": Torch()}
+    payload = {"prompt": "\nUser: second\nAssistant:", "_runtime_reusable_cache": Cache()}
+
+    with patch("profiles.qwen2_kv_runtime._invoke_generate_decode", side_effect=generate):
+        qwen2_kv_runtime._run_full_request(runtime, payload, worker_mode="persistent")
+
+    inputs = captured["tokenized_inputs"]
+    assert inputs["attention_mask"].tolist() == [[1, 1, 1, 1, 1]]
+    assert inputs["cache_position"] == [3, 4]
 
 
 def test_policy_csv_rows_persist_session27_diagnostic_provenance() -> None:
