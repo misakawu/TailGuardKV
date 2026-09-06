@@ -47,6 +47,13 @@ def build_policies(
         elif name == "quality_oracle":
             policies.append(QualityOraclePolicy(oracle_measurements, profiles, epsilon, delta, exact_profiles))
         elif name == "utility_dynamic":
+            retired_options = sorted({"memory_weight", "loss_weight"}.intersection(options))
+            if retired_options:
+                raise ValueError(
+                    "utility_dynamic 不再支持 "
+                    f"{', '.join(retired_options)}：实验已迁移到 fixed formula，"
+                    "避免旧权重配置被静默忽略。"
+                )
             policies.append(
                 UtilityDynamicPolicy(
                     calibration_measurements,

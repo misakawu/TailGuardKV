@@ -6,6 +6,7 @@ from policies.static_best import StaticBestPolicy
 from policies.static_safe import StaticSafePolicy
 from policies.uncalibrated_dynamic import UncalibratedDynamicPolicy
 from policies.utility_dynamic import UtilityDynamicPolicy
+from policies.registry import build_policies
 from run_util.core_types import CacheState, DeviceState, ProfileMeasurement, Request
 
 
@@ -76,6 +77,20 @@ def test_static_best_uses_merged_calibration_p95_point_estimates() -> None:
     assert policy.decide(_request(), CacheState(), DeviceState()).profile == "lossy_steady"
 
 
+def test_static_best_keeps_exact_when_exact_merged_p95_ttft_is_infinite() -> None:
+    calibration = [
+        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=float("inf")),
+        _measurement("c2", "full_gpu", loss=0.0, ttft_ms=float("inf")),
+        _measurement("c1", "lossy_fast", loss=0.01, ttft_ms=10.0),
+        _measurement("c2", "lossy_fast", loss=0.01, ttft_ms=10.0),
+    ]
+    policy = StaticBestPolicy(
+        calibration, ["full_gpu", "lossy_fast"], 0.05, 0.05, {"full_gpu"}
+    )
+
+    assert policy.decide(_request(), CacheState(), DeviceState()).profile == "full_gpu"
+
+
 def test_static_safe_records_primary_lossy_profile_when_conformal_guard_falls_back() -> None:
     calibration = [
         _measurement("c1", "full_gpu", loss=0.0, ttft_ms=100.0),
@@ -138,3 +153,26 @@ def test_utility_dynamic_updates_one_global_dual_variable_between_decisions() ->
     assert first.profile == "lossy_fast_unsafe"
     assert policy.dual_lambda == pytest.approx(0.4573223304703363)
     assert second.profile == "lossy_slow_safe"
+
+
+def test_registry_rejects_retired_utility_dynamic_weights() -> None:
+    calibration = [
+        _measurement("c1", "full_gpu", loss=0.0, ttft_ms=100.0),
+        _measurement("c1", "lossy", loss=0.01, ttft_ms=10.0),
+    ]
+
+    with pytest.raises(ValueError) as error:
+        build_policies(
+            [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 0.0}],
+            calibration,
+            calibration,
+            ["full_gpu", "lossy"],
+            0.05,
+            0.05,
+            {"full_gpu"},
+        )
+
+    message = str(error.value)
+    assert "memory_weight" in message
+    assert "loss_weight" in message
+    assert "fixed formula" in message

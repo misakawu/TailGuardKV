@@ -235,7 +235,12 @@ class StatsPolicy(Policy):
 
         fastest_exact = self._fastest_exact_profile()
         exact_ttft = self._ttft_or_inf(fastest_exact)
-        if fastest_lossy and fastest_lossy_ttft <= 0.95 * exact_ttft:
+        if (
+            fastest_lossy
+            and isfinite(fastest_lossy_ttft)
+            and isfinite(exact_ttft)
+            and fastest_lossy_ttft <= 0.95 * exact_ttft
+        ):
             return fastest_lossy
         return fastest_exact
 

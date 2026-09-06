@@ -547,8 +547,6 @@ def test_utility_dynamic_uses_cache_state_for_memory_filtering() -> None:
         delta=0.05,
         exact_profiles={"full_cpu"},
         memory_budget_mib=25.0,
-        memory_weight=0.0,
-        loss_weight=0.0,
     )
     request = Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1)
     cache_state = CacheState().with_session_turn(

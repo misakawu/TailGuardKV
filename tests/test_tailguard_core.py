@@ -3049,7 +3049,7 @@ class TailGuardCoreTest(unittest.TestCase):
         self.assertEqual(action.profile, "full_gpu")
         self.assertEqual(action.fallback_reason, "calibrated unsafe")
 
-    def test_utility_dynamic_uses_configured_utility_weights(self) -> None:
+    def test_utility_dynamic_uses_fixed_normalized_formula(self) -> None:
         rows = [
             _measurement("c1", "full_gpu", 0.0, ttft_ms=30.0, peak_memory_mib=10.0),
             _measurement("c1", "kivi_4bit", 0.1, ttft_ms=5.0, peak_memory_mib=100.0),
@@ -3058,7 +3058,7 @@ class TailGuardCoreTest(unittest.TestCase):
             _measurement("c2", "h2o_heavy_hitter", 0.12, ttft_ms=9.0, peak_memory_mib=10.0),
         ]
         [policy] = build_policies(
-            [{"type": "utility_dynamic", "memory_weight": 1.0, "loss_weight": 1.0}],
+            ["utility_dynamic"],
             rows,
             rows,
             ["full_gpu", "kivi_4bit", "h2o_heavy_hitter"],
@@ -3124,7 +3124,7 @@ class TailGuardCoreTest(unittest.TestCase):
             _measurement("c2", "h2o_heavy", 0.01, ttft_ms=6.0),
         ]
         [policy] = build_policies(
-            [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 0.0}],
+            ["utility_dynamic"],
             rows,
             rows,
             ["full_gpu", "kivi_4bit", "h2o_heavy"],
@@ -3168,7 +3168,7 @@ class TailGuardCoreTest(unittest.TestCase):
             _measurement("c2", "kivi_4bit_residual32", 0.5, ttft_ms=1.0),
         ]
         [policy] = build_policies(
-            [{"type": "utility_dynamic", "memory_weight": 0.0, "loss_weight": 0.0}],
+            ["utility_dynamic"],
             rows,
             rows,
             ["full_gpu", "kivi_4bit_residual32"],
