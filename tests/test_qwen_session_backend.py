@@ -3,13 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from backends.qwen_session import OnlineQwenSessionBackend
+from profiles.base import PersistentWorkerFatalError
 from profiles.full import FullKVAdapter
 from profiles.kivi import KIVIAdapter
 from profiles import qwen2_kv_runtime
-from run_util.core_types import Action, CacheState, Request
-from run_util.run_policies import _configured_backend_name, _load_online_evaluation_requests
+from run_util.canonical_history import canonical_history_hash
+from run_util.core_types import Action, CacheState, PolicyRunRecord, Request
+from run_util.run_policies import (
+    _configured_backend_name,
+    _load_online_evaluation_requests,
+    _policy_rows_with_provenance,
+)
 
 
 class FakeOnlineWorker:
@@ -109,7 +116,12 @@ def test_same_profile_consecutive_turn_reuses_resident_kv_and_fixture_history() 
     assert second.extra["event_kind"] == "resident"
     run_messages = [message for message in workers["full"].messages if message.get("requests")]
     assert len(run_messages) == 2
-    assert run_messages[1]["requests"][0]["prompt"] == second_request.effective_prompt
+    assert run_messages[1]["requests"][0]["execution_mode"] == "online_actual_outputs_v1"
+    assert run_messages[1]["requests"][0]["prompt"] == "\nUser: follow up\nAssistant:"
+    assert run_messages[1]["requests"][0]["history_turns"] == [
+        "User: hello",
+        "Assistant: generated:s1_t0",
+    ]
 
 
 def test_incompatible_profile_switch_records_online_recompute() -> None:
@@ -199,6 +211,96 @@ def test_failed_profile_switch_does_not_resurrect_released_runtime_state() -> No
     assert backend.cache_state.get_dropped_kv("s1") == 10.0
 
 
+def test_worker_transport_failure_invalidates_all_resident_runtime_state() -> None:
+    class Worker(FakeOnlineWorker):
+        def request(self, message: dict[str, object], *, timeout_s: int) -> dict[str, object]:
+            requests = list(message.get("requests") or [])
+            if requests and requests[0]["request_id"] == "s1_t1":
+                raise RuntimeError("worker exited")
+            return super().request(message, timeout_s=timeout_s)
+
+    worker = Worker({"s1_t0": 10.0})
+    backend = OnlineQwenSessionBackend(
+        adapters=[FullKVAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+        global_budget_mib=100.0,
+        worker_factory=lambda **kwargs: worker,
+    )
+    backend.execute(
+        Request("s1_t0", "chat", "one", session_id="s1", arrival_index=0),
+        Action("full_gpu"),
+        CacheState(global_budget_mib=100.0),
+    )
+
+    failed = backend.execute(
+        Request("s1_t1", "chat", "next", session_id="s1", turn_index=1, arrival_index=1),
+        Action("full_gpu"),
+        backend.cache_state,
+    )
+
+    assert failed.ok is False
+    assert failed.evicted_kv_mib == 10.0
+    assert failed.extra["event_reason"] == "worker_state_lost"
+    assert backend.cache_state.get_resident_kv("s1", "full_gpu") == 0.0
+    assert backend.cache_state.get_dropped_kv("s1") == 10.0
+
+
+def test_fatal_worker_exception_without_measurement_invalidates_residents_before_return() -> None:
+    class FatalAdapter(FullKVAdapter):
+        def profile_many(self, requests, profile_name, **kwargs):
+            if requests[0].request_id == "s1_t1":
+                raise PersistentWorkerFatalError("worker exited before response", [])
+            return super().profile_many(requests, profile_name, **kwargs)
+
+    worker = FakeOnlineWorker({"s1_t0": 10.0})
+    backend = OnlineQwenSessionBackend(
+        adapters=[FatalAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+        global_budget_mib=100.0,
+        worker_factory=lambda **kwargs: worker,
+    )
+    backend.execute(
+        Request("s1_t0", "chat", "one", session_id="s1", arrival_index=0),
+        Action("full_gpu"),
+        CacheState(global_budget_mib=100.0),
+    )
+
+    failed = backend.execute(
+        Request("s1_t1", "chat", "next", session_id="s1", turn_index=1, arrival_index=1),
+        Action("full_gpu"),
+        backend.cache_state,
+    )
+
+    assert failed.ok is False
+    assert failed.evicted_kv_mib == 10.0
+    assert failed.extra["event_reason"] == "worker_state_lost"
+    assert failed.extra["cache_events"][0]["event_reason"] == "worker_state_lost"
+    assert backend.cache_state.get_resident_kv("s1", "full_gpu") == 0.0
+
+
+def test_profile_transition_wall_time_is_included_in_online_ttft_latency_and_recompute() -> None:
+    times = iter((0.0, 0.0, 10.0, 25.0, 30.0, 30.0, 40.0, 55.0))
+    backend, _ = _backend({"s1_t0": 10.0, "s1_t1": 6.0})
+    backend._clock = lambda: next(times)
+
+    first = backend.execute(
+        Request("s1_t0", "chat", "one", session_id="s1", arrival_index=0),
+        Action("full_gpu"),
+        CacheState(global_budget_mib=100.0),
+    )
+    switched = backend.execute(
+        Request("s1_t1", "chat", "next", session_id="s1", turn_index=1, arrival_index=1),
+        Action("kivi_4bit_residual32"),
+        backend.cache_state,
+    )
+
+    assert first.extra["runtime_transition_ms"] == 7.0
+    assert first.latency_ms == 15.0
+    assert first.ttft_ms == 10.0
+    assert switched.extra["runtime_transition_ms"] == 7.0
+    assert switched.latency_ms == 15.0
+    assert switched.ttft_ms == 10.0
+    assert switched.recompute_ms == 9.5
+
+
 def test_session27_selects_online_backend_but_legacy_configs_remain_explicit_replay() -> None:
     assert _configured_backend_name({"policies": {"backend": "online_qwen"}}) == "online_qwen"
     assert _configured_backend_name({"policies": {"backend": "measured_replay"}}) == "measured_replay"
@@ -265,3 +367,104 @@ def test_qwen_worker_cache_control_removes_resident_session_entry() -> None:
     assert result["evicted_sessions"] == ["s1"]
     assert worker_state["runtime"]["session_reuse"] == {}
     assert entry == {}
+
+
+def test_qwen_worker_reuses_cache_for_validated_actual_online_history() -> None:
+    cache0, cache1 = object(), object()
+    attached: list[dict[str, object]] = []
+    runtime = {"session_reuse": {}}
+
+    def run_request(runtime_arg, payload, *, worker_mode):
+        del runtime_arg, worker_mode
+        attached.append(payload)
+        turn = int(payload["turn_index"])
+        return {
+            "ok": True,
+            "measured": True,
+            "output_text": f"answer{turn}",
+            "latency_ms": 8.0,
+            "ttft_ms": 3.0,
+            "stage_prefill_ms": 2.0,
+            "peak_memory_mib": 10.0 + turn,
+            "kv_cache_memory_mib": 10.0 + turn,
+            "resident_memory_mib": 10.0 + turn,
+            "runtime_cache": cache0 if turn == 0 else cache1,
+        }
+
+    worker_state: dict[str, object] = {}
+    qwen2_kv_runtime.worker_init({"adapter": "full", "runtime_config": {}}, worker_state)
+    first_payload = {
+        "profile": "full_gpu",
+        "requests": [{
+            "request_id": "s1_t0", "profile": "full_gpu", "session_id": "s1", "turn_index": 0,
+            "prompt": "User: first\nAssistant:", "turn_prompt": "first", "history_turns": [],
+            "execution_mode": "online_actual_outputs_v1", "online_history_hash": canonical_history_hash([]),
+            "online_cache_reuse_expected": False,
+        }],
+        "session_runtime_state": {"sessions": {}},
+    }
+    second_history = ["User: first", "Assistant: answer0"]
+    second_payload = {
+        "profile": "full_gpu",
+        "requests": [{
+            "request_id": "s1_t1", "profile": "full_gpu", "session_id": "s1", "turn_index": 1,
+            "prompt": "\nUser: second\nAssistant:", "turn_prompt": "second", "history_turns": second_history,
+            "execution_mode": "online_actual_outputs_v1", "online_history_hash": canonical_history_hash(second_history),
+            "online_cache_reuse_expected": True,
+        }],
+    }
+
+    with (
+        patch("profiles.qwen2_kv_runtime._prepare_full_runtime", return_value=runtime),
+        patch("profiles.qwen2_kv_runtime._run_full_request", side_effect=run_request),
+    ):
+        first = qwen2_kv_runtime.worker_run_batch(first_payload, worker_state)
+        second_payload["session_runtime_state"] = first["session_runtime_state"]
+        second = qwen2_kv_runtime.worker_run_batch(second_payload, worker_state)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert attached[1]["_runtime_reusable_cache"] is cache0
+    assert attached[1]["_runtime_cache_rebuild_reason"] == ""
+
+
+def test_real_full_request_passes_attached_online_cache_to_generate() -> None:
+    cache = object()
+    captured: dict[str, object] = {}
+
+    def tokenize(prompt: str, *, return_tensors: str) -> dict[str, object]:
+        assert return_tensors == "pt"
+        return {"input_ids": [[len(prompt)]]}
+
+    def generate(model, tokenizer, device, payload, torch, **kwargs):
+        del model, tokenizer, device, payload, torch
+        captured.update(kwargs)
+        return {"ok": True, "past_key_values": object()}
+
+    runtime = {"model": object(), "tokenizer": tokenize, "device": "cuda", "torch": object()}
+    payload = {"prompt": "\nUser: second\nAssistant:", "_runtime_reusable_cache": cache}
+
+    with patch("profiles.qwen2_kv_runtime._invoke_generate_decode", side_effect=generate):
+        result = qwen2_kv_runtime._run_full_request(runtime, payload, worker_mode="persistent")
+
+    assert captured["past_key_values"] is cache
+    assert result["cache_reused"] is True
+
+
+def test_policy_csv_rows_persist_session27_diagnostic_provenance() -> None:
+    record = PolicyRunRecord(
+        policy="full_lru",
+        request_id="s1_t0",
+        action_profile="full_gpu",
+        ok=True,
+        measured=True,
+    )
+
+    [row] = _policy_rows_with_provenance(
+        [record],
+        {"data": {"diagnostic_only": True}},
+    )
+
+    assert row["diagnostic_only"] is True
+    assert row["quality_status"] == "risk_evidence_insufficient"
+    assert row["violation_status"] == "risk_evidence_insufficient"

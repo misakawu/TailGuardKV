@@ -234,6 +234,21 @@ def _active_session_count(extra: dict[str, object]) -> float | None:
     return None
 
 
+def _policy_rows_with_provenance(records: list[PolicyRunRecord], config: dict) -> list[dict[str, object]]:
+    data_config = config.get("data", {})
+    diagnostic_only = bool(data_config.get("diagnostic_only", False)) if isinstance(data_config, dict) else False
+    risk_status = "risk_evidence_insufficient" if diagnostic_only else ""
+    return [
+        {
+            **record.to_row(),
+            "diagnostic_only": diagnostic_only,
+            "quality_status": risk_status,
+            "violation_status": risk_status,
+        }
+        for record in records
+    ]
+
+
 def _run_policy_matrix(
     policies: list[Policy],
     replay_requests: list[Request],
@@ -334,7 +349,7 @@ def run_policies(args: argparse.Namespace) -> int:
             close()
 
     try:
-        write_csv(Path(output), [record.to_row() for record in records])
+        write_csv(Path(output), _policy_rows_with_provenance(records, config))
         validate_experiment_policy_records(records, experiment_type, output)
         summary = MetricCollector().summarize_policy_runs(
             records,

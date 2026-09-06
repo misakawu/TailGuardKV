@@ -8,6 +8,7 @@ import subprocess
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -466,22 +467,32 @@ def qwen2_kv_profile_many_measurements(
             pythonpath=pythonpath,
         )
     if error is not None:
+        failure_extra = {"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})}
+        if persistent_worker is not None:
+            failure_extra["worker_state_lost"] = "true"
         return _worker_failure_measurements(
             adapter,
             request_list,
             spec,
             error,
-            {"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
+            failure_extra,
         )
     _update_session_runtime_container(session_runtime, result)
-    return _measurements_from_batch_result(
-        adapter,
-        request_list,
-        spec,
-        proc,
-        result,
-        default_extra={"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
-    )
+    try:
+        return _measurements_from_batch_result(
+            adapter,
+            request_list,
+            spec,
+            proc,
+            result,
+            default_extra={"backend": "qwen2_kv_runtime", "env": env_name, "model": model_name, **(extra or {})},
+        )
+    except PersistentWorkerFatalError as exc:
+        exc.measurements[:] = [
+            replace(measurement, extra={**measurement.extra, "worker_state_lost": "true"})
+            for measurement in exc.measurements
+        ]
+        raise
 
 
 def qwen2_exact_profile_many_measurements(
@@ -545,22 +556,32 @@ def qwen2_exact_profile_many_measurements(
             pythonpath=pythonpath,
         )
     if error is not None:
+        failure_extra = {"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})}
+        if persistent_worker is not None:
+            failure_extra["worker_state_lost"] = "true"
         return _worker_failure_measurements(
             adapter,
             request_list,
             spec,
             error,
-            {"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})},
+            failure_extra,
         )
     _update_session_runtime_container(session_runtime, result)
-    return _measurements_from_batch_result(
-        adapter,
-        request_list,
-        spec,
-        proc,
-        result,
-        default_extra={"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})},
-    )
+    try:
+        return _measurements_from_batch_result(
+            adapter,
+            request_list,
+            spec,
+            proc,
+            result,
+            default_extra={"backend": "qwen2_exact_runtime", "env": env_name, "model": model_name, **(extra or {})},
+        )
+    except PersistentWorkerFatalError as exc:
+        exc.measurements[:] = [
+            replace(measurement, extra={**measurement.extra, "worker_state_lost": "true"})
+            for measurement in exc.measurements
+        ]
+        raise
 
 
 def transformers_profile_measurement(
@@ -821,6 +842,8 @@ def _qwen2_payload(
     *,
     memory_budget_mib: float | None = None,
 ) -> dict[str, object]:
+    execution_mode = str(request.metadata.get("execution_mode") or "append")
+    online_mode = execution_mode == "online_actual_outputs_v1"
     return {
         "request_id": request.request_id,
         "task": request.task,
@@ -829,12 +852,15 @@ def _qwen2_payload(
         "prompt": request.effective_prompt,
         "session_id": request.session_id,
         "turn_index": request.turn_index,
-        "history_turns": list(request.history_turns),
+        "turn_prompt": request.metadata.get("turn_prompt") if online_mode else request.prompt,
+        "history_turns": list(request.metadata.get("online_history_turns") or ()) if online_mode else list(request.history_turns),
+        "online_history_hash": request.metadata.get("online_history_hash") if online_mode else None,
+        "online_cache_reuse_expected": bool(request.metadata.get("online_cache_reuse_expected")) if online_mode else False,
         "canonical_history": request.metadata.get("canonical_history"),
         "canonical_history_hash": request.metadata.get("canonical_history_hash"),
         "canonical_history_mode": request.metadata.get("canonical_history_mode"),
         "canonical_history_source_profile": request.metadata.get("canonical_history_source_profile"),
-        "execution_mode": "append",
+        "execution_mode": execution_mode,
         "memory_budget_mib": runtime_config.get("memory_budget_mib") if memory_budget_mib is None else memory_budget_mib,
         "max_new_tokens": int(runtime_config.get("max_new_tokens", 16)),
         "cache_dir": runtime_config.get("model_cache_dir"),

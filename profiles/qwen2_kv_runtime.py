@@ -384,6 +384,7 @@ def _prepare_h2o_runtime(payload: dict[str, Any], *, worker_start: float) -> dic
 
 
 def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worker_mode: str) -> dict[str, Any]:
+    reusable_cache = payload.get("_runtime_reusable_cache")
     cached_ids = payload.get("_runtime_cached_prompt_token_ids")
     tokenized = runtime["tokenizer"](str(payload.get("prompt") or ""), return_tensors="pt")
     if isinstance(cached_ids, list):
@@ -394,13 +395,20 @@ def _run_full_request(runtime: dict[str, Any], payload: dict[str, Any], *, worke
         runtime["device"],
         payload,
         runtime["torch"],
-        past_key_values=payload.get("_runtime_reusable_cache"),
+        past_key_values=reusable_cache,
         tokenized_inputs=tokenized,
         stage_startup_ms=float(runtime.get("startup_ms") or 0.0),
         stage_model_load_ms=float(runtime.get("model_load_ms") or 0.0),
         worker_mode=worker_mode,
     )
-    result.update({"runtime_cache": result.get("past_key_values"), "runtime_prompt_token_ids": _request_prompt_token_ids(runtime, payload)})
+    result.update(
+        {
+            "runtime_cache": result.get("past_key_values"),
+            "runtime_prompt_token_ids": _request_prompt_token_ids(runtime, payload),
+            "cache_reused": reusable_cache is not None,
+            "cache_rebuild_reason": str(payload.get("_runtime_cache_rebuild_reason") or ""),
+        }
+    )
     return result
 
 
@@ -620,6 +628,8 @@ def _attach_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any])
         return request
     session_reuse = runtime.setdefault("session_reuse", {})
     entry = session_reuse.get(session_id)
+    if _is_online_actual_output_mode(payload):
+        return _attach_online_session_cache(request, payload, entry, cache_key="_runtime_reusable_kivi_cache")
     if not isinstance(entry, dict):
         request["_runtime_cache_rebuild_reason"] = "new_session"
         return request
@@ -660,6 +670,8 @@ def _attach_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> d
         raise ValueError(canonical_error)
     is_canonical = str(payload.get("canonical_history_mode") or "") == CANONICAL_HISTORY_MODE
     entry = runtime.setdefault("session_reuse", {}).get(session_id)
+    if _is_online_actual_output_mode(payload):
+        return _attach_online_session_cache(request, payload, entry, cache_key="_runtime_reusable_cache")
     if not isinstance(entry, dict):
         request["_runtime_cache_rebuild_reason"] = "new_session"
         return request
@@ -684,11 +696,57 @@ def _attach_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> d
 def _update_session_cache(runtime: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> None:
     if not bool(result.get("ok")) or not str(payload.get("session_id") or ""):
         return
-    runtime.setdefault("session_reuse", {})[str(payload["session_id"])] = {
+    entry = {
         "profile": str(payload.get("profile") or ""), "cache": result.get("runtime_cache") or result.get("past_key_values"),
         "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or _request_prompt_token_ids(runtime, payload)),
         "canonical_history_hash": payload.get("canonical_history_hash"), "last_turn": int(payload.get("turn_index") or 0),
     }
+    if _is_online_actual_output_mode(payload):
+        entry["online_history_hash"] = _next_online_history_hash(payload, result)
+    runtime.setdefault("session_reuse", {})[str(payload["session_id"])] = entry
+
+
+def _is_online_actual_output_mode(payload: dict[str, Any]) -> bool:
+    return str(payload.get("execution_mode") or "") == "online_actual_outputs_v1"
+
+
+def _attach_online_session_cache(
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    entry: object,
+    *,
+    cache_key: str,
+) -> dict[str, Any]:
+    history = payload.get("history_turns")
+    if not isinstance(history, list) or not all(isinstance(item, str) for item in history):
+        raise ValueError("online_history_mismatch: history must contain strings")
+    if str(payload.get("online_history_hash") or "") != canonical_history_hash(history):
+        raise ValueError("online_history_mismatch: history hash differs")
+    reuse_expected = bool(payload.get("online_cache_reuse_expected"))
+    if not reuse_expected:
+        request["_runtime_cache_rebuild_reason"] = "new_session"
+        return request
+    if not isinstance(entry, dict):
+        raise ValueError("online_history_mismatch: expected resident cache is missing")
+    if str(entry.get("profile") or "") != str(payload.get("profile") or ""):
+        raise ValueError("online_history_mismatch: cached profile differs")
+    if int(entry.get("last_turn", -1)) != int(payload.get("turn_index") or 0) - 1:
+        raise ValueError("online_history_mismatch: cached turn is not prior turn")
+    if str(entry.get("online_history_hash") or "") != str(payload.get("online_history_hash") or ""):
+        raise ValueError("online_history_mismatch: cached actual history differs")
+    request.update({cache_key: entry.get("cache"), "_runtime_cache_rebuild_reason": ""})
+    return request
+
+
+def _next_online_history_hash(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    history = list(payload.get("history_turns") or ())
+    history.extend(
+        (
+            f"User: {payload.get('turn_prompt') or ''}",
+            f"Assistant: {result.get('output_text') or ''}",
+        )
+    )
+    return canonical_history_hash(history)
 
 
 def _canonical_history_payload_error(payload: dict[str, Any]) -> str:
@@ -721,11 +779,15 @@ def _update_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any],
             _clear_runtime_cache_entry(prior)
             session_reuse.pop(session_id, None)
         return
-    session_reuse[session_id] = {
+    entry = {
         "profile": str(payload.get("profile") or ""),
         "cache": result.get("runtime_cache"),
         "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or []),
+        "last_turn": int(payload.get("turn_index") or 0),
     }
+    if _is_online_actual_output_mode(payload):
+        entry["online_history_hash"] = _next_online_history_hash(payload, result)
+    session_reuse[session_id] = entry
 
 
 def _clear_runtime_cache_entry(entry: dict[str, Any]) -> None:

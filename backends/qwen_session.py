@@ -8,7 +8,8 @@ from threading import Lock
 from typing import Any
 
 from backends.base import Backend
-from profiles.base import ProfileAdapter, create_persistent_profile_worker
+from profiles.base import PersistentWorkerFatalError, ProfileAdapter, create_persistent_profile_worker
+from run_util.canonical_history import canonical_history_hash
 from run_util.core_types import Action, BackendResult, CacheEvent, CacheState, ProfileMeasurement, ProfileSpec, Request
 
 
@@ -26,6 +27,7 @@ class OnlineQwenSessionBackend(Backend):
         adapters: Sequence[ProfileAdapter],
         global_budget_mib: float = inf,
         worker_factory: WorkerFactory = create_persistent_profile_worker,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._adapters: dict[str, ProfileAdapter] = {}
         self._specs: dict[str, ProfileSpec] = {}
@@ -34,7 +36,9 @@ class OnlineQwenSessionBackend(Backend):
             for spec in adapter.profiles():
                 self._specs[spec.name] = spec
         self._worker_factory = worker_factory
+        self._clock = clock or (lambda: time.perf_counter() * 1000.0)
         self._workers: dict[str, Any] = {}
+        self._online_histories: dict[str, list[str]] = {}
         self._loaded_profile: str | None = None
         self._global_budget_mib = float(global_budget_mib) if global_budget_mib > 0 else inf
         self._lock = Lock()
@@ -42,6 +46,7 @@ class OnlineQwenSessionBackend(Backend):
 
     def reset(self) -> None:
         self.close()
+        self._online_histories.clear()
         self.cache_state = CacheState(global_budget_mib=self._global_budget_mib)
 
     def close(self) -> None:
@@ -67,9 +72,9 @@ class OnlineQwenSessionBackend(Backend):
         return results
 
     def execute(self, request: Request, action: Action, cache_state: CacheState) -> BackendResult:
-        queued_at = time.perf_counter()
+        queued_at = self._clock()
         with self._lock:
-            queue_delay_ms = (time.perf_counter() - queued_at) * 1000.0
+            queue_delay_ms = self._clock() - queued_at
             if queue_delay_ms < 0.01:
                 queue_delay_ms = 0.0
             return self._execute_locked(request, action, cache_state, queue_delay_ms)
@@ -84,6 +89,8 @@ class OnlineQwenSessionBackend(Backend):
         profile = action.profile
         if profile not in self._specs:
             raise KeyError(f"online Qwen backend has no profile: {profile}")
+        runtime_transition = self._loaded_profile != profile
+        service_started_at = self._clock()
         cache_state, runtime_victims = self._prepare_profile_runtime(cache_state, profile)
         session_id = request.session_id or request.request_id
         previous_profile = cache_state.get_current_profile(session_id)
@@ -94,14 +101,45 @@ class OnlineQwenSessionBackend(Backend):
         if switched and previous_profile:
             self._evict_runtime_session(previous_profile, session_id)
 
-        measurement = self._measure(request, profile, cache_state)
+        try:
+            measurement = self._measure(request, profile, cache_state)
+        except PersistentWorkerFatalError as exc:
+            if exc.measurements:
+                measurement = replace(
+                    exc.measurements[0],
+                    extra={**exc.measurements[0].extra, "worker_state_lost": "true"},
+                )
+            else:
+                measurement = ProfileMeasurement(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    profile=profile,
+                    adapter=self._specs[profile].family,
+                    ok=False,
+                    measured=False,
+                    error=str(exc),
+                    extra={"worker_state_lost": "true"},
+                )
+        service_elapsed_ms = max(0.0, self._clock() - service_started_at)
+        raw_latency_ms = float(measurement.latency_ms or 0.0)
+        transition_ms = max(0.0, service_elapsed_ms - raw_latency_ms) if runtime_transition else 0.0
         baseline = BackendResult.from_profile_measurement(
             measurement,
             backend_name=self.name,
             replay_source="",
         )
-        runtime_evicted_mib = sum(item[2] for item in runtime_victims)
-        runtime_cache_events = _runtime_release_events(runtime_victims, cache_state)
+        worker_state_lost = str(measurement.extra.get("worker_state_lost") or "").lower() == "true"
+        state_lost_victims: list[tuple[str, str, float]] = []
+        if worker_state_lost:
+            cache_state, state_lost_victims = _invalidate_all_residents(cache_state)
+            self.close()
+        invalidated = [*runtime_victims, *state_lost_victims]
+        runtime_evicted_mib = sum(item[2] for item in invalidated)
+        runtime_cache_events = [
+            *_runtime_release_events(runtime_victims, cache_state),
+            *_worker_state_lost_events(state_lost_victims, cache_state),
+        ]
         if not baseline.ok:
             self.cache_state = cache_state
             return replace(
@@ -118,12 +156,13 @@ class OnlineQwenSessionBackend(Backend):
                 extra={
                     **baseline.extra,
                     "active_sessions": cache_state.active_sessions,
-                    "event_kind": "evict" if runtime_victims else "failure",
-                    "event_reason": "profile_runtime_released" if runtime_victims else "online_execution_failed",
-                    "victim_session": ",".join(item[0] for item in runtime_victims),
-                    "budget_resolution": "runtime_switch" if runtime_victims else "none",
+                    "event_kind": "evict" if invalidated else "failure",
+                    "event_reason": "worker_state_lost" if worker_state_lost else "profile_runtime_released" if runtime_victims else "online_execution_failed",
+                    "victim_session": ",".join(item[0] for item in invalidated),
+                    "budget_resolution": "worker_state_lost" if worker_state_lost else "runtime_switch" if runtime_victims else "none",
                     "cache_events": runtime_cache_events,
                     "online_source": "persistent_qwen_worker",
+                    "runtime_transition_ms": transition_ms,
                 },
             )
 
@@ -144,7 +183,7 @@ class OnlineQwenSessionBackend(Backend):
         )
         recompute_ms = float(measurement.recompute_ms or 0.0)
         if switched or was_dropped:
-            recompute_ms = max(recompute_ms, float(measurement.extra.get("stage_prefill_ms") or measurement.ttft_ms or 0.0))
+            recompute_ms = max(recompute_ms, float(measurement.extra.get("stage_prefill_ms") or measurement.ttft_ms or 0.0)) + transition_ms
         restore_ms = float(measurement.restore_ms or 0.0)
 
         state = self._record_current(
@@ -197,9 +236,13 @@ class OnlineQwenSessionBackend(Backend):
             "budget_resolution": cache_event.budget_resolution,
             "cache_events": cache_events,
             "online_source": "persistent_qwen_worker",
+            "runtime_transition_ms": transition_ms,
         }
+        self._record_online_output(request, measurement.output_text)
         return replace(
             baseline,
+            latency_ms=None if baseline.latency_ms is None else baseline.latency_ms + transition_ms,
+            ttft_ms=None if baseline.ttft_ms is None else baseline.ttft_ms + transition_ms,
             kv_cache_memory_mib=resident_after,
             resident_memory_mib=resident_after,
             kv_incremental_mib=max(0.0, measured_resident - resident_before),
@@ -221,14 +264,42 @@ class OnlineQwenSessionBackend(Backend):
         adapter = self._adapters[spec.family]
         worker = self._worker(adapter)
         runtime_state = {"state": _runtime_state_payload(cache_state)}
+        execution_request = self._online_execution_request(request, profile, cache_state)
         return adapter.profile_many(
-            [request],
+            [execution_request],
             profile,
             dry_run=False,
             session_runtime=runtime_state,
             memory_budget_mib=None,
             persistent_worker=worker,
         )[0]
+
+    def _online_execution_request(self, request: Request, profile: str, cache_state: CacheState) -> Request:
+        session_id = request.session_id or request.request_id
+        if request.turn_index == 0:
+            self._online_histories[session_id] = []
+        history = list(self._online_histories.get(session_id, ()))
+        reuse_expected = (
+            cache_state.get_current_profile(session_id) == profile
+            and cache_state.get_resident_kv(session_id, profile) > 0
+            and cache_state.get_dropped_kv(session_id) <= 0
+        )
+        turn_prompt = f"User: {request.prompt}\nAssistant:"
+        prompt = f"\n{turn_prompt}" if reuse_expected else "\n".join([*history, turn_prompt])
+        metadata = {
+            **request.metadata,
+            "execution_mode": "online_actual_outputs_v1",
+            "turn_prompt": request.prompt,
+            "online_history_turns": history,
+            "online_history_hash": canonical_history_hash(history),
+            "online_cache_reuse_expected": reuse_expected,
+        }
+        return replace(request, prompt=prompt, history_turns=(), metadata=metadata)
+
+    def _record_online_output(self, request: Request, output_text: str) -> None:
+        session_id = request.session_id or request.request_id
+        history = self._online_histories.setdefault(session_id, [])
+        history.extend((f"User: {request.prompt}", f"Assistant: {output_text}"))
 
     def _worker(self, adapter: ProfileAdapter):
         worker = self._workers.get(adapter.name)
@@ -375,6 +446,42 @@ def _runtime_release_events(
                 kv_mib=kv_mib,
                 victim_session=session_id,
                 budget_resolution="runtime_switch",
+            )
+        )
+        for session_id, profile, kv_mib in victims
+    ]
+
+
+def _invalidate_all_residents(state: CacheState) -> tuple[CacheState, list[tuple[str, str, float]]]:
+    next_state = state
+    invalidated: list[tuple[str, str, float]] = []
+    for session_id in state.active_sessions:
+        profile = next_state.get_current_profile(session_id)
+        if not profile:
+            continue
+        resident_mib = next_state.get_resident_kv(session_id, profile)
+        if resident_mib <= 0:
+            continue
+        invalidated.append((session_id, profile, resident_mib))
+        next_state = _drop_session(next_state, session_id, profile, resident_mib)
+    return next_state, invalidated
+
+
+def _worker_state_lost_events(
+    victims: list[tuple[str, str, float]],
+    state: CacheState,
+) -> list[dict[str, object]]:
+    return [
+        asdict(
+            CacheEvent(
+                event_kind="evict",
+                event_reason="worker_state_lost",
+                session_id=session_id,
+                profile=profile,
+                turn_index=state.session_last_turn_index.get(session_id, 0),
+                kv_mib=kv_mib,
+                victim_session=session_id,
+                budget_resolution="worker_state_lost",
             )
         )
         for session_id, profile, kv_mib in victims
