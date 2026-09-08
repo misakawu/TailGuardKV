@@ -300,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="configs/pilot_diagnostic_session27.yaml")
     parser.add_argument("--fixture", default="data/fixtures/diagnostic_session27.jsonl")
     parser.add_argument("--run-root", default="")
-    parser.add_argument("--sessions-per-batch", type=int, default=3)
+    parser.add_argument("--sessions-per-batch", type=int, default=2)
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--budgets-limit", type=int, default=4)
     parser.add_argument("--skip-profiles", action="store_true")

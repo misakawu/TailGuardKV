@@ -504,16 +504,15 @@ def _release_runtime_resources(runtime: dict[str, Any]) -> None:
     session_reuse = runtime.pop("session_reuse", None)
     if isinstance(session_reuse, dict):
         for cached in session_reuse.values():
-            cache = cached.get("cache") if isinstance(cached, dict) else None
-            if isinstance(cache, KIVICache):
-                cache.clear()
+            if isinstance(cached, dict):
+                _clear_runtime_cache_entry(cached)
         session_reuse.clear()
     torch = runtime.get("torch")
     # Drop strong references before empty_cache so CUDA memory can actually be reclaimed.
     for key in ("model", "tokenizer", "device", "modules", "tracker"):
         runtime.pop(key, None)
     if torch is not None:
-        _release_runtime_cuda_resources(torch, *(session_reuse.values() if isinstance(session_reuse, dict) else ()))
+        _release_runtime_cuda_resources(torch)
     runtime.clear()
 
 
@@ -597,9 +596,8 @@ def _evict_worker_sessions(worker_state: dict[str, Any], raw_sessions: object) -
         evicted.append(session_id)
     if evicted:
         torch = runtime.get("torch")
-        cuda = getattr(torch, "cuda", None)
-        if cuda is not None and cuda.is_available():
-            cuda.empty_cache()
+        if torch is not None:
+            _release_runtime_cuda_resources(torch)
     return evicted
 
 
@@ -737,16 +735,18 @@ def _attach_session_cache(runtime: dict[str, Any], payload: dict[str, Any]) -> d
 
 
 def _update_session_cache(runtime: dict[str, Any], payload: dict[str, Any], result: dict[str, Any]) -> None:
-    if not bool(result.get("ok")) or not str(payload.get("session_id") or ""):
+    session_id = str(payload.get("session_id") or "")
+    if not bool(result.get("ok")):
         return
     entry = {
-        "profile": str(payload.get("profile") or ""), "cache": result.get("runtime_cache") or result.get("past_key_values"),
+        "profile": str(payload.get("profile") or ""),
+        "cache": _pop_result_runtime_cache(result),
         "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or _request_prompt_token_ids(runtime, payload)),
         "canonical_history_hash": payload.get("canonical_history_hash"), "last_turn": int(payload.get("turn_index") or 0),
     }
     if _is_online_actual_output_mode(payload):
         entry["online_history_hash"] = _next_online_history_hash(payload, result)
-    runtime.setdefault("session_reuse", {})[str(payload["session_id"])] = entry
+    _store_or_release_session_cache(runtime, payload, session_id, entry)
 
 
 def _is_online_actual_output_mode(payload: dict[str, Any]) -> bool:
@@ -824,7 +824,7 @@ def _update_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any],
         return
     entry = {
         "profile": str(payload.get("profile") or ""),
-        "cache": result.get("runtime_cache"),
+        "cache": _pop_result_runtime_cache(result),
         "prompt_token_ids": list(result.get("runtime_prompt_token_ids") or []),
         "last_turn": int(payload.get("turn_index") or 0),
     }
@@ -834,9 +834,47 @@ def _update_kivi_session_cache(runtime: dict[str, Any], payload: dict[str, Any],
 
 
 def _clear_runtime_cache_entry(entry: dict[str, Any]) -> None:
-    cache = entry.get("cache")
-    if isinstance(cache, KIVICache):
-        cache.clear()
+    cache = entry.pop("cache", None)
+    if hasattr(cache, "clear"):
+        try:
+            cache.clear()
+        except Exception:
+            pass
+    entry.clear()
+
+
+def _can_retain_session_cache(payload: dict[str, Any]) -> bool:
+    return _is_online_actual_output_mode(payload) or (
+        str(payload.get("canonical_history_mode") or "") == CANONICAL_HISTORY_MODE
+    )
+
+
+def _pop_result_runtime_cache(result: dict[str, Any]) -> Any:
+    cache = result.pop("runtime_cache", None)
+    fallback = result.pop("past_key_values", None)
+    return cache if cache is not None else fallback
+
+
+def _store_or_release_session_cache(
+    runtime: dict[str, Any],
+    payload: dict[str, Any],
+    session_id: str,
+    entry: dict[str, Any],
+) -> None:
+    session_reuse = runtime.setdefault("session_reuse", {})
+    prior = session_reuse.get(session_id)
+    if not session_id or not _can_retain_session_cache(payload):
+        if isinstance(prior, dict):
+            _clear_runtime_cache_entry(prior)
+            session_reuse.pop(session_id, None)
+        _clear_runtime_cache_entry(entry)
+        torch = runtime.get("torch")
+        if torch is not None:
+            _release_runtime_cuda_resources(torch)
+        return
+    if isinstance(prior, dict) and prior.get("cache") is not entry.get("cache"):
+        _clear_runtime_cache_entry(prior)
+    session_reuse[session_id] = entry
 
 
 def _request_prompt_token_ids(runtime: dict[str, Any], payload: dict[str, Any]) -> list[int]:

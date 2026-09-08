@@ -430,6 +430,13 @@ def build_profile_table(args: argparse.Namespace) -> int:
                                 persistent_worker = create_persistent_worker(adapter, worker_runtime)
                                 persistent_worker_binding = worker_binding
                         session_runtime = session_runtime_by_profile.setdefault(spec.name, {})
+                        remaining_requests_by_session: dict[str, int] = {}
+                        for request in requests:
+                            session_id = str(getattr(request, "session_id", "") or "")
+                            if session_id:
+                                remaining_requests_by_session[session_id] = (
+                                    remaining_requests_by_session.get(session_id, 0) + 1
+                                )
                         for chunk_index, request_chunk in _request_chunks(requests, profile_chunk_size):
                             try:
                                 raw_measurements = _profile_many_compat(
@@ -481,6 +488,34 @@ def build_profile_table(args: argparse.Namespace) -> int:
                                 return 2
                             measurements = updated
                             _append_profile_rows(output_path, [measurement.to_row() for measurement in chunk_measurements])
+                            completed_session_ids: list[str] = []
+                            for request in request_chunk:
+                                session_id = str(getattr(request, "session_id", "") or "")
+                                if not session_id:
+                                    continue
+                                remaining_requests_by_session[session_id] -= 1
+                                if remaining_requests_by_session[session_id] == 0:
+                                    completed_session_ids.append(session_id)
+                            evict_sessions = getattr(persistent_worker, "evict_sessions", None)
+                            if completed_session_ids and callable(evict_sessions):
+                                try:
+                                    eviction = evict_sessions(completed_session_ids)
+                                    if not bool(eviction.get("ok")):
+                                        raise RuntimeError(f"invalid eviction response: {eviction!r}")
+                                except Exception as exc:
+                                    close = getattr(persistent_worker, "close", None)
+                                    if callable(close):
+                                        close()
+                                    diagnostic_output = _failed_chunks_output(output)
+                                    write_csv(diagnostic_output, [measurement.to_row() for measurement in chunk_measurements])
+                                    print(json.dumps(json_ready({
+                                        "ok": False,
+                                        "output": output,
+                                        "diagnostic_output": str(diagnostic_output),
+                                        "error": f"persistent worker session eviction failed: {type(exc).__name__}: {exc}",
+                                        "failures": failed_measurement_summary(chunk_measurements),
+                                    }), ensure_ascii=False, indent=2))
+                                    return 2
                             completed_requests = min(chunk_index * profile_chunk_size, len(requests))
                             _print_chunk_progress(
                                 adapter=adapter.name,

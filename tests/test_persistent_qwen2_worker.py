@@ -96,6 +96,57 @@ def test_worker_run_batch_reports_fatal_error_and_releases_runtime() -> None:
     release_runtime.assert_called_once()
 
 
+def test_noncanonical_profile_request_releases_its_runtime_cache() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
+    cache = Cache()
+    runtime: dict[str, object] = {"session_reuse": {}}
+    payload = {
+        "session_id": "s1",
+        "profile": "full_gpu",
+        "turn_index": 0,
+        "prompt": "prompt",
+        "history_turns": [],
+    }
+    result = {
+        "ok": True,
+        "runtime_cache": cache,
+        "runtime_prompt_token_ids": [1, 2, 3],
+    }
+
+    qwen2_kv_runtime._update_session_cache(runtime, payload, result)
+
+    assert runtime["session_reuse"] == {}
+    assert cache.cleared is True
+    assert "runtime_cache" not in result
+
+
+def test_persistent_worker_evict_sessions_sends_empty_batch_control() -> None:
+    worker = PersistentProfileWorker(
+        adapter="full",
+        env_name="tailguardkv-base",
+        runtime_module="profiles.qwen2_kv_runtime",
+        runtime_config={"timeout_s": 30},
+    )
+
+    with patch.object(worker, "request", return_value={"ok": True, "evicted_sessions": ["s1"]}) as request:
+        result = worker.evict_sessions(["s1"])
+
+    assert result["evicted_sessions"] == ["s1"]
+    assert request.call_args.args[0] == {
+        "op": "run_batch",
+        "adapter": "full",
+        "requests": [],
+        "evict_sessions": ["s1"],
+        "session_runtime_state": {"sessions": {}},
+    }
+
+
 def test_worker_run_batch_reports_binding_diagnostics() -> None:
     worker_state: dict[str, object] = {}
     runtime = {
@@ -167,13 +218,22 @@ def test_persistent_worker_starts_with_env_python_instead_of_conda_run() -> None
 
 
 def test_release_runtime_resources_drops_model_refs_before_empty_cache() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.cleared = False
+
+        def clear(self) -> None:
+            self.cleared = True
+
     class FakeCuda:
-        def __init__(self, runtime: dict[str, object]) -> None:
+        def __init__(self, runtime: dict[str, object], cache: Cache) -> None:
             self.runtime = runtime
+            self.cache = cache
 
         def empty_cache(self) -> None:
             assert "model" not in self.runtime
             assert "tokenizer" not in self.runtime
+            assert self.cache.cleared is True
 
         def synchronize(self, gpu_index: int) -> None:
             del gpu_index
@@ -185,13 +245,14 @@ def test_release_runtime_resources_drops_model_refs_before_empty_cache() -> None
         def is_available(self) -> bool:
             return True
 
+    cache = Cache()
     runtime: dict[str, object] = {
         "model": object(),
         "tokenizer": object(),
         "device": object(),
-        "session_reuse": {},
+        "session_reuse": {"s1": {"cache": cache}},
     }
-    fake_torch = SimpleNamespace(cuda=FakeCuda(runtime))
+    fake_torch = SimpleNamespace(cuda=FakeCuda(runtime, cache))
     runtime["torch"] = fake_torch
 
     qwen2_kv_runtime._release_runtime_resources(runtime)

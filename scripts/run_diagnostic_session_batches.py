@@ -393,7 +393,7 @@ def main() -> int:
     parser.add_argument("--fixture", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-root", required=True)
-    parser.add_argument("--sessions-per-batch", type=int, default=3)
+    parser.add_argument("--sessions-per-batch", type=int, default=2)
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--profile-only", action="store_true", help="只测量 profiles，不跑 policy 实验轨")

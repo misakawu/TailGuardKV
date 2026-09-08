@@ -151,6 +151,19 @@ class PersistentProfileWorker:
             raise RuntimeError(f"persistent worker returned invalid payload: {result!r}")
         return result
 
+    def evict_sessions(self, session_ids: Sequence[str]) -> dict[str, object]:
+        """Release profile-local KV caches for sessions that have no later requests."""
+        return self.request(
+            {
+                "op": "run_batch",
+                "adapter": self.adapter,
+                "requests": [],
+                "evict_sessions": [str(session_id) for session_id in session_ids],
+                "session_runtime_state": {"sessions": {}},
+            },
+            timeout_s=max(30, int(self.runtime_config.get("timeout_s", 180))),
+        )
+
     def close(self) -> None:
         proc = self._proc
         if proc is None:

@@ -1,7 +1,0 @@
-{
-  "errors": [
-    "trace semantics gate failed before policy replay"
-  ],
-  "passed": false,
-  "status": "not_evaluated"
-}

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import scripts.run_diagnostic_session_batches as diagnostic_runner
+import scripts.run_session27_online_sweeps as online_sweeps
 from scripts.run_diagnostic_session_batches import (
     SessionBatch,
     is_diagnostic_gate_failure,
@@ -46,6 +47,46 @@ def test_materialize_session_batches_keeps_complete_sessions_and_arrival_order(t
     assert len(first) == 15
     assert {row["session_id"] for row in first} == {"s0", "s1", "s2"}
     assert [row["arrival_index"] for row in first] == list(range(15))
+
+
+def test_session27_runners_default_to_two_sessions_per_batch(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text("", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    (tmp_path / "run").mkdir()
+    observed: dict[str, int] = {}
+
+    def capture_batch_size(
+        fixture_path: Path,
+        output_root: Path,
+        *,
+        sessions_per_batch: int,
+    ) -> list[SessionBatch]:
+        assert fixture_path == fixture
+        assert output_root == tmp_path / "run" / "fixtures"
+        observed["sessions_per_batch"] = sessions_per_batch
+        return []
+
+    monkeypatch.setattr(diagnostic_runner, "materialize_session_batches", capture_batch_size)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_diagnostic_session_batches.py",
+            "--fixture",
+            str(fixture),
+            "--config",
+            str(config),
+            "--run-root",
+            str(tmp_path / "run"),
+            "--prepare-only",
+        ],
+    )
+
+    assert diagnostic_runner.main() == 0
+    assert observed["sessions_per_batch"] == 2
+    assert online_sweeps.build_parser().parse_args([]).sessions_per_batch == 2
 
 
 def test_validate_batch_output_accepts_complete_measured_profile_coverage(tmp_path: Path) -> None:

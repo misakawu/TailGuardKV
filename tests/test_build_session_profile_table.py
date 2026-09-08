@@ -322,6 +322,95 @@ def test_build_profile_table_uses_persistent_worker_when_enabled(tmp_path: Path)
     assert stub_worker.closed is True
 
 
+def test_build_profile_table_evicts_session_after_its_final_request(tmp_path: Path) -> None:
+    class StubWorker:
+        def __init__(self) -> None:
+            self.evicted_sessions: list[list[str]] = []
+
+        def evict_sessions(self, session_ids):
+            self.evicted_sessions.append(list(session_ids))
+            return {"ok": True, "evicted_sessions": list(session_ids)}
+
+        def close(self) -> None:
+            return None
+
+    class StubAdapter:
+        name = "full"
+        env = "tailguardkv-base"
+
+        def profiles(self):
+            return (ProfileSpec("full_gpu", "full", "tailguardkv-base", lossy=False, exact=True),)
+
+        def profile_many(
+            self,
+            requests,
+            profile_name,
+            dry_run=True,
+            session_runtime=None,
+            memory_budget_mib=None,
+            persistent_worker=None,
+        ):
+            del dry_run, session_runtime, memory_budget_mib, persistent_worker
+            return [
+                ProfileMeasurement(
+                    request_id=request.request_id,
+                    profile=profile_name,
+                    adapter=self.name,
+                    ok=True,
+                    measured=True,
+                    output_text=request.prompt,
+                    latency_ms=1.0,
+                    ttft_ms=1.0,
+                    peak_memory_mib=1.0,
+                    kv_cache_memory_mib=1.0,
+                    resident_memory_mib=1.0,
+                    session_id=request.session_id,
+                    turn_index=request.turn_index,
+                    kv_incremental_mib=1.0,
+                    kv_cumulative_mib=1.0,
+                    resident_kv_mib_before=0.0,
+                    resident_kv_mib_after=1.0,
+                    restore_ms=0.0,
+                    recompute_ms=0.0,
+                    evicted_kv_mib=0.0,
+                    budget_hit=False,
+                    extra={"task": request.task, "length_bucket": "short", "split": "eval"},
+                )
+                for request in requests
+            ]
+
+    worker = StubWorker()
+    requests = [
+        Request("s1_t0", "qa", "one", session_id="s1", turn_index=0, metadata={"split": "eval"}),
+        Request("s2_t0", "qa", "two", session_id="s2", turn_index=0, metadata={"split": "eval"}),
+        Request("s1_t1", "qa", "three", session_id="s1", turn_index=1, metadata={"split": "eval"}),
+    ]
+    with (
+        patch("run_util.build_profile_table.load_config", return_value={"profiles": {"adapters": ["full"], "names": ["full_gpu"]}}),
+        patch("run_util.build_profile_table.config_adapters", return_value=["full"]),
+        patch(
+            "run_util.build_profile_table.config_runtime",
+            return_value={"repeat": 1, "memory_budget_mib": 64.0, "profile_chunk_size": 1, "use_persistent_workers": True},
+        ),
+        patch("run_util.build_profile_table.config_profiles", return_value=["full_gpu"]),
+        patch("run_util.build_profile_table.build_profile_adapters", return_value=[StubAdapter()]),
+        patch("run_util.build_profile_table.load_requests", return_value=(requests, False)),
+        patch("run_util.build_profile_table.create_persistent_worker", return_value=worker),
+    ):
+        code = build_profile_table(
+            argparse.Namespace(
+                config="config.yaml",
+                adapters=None,
+                output=str(tmp_path / "profiles.csv"),
+                import_measurements="",
+                dry_run=False,
+            )
+        )
+
+    assert code == 0
+    assert worker.evicted_sessions == [["s2"], ["s1"]]
+
+
 def test_build_profile_table_skips_persistent_worker_when_disabled(tmp_path: Path) -> None:
     class StubAdapter:
         name = "full"
