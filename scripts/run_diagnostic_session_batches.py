@@ -142,18 +142,29 @@ def materialize_session_batches(fixture_path: Path, output_root: Path, *, sessio
         raise ValueError("sessions_per_batch must be positive")
     rows = [json.loads(line) for line in fixture_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     by_session: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
+    session_order: dict[str, int] = {}
+    for row_index, row in enumerate(rows):
         session_id = str(row.get("session_id") or "")
         if not session_id:
             raise ValueError("diagnostic fixture has a row without session_id")
         by_session.setdefault(session_id, []).append(row)
-    session_ids = sorted(by_session, key=lambda session_id: min(int(row["arrival_index"]) for row in by_session[session_id]))
+        arrival_index = row.get("arrival_index", row_index)
+        session_order[session_id] = min(session_order.get(session_id, int(arrival_index)), int(arrival_index))
+    session_ids = sorted(by_session, key=session_order.__getitem__)
+    session_groups = [
+        session_ids[start : start + sessions_per_batch]
+        for start in range(0, len(session_ids), sessions_per_batch)
+    ]
+    if len(session_groups) > 1 and len(session_groups[-1]) == 1:
+        session_groups[-2].extend(session_groups.pop())
+
     output_root.mkdir(parents=True, exist_ok=True)
     batches: list[SessionBatch] = []
-    for index, start in enumerate(range(0, len(session_ids), sessions_per_batch)):
-        selected = set(session_ids[start : start + sessions_per_batch])
+    for index, session_group in enumerate(session_groups):
+        selected = set(session_group)
         batch_rows = [dict(row) for row in rows if str(row["session_id"]) in selected]
-        batch_rows.sort(key=lambda row: int(row["arrival_index"]))
+        row_order = {id(row): index for index, row in enumerate(rows)}
+        batch_rows.sort(key=lambda row: int(row.get("arrival_index", row_order[id(row)])))
         for arrival_index, row in enumerate(batch_rows):
             row["arrival_index"] = arrival_index
             row["metadata"] = {**dict(row.get("metadata") or {}), "diagnostic_only": True, "batch_id": f"batch{index:03d}"}
@@ -163,19 +174,36 @@ def materialize_session_batches(fixture_path: Path, output_root: Path, *, sessio
     return batches
 
 
-def _write_batch_config(base_config: dict[str, Any], batch: SessionBatch, config_path: Path, run_dir: Path) -> None:
-    config = dict(base_config)
+def _recursive_mapping_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _recursive_mapping_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _write_batch_config(
+    base_config: dict[str, Any],
+    batch: SessionBatch,
+    config_path: Path,
+    run_dir: Path,
+    *,
+    override: dict[str, Any] | None = None,
+) -> None:
+    config = _recursive_mapping_merge(base_config, override or {})
     config["diagnostic_only"] = True
+    config["run_dir"] = str(run_dir.resolve())
     data = dict(config.get("data") or {})
     data.update({"requests": str(batch.fixture_path.resolve()), "max_requests": batch.request_count, "diagnostic_only": True})
     config["data"] = data
     config["session_trace"] = {"copies": 1, "repeat_rounds": 1, "memory_budgets_mib": [4900]}
     outputs = dict(config.get("outputs") or {})
     config["outputs"] = {
-        name: (
-            str(Path(Path(path).parent.name) / Path(path).name)
-            if Path(path).parent.name
-            else Path(path).name
+        name: str(
+            (Path(path).parent if Path(path).parent != Path(".") else Path())
+            / f"{Path(path).stem}_{batch.batch_id}{Path(path).suffix}"
         )
         for name, path in outputs.items()
     }
@@ -294,19 +322,46 @@ def merge_batch_outputs(statuses: list[dict[str, Any]], root: Path) -> Path:
         raise
 
 
+def select_manifest_batches(
+    items: list[dict[str, Any]],
+    *,
+    skip_batches: set[str] | None = None,
+    only_batches: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    skip = set(skip_batches or ())
+    only = set(only_batches or ())
+    if skip and only:
+        raise ValueError("skip_batches and only_batches are mutually exclusive")
+
+    known = {str(item["batch_id"]) for item in items}
+    requested = skip | only
+    unknown = sorted(requested - known)
+    if unknown:
+        raise ValueError(f"unknown batch IDs: {unknown}")
+
+    if only:
+        return [item for item in items if str(item["batch_id"]) in only]
+    return [item for item in items if str(item["batch_id"]) not in skip]
+
+
 def run_batches(
     manifest: dict[str, Any],
     root: Path,
     repo_root: Path,
     conda_env: str,
     runner: Callable[[dict[str, Any]], int],
+    *,
+    selected_batches: list[dict[str, Any]] | None = None,
 ) -> int:
-    """Run every diagnostic batch serially and merge only fully valid outputs."""
+    """Run selected diagnostic batches and merge only a complete manifest run."""
     del repo_root, conda_env  # Kept in the public interface for child-runner construction.
     root.mkdir(parents=True, exist_ok=True)
+    all_batches = list(manifest.get("batches", []))
+    batches_to_run = all_batches if selected_batches is None else selected_batches
+    partial_execution = len(batches_to_run) != len(all_batches)
     _remove_output_directory(root / "merged")
     statuses: list[dict[str, Any]] = []
-    for raw_item in manifest.get("batches", []):
+    for raw_item in batches_to_run:
         item = dict(raw_item)
         batch = _batch_from_manifest_item(item)
         run_dir = Path(item.get("run_dir", root / "batch_outputs" / batch.batch_id))
@@ -347,6 +402,9 @@ def run_batches(
         _write_supervisor_manifest(root, manifest, statuses, merged=False)
 
     mergeable = bool(statuses) and all(status["mergeable"] for status in statuses)
+    if partial_execution:
+        _write_supervisor_manifest(root, manifest, statuses, merged=False)
+        return 0 if mergeable else 1
     if not mergeable:
         _write_supervisor_manifest(root, manifest, statuses, merged=False)
         return 1
@@ -397,29 +455,58 @@ def main() -> int:
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--profile-only", action="store_true", help="只测量 profiles，不跑 policy 实验轨")
+    parser.add_argument("--batch-overrides")
+    batch_filter = parser.add_mutually_exclusive_group()
+    batch_filter.add_argument("--skip-batches", nargs="+", default=[])
+    batch_filter.add_argument("--only-batches", nargs="+", default=[])
     args = parser.parse_args()
     root = Path(args.run_root).resolve()
     batches = materialize_session_batches(Path(args.fixture), root / "fixtures", sessions_per_batch=args.sessions_per_batch)
     base = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+    overrides: dict[str, dict[str, Any]] = {}
+    if args.batch_overrides:
+        loaded_overrides = yaml.safe_load(Path(args.batch_overrides).read_text(encoding="utf-8")) or {}
+        if not isinstance(loaded_overrides, dict):
+            raise ValueError("batch overrides must be a mapping keyed by batch ID")
+        known_batch_ids = {batch.batch_id for batch in batches}
+        unknown_batch_ids = sorted(set(loaded_overrides) - known_batch_ids)
+        if unknown_batch_ids:
+            raise ValueError(f"unknown batch override IDs: {', '.join(unknown_batch_ids)}")
+        for batch_id, override in loaded_overrides.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"batch override for {batch_id} must be a mapping")
+            overrides[str(batch_id)] = override
     profile_names = [str(name) for name in ((base.get("profiles") or {}).get("names") or [])]
     manifest = {"diagnostic_only": True, "sessions_per_batch": args.sessions_per_batch, "profile_names": profile_names, "batches": []}
     for batch in batches:
         config_path = root / "configs" / f"{batch.batch_id}.yaml"
         run_dir = root / "batch_outputs" / batch.batch_id
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_batch_config(base, batch, config_path, run_dir)
+        _write_batch_config(base, batch, config_path, run_dir, override=overrides.get(batch.batch_id))
         manifest["batches"].append({"batch_id": batch.batch_id, "fixture": str(batch.fixture_path), "config": str(config_path), "run_dir": str(run_dir), "sessions": batch.session_count, "requests": batch.request_count})
     (root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if args.prepare_only:
         print(json.dumps(manifest, ensure_ascii=False))
         return 0
+    selected_batches = select_manifest_batches(
+        manifest["batches"],
+        skip_batches=set(args.skip_batches),
+        only_batches=set(args.only_batches),
+    )
     repo_root = Path(__file__).resolve().parent.parent
 
     def run_child(item: dict[str, Any]) -> int:
         completed = subprocess.run(child_command(repo_root, args, item), cwd=repo_root)
         return completed.returncode
 
-    return run_batches(manifest, root, repo_root, args.conda_env, run_child)
+    return run_batches(
+        manifest,
+        root,
+        repo_root,
+        args.conda_env,
+        run_child,
+        selected_batches=selected_batches,
+    )
 
 
 if __name__ == "__main__":

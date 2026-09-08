@@ -52,26 +52,37 @@ def _configured_backend_name(config: dict, requested: str | None = None) -> str:
     return normalized
 
 
+def _canonical_pressure_id(value: str) -> str:
+    return value.split("__pressure_", 1)[0]
+
+
 def _load_online_evaluation_requests(
     config: dict,
     evaluation_request_keys: set[tuple[str, int, str]],
-) -> list[Request]:
+) -> list:
+    canonical_evaluation_keys = {
+        (
+            _canonical_pressure_id(session_id),
+            turn_index,
+            _canonical_pressure_id(request_id),
+        )
+        for session_id, turn_index, request_id in evaluation_request_keys
+    }
     fixture_requests, _ = load_requests(config)
     selected = [
         request
         for request in fixture_requests
-        if (request.session_id or "", request.turn_index, request.request_id) in evaluation_request_keys
+        if (request.session_id or "", request.turn_index, request.request_id)
+        in canonical_evaluation_keys
     ]
     selected_keys = {
         (request.session_id or "", request.turn_index, request.request_id)
         for request in selected
     }
-    missing = sorted(evaluation_request_keys - selected_keys)
+    missing = sorted(canonical_evaluation_keys - selected_keys)
     if missing:
         raise ValueError(f"online Qwen fixture is missing evaluation requests: {missing[:3]}")
-    if not selected:
-        raise ValueError("online Qwen fixture has no evaluation requests")
-    return sorted(selected, key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index))
+    return selected
 
 
 def _run_settings(args: argparse.Namespace, config: dict) -> tuple[str, list[str], list[str | dict], float, float, float]:

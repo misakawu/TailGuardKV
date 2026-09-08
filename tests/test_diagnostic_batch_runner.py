@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import csv
 import sys
+
+import pytest
+import yaml
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,11 +45,11 @@ def test_materialize_session_batches_keeps_complete_sessions_and_arrival_order(t
 
     batches = materialize_session_batches(fixture, tmp_path / "batches", sessions_per_batch=3)
 
-    assert [batch.session_count for batch in batches] == [3, 1]
+    assert [batch.session_count for batch in batches] == [4]
     first = [json.loads(line) for line in batches[0].fixture_path.read_text(encoding="utf-8").splitlines()]
-    assert len(first) == 15
-    assert {row["session_id"] for row in first} == {"s0", "s1", "s2"}
-    assert [row["arrival_index"] for row in first] == list(range(15))
+    assert len(first) == 20
+    assert {row["session_id"] for row in first} == {"s0", "s1", "s2", "s3"}
+    assert [row["arrival_index"] for row in first] == list(range(20))
 
 
 def test_session27_runners_default_to_two_sessions_per_batch(tmp_path: Path, monkeypatch) -> None:
@@ -531,3 +534,270 @@ def test_run_batches_records_zero_exit_failed_risk_gate_separately(tmp_path: Pat
     summary = json.loads((root / "supervisor_manifest.json").read_text(encoding="utf-8"))
     assert summary["batches"][0]["diagnostic_gate_failed"] is True
     assert summary["batches"][0]["gate_only_failure"] is False
+
+
+def test_materialize_session_batches_merges_final_singleton_without_shifting_batch007(tmp_path: Path) -> None:
+    rows = [
+        {
+            "request_id": f"s{session:02d}t{turn}",
+            "session_id": f"s{session:02d}",
+            "turn_index": turn,
+            "arrival_index": arrival,
+            "task": "chat",
+            "prompt": "p",
+            "reference": "r",
+            "metadata": {"diagnostic_only": True},
+        }
+        for arrival, (turn, session) in enumerate(
+            (turn, session) for turn in range(5) for session in range(27)
+        )
+    ]
+    fixture = tmp_path / "session27.jsonl"
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    batches = materialize_session_batches(fixture, tmp_path / "batches", sessions_per_batch=2)
+
+    assert [batch.batch_id for batch in batches] == [f"batch{index:03d}" for index in range(13)]
+    assert [batch.session_count for batch in batches] == [2] * 12 + [3]
+    assert [batch.request_count for batch in batches] == [10] * 12 + [15]
+
+    batch007_rows = [
+        json.loads(line)
+        for line in batches[7].fixture_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert {row["session_id"] for row in batch007_rows} == {"s14", "s15"}
+
+    all_session_ids = [
+        row["session_id"]
+        for batch in batches
+        for row in (
+            json.loads(line)
+            for line in batch.fixture_path.read_text(encoding="utf-8").splitlines()
+        )
+        if row["turn_index"] == 0
+    ]
+    assert all_session_ids == [f"s{session:02d}" for session in range(27)]
+
+
+def test_select_manifest_batches_skips_requested_batch() -> None:
+    items = [{"batch_id": "batch006"}, {"batch_id": "batch007"}, {"batch_id": "batch008"}]
+
+    selected = diagnostic_runner.select_manifest_batches(items, skip_batches={"batch007"})
+
+    assert [item["batch_id"] for item in selected] == ["batch006", "batch008"]
+
+
+def test_select_manifest_batches_runs_only_requested_batch() -> None:
+    items = [{"batch_id": "batch006"}, {"batch_id": "batch007"}, {"batch_id": "batch008"}]
+
+    selected = diagnostic_runner.select_manifest_batches(items, only_batches={"batch007"})
+
+    assert [item["batch_id"] for item in selected] == ["batch007"]
+
+
+def test_select_manifest_batches_rejects_mutually_exclusive_filters() -> None:
+    items = [{"batch_id": "batch007"}]
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        diagnostic_runner.select_manifest_batches(
+            items,
+            skip_batches={"batch007"},
+            only_batches={"batch007"},
+        )
+
+
+def test_select_manifest_batches_rejects_unknown_id_before_selection() -> None:
+    items = [{"batch_id": "batch007"}]
+
+    with pytest.raises(ValueError, match="unknown batch IDs"):
+        diagnostic_runner.select_manifest_batches(items, only_batches={"batch999"})
+
+
+def test_run_batches_partial_execution_preserves_unselected_output_and_skips_merge(tmp_path: Path) -> None:
+    manifest, root = _supervisor_manifest(tmp_path)
+    unselected = Path(manifest["batches"][1]["run_dir"])
+    marker = unselected / "preserve.marker"
+    marker.write_text("keep", encoding="utf-8")
+    selected_items = diagnostic_runner.select_manifest_batches(
+        manifest["batches"], only_batches={"batch000"}
+    )
+    executed: list[str] = []
+
+    def fake_runner(item: dict[str, object]) -> int:
+        executed.append(str(item["batch_id"]))
+        _write_supervisor_output(item)
+        return 0
+
+    exit_code = run_batches(
+        manifest,
+        root,
+        tmp_path,
+        "test",
+        fake_runner,
+        selected_batches=selected_items,
+    )
+
+    assert exit_code == 0
+    assert executed == ["batch000"]
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert not (root / "merged").exists()
+
+
+def test_main_only_batches_runs_only_selected_batch(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    rows = [
+        {
+            "request_id": f"r{session}",
+            "session_id": f"s{session}",
+            "arrival_index": session,
+            "metadata": {"diagnostic_only": True},
+        }
+        for session in range(4)
+    ]
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("profiles:\n  names: [full_gpu, lossy]\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    def fake_run_batches(manifest, root, repo_root, conda_env, runner, *, selected_batches=None):
+        observed["selected"] = [item["batch_id"] for item in selected_batches]
+        return 0
+
+    monkeypatch.setattr(diagnostic_runner, "run_batches", fake_run_batches)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_diagnostic_session_batches.py",
+            "--fixture",
+            str(fixture),
+            "--config",
+            str(config),
+            "--run-root",
+            str(tmp_path / "run"),
+            "--sessions-per-batch",
+            "2",
+            "--only-batches",
+            "batch001",
+        ],
+    )
+
+    assert diagnostic_runner.main() == 0
+    assert observed["selected"] == ["batch001"]
+
+
+
+def test_main_batch_overrides_applies_matching_batch_config(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    rows = [
+        {"request_id": f"r{index}", "session_id": f"s{index}"}
+        for index in range(8)
+    ]
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "profile_smoke:\n  device_strategy: balanced_two_gpu\n"
+        "outputs:\n  smoke_profiles: out/profile_tables/profiles.csv\n",
+        encoding="utf-8",
+    )
+    overrides = tmp_path / "overrides.yaml"
+    overrides.write_text(
+        "batch007:\n"
+        "  profile_smoke:\n"
+        "    device_strategy: balanced_three_gpu\n"
+        "    cuda_visible_devices: '0,1,2'\n",
+        encoding="utf-8",
+    )
+    run_root = tmp_path / "run"
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(run_root),
+        "--sessions-per-batch", "1",
+        "--batch-overrides", str(overrides),
+        "--prepare-only",
+    ])
+
+    assert diagnostic_runner.main() == 0
+    written = yaml.safe_load((run_root / "configs" / "batch007.yaml").read_text(encoding="utf-8"))
+    assert written["profile_smoke"] == {
+        "device_strategy": "balanced_three_gpu",
+        "cuda_visible_devices": "0,1,2",
+    }
+
+
+def test_main_batch_overrides_rejects_unknown_batch_before_execution(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps({"request_id": "r0", "session_id": "s0"}) + "\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text("profiles:\n  names: [full_gpu]\n", encoding="utf-8")
+    overrides = tmp_path / "overrides.yaml"
+    overrides.write_text(
+        "batch999:\n  profile_smoke:\n    device_strategy: balanced_three_gpu\n",
+        encoding="utf-8",
+    )
+    called = False
+
+    def fake_run_batches(*args, **kwargs):
+        nonlocal called
+        called = True
+        return 0
+
+    monkeypatch.setattr(diagnostic_runner, "run_batches", fake_run_batches)
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(tmp_path / "run"),
+        "--batch-overrides", str(overrides),
+    ])
+
+    with pytest.raises(ValueError, match="batch999"):
+        diagnostic_runner.main()
+    assert called is False
+
+def test_write_batch_config_recursively_merges_override_and_preserves_provenance(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixtures" / "batch007.jsonl"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("{}\n", encoding="utf-8")
+    batch = SessionBatch("batch007", fixture, 2, 10)
+    config_path = tmp_path / "configs" / "batch007.yaml"
+    config_path.parent.mkdir(parents=True)
+    run_dir = tmp_path / "batch_outputs" / "batch007"
+    base = {
+        "runtime": {"device_strategy": "balanced_two_gpu", "nested": {"keep": 1, "replace": 2}},
+        "data": {"requests": "base.jsonl"},
+        "outputs": {"profile_table": "base_profiles.csv"},
+        "run_dir": "base-run",
+    }
+    override = {
+        "runtime": {"nested": {"replace": 9}, "cuda_visible_devices": "0,1,2"},
+        "data": {"requests": "override.jsonl"},
+        "outputs": {"profile_table": "override.csv"},
+        "run_dir": "override-run",
+    }
+
+    diagnostic_runner._write_batch_config(
+        base,
+        batch,
+        config_path,
+        run_dir,
+        override=override,
+    )
+
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert written["runtime"] == {
+        "device_strategy": "balanced_two_gpu",
+        "nested": {"keep": 1, "replace": 9},
+        "cuda_visible_devices": "0,1,2",
+    }
+    assert written["data"]["requests"] == str(fixture.resolve())
+    assert written["data"]["max_requests"] == 10
+    assert written["run_dir"] == str(run_dir.resolve())
+    assert written["outputs"]["profile_table"] != "override.csv"
+    assert "batch007" in written["outputs"]["profile_table"]

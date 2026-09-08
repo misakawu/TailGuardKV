@@ -756,3 +756,54 @@ def test_policy_csv_rows_persist_session27_diagnostic_provenance() -> None:
     assert row["violation_status"] == "risk_evidence_insufficient"
     assert row["config"] == "configs/pilot_diagnostic_session27.yaml"
     assert row["run_dir"] == "out/diagnostic_session27"
+
+
+def test_online_runner_matches_pressure_measurement_ids_to_canonical_fixture_requests(tmp_path: Path) -> None:
+    fixture = tmp_path / "requests.jsonl"
+    rows = [
+        {
+            "request_id": "s1_t0",
+            "session_id": "s1",
+            "turn_index": 0,
+            "arrival_index": 0,
+            "task": "chat",
+            "prompt": "fixture prompt",
+            "reference": "fixture answer",
+        },
+        {
+            "request_id": "s1_t1",
+            "session_id": "s1",
+            "turn_index": 1,
+            "arrival_index": 1,
+            "task": "chat",
+            "prompt": "fixture followup",
+            "reference": "fixture answer 2",
+        },
+        {
+            "request_id": "plain_t0",
+            "session_id": "plain",
+            "turn_index": 0,
+            "arrival_index": 2,
+            "task": "chat",
+            "prompt": "plain fixture prompt",
+            "reference": "plain fixture answer",
+        },
+    ]
+    fixture.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    config = {"data": {"source": "fixture", "requests": str(fixture), "calibration_fraction": 0.0}}
+    evaluation_keys = {
+        ("s1__pressure_r1_c1", 0, "s1_t0__pressure_r1_c1"),
+        ("s1__pressure_r2_c3", 1, "s1_t1__pressure_r2_c3"),
+        ("plain", 0, "plain_t0"),
+    }
+
+    requests = _load_online_evaluation_requests(config, evaluation_keys)
+
+    assert [request.request_id for request in requests] == ["s1_t0", "s1_t1", "plain_t0"]
+    assert [request.session_id for request in requests] == ["s1", "s1", "plain"]
+    assert requests[0].prompt == "fixture prompt"
+    assert requests[0].reference == "fixture answer"
+    assert requests[1].prompt == "fixture followup"
+    assert requests[1].reference == "fixture answer 2"
+    assert requests[1].effective_prompt == "User: fixture prompt\nAssistant: fixture answer\nfixture followup"
+    assert requests[2].prompt == "plain fixture prompt"
