@@ -450,6 +450,7 @@ def _with_reused_cache_positions(torch: Any, tokenized: dict[str, Any], cache: A
             prefix_len + current_len,
             device=input_ids.device,
         )
+        result["position_ids"] = result["cache_position"].unsqueeze(0)
         return result
     except (AttributeError, IndexError, TypeError, ValueError):
         return tokenized

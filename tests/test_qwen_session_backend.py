@@ -695,6 +695,10 @@ def test_real_full_request_offsets_reused_cache_attention_mask_and_positions() -
         def tolist(self) -> list[list[int]]:
             return [self.values]
 
+        def unsqueeze(self, dim: int) -> "Tensor":
+            assert dim == 0
+            return self
+
     class Torch:
         @staticmethod
         def ones(shape, *, dtype, device) -> Tensor:
@@ -708,9 +712,9 @@ def test_real_full_request_offsets_reused_cache_attention_mask_and_positions() -
             return Tensor([value for tensor in values for value in tensor.values])
 
         @staticmethod
-        def arange(start, end, *, device) -> list[int]:
+        def arange(start, end, *, device) -> Tensor:
             assert device == "cuda"
-            return list(range(start, end))
+            return Tensor(list(range(start, end)))
 
     captured: dict[str, object] = {}
 
@@ -732,7 +736,8 @@ def test_real_full_request_offsets_reused_cache_attention_mask_and_positions() -
 
     inputs = captured["tokenized_inputs"]
     assert inputs["attention_mask"].tolist() == [[1, 1, 1, 1, 1]]
-    assert inputs["cache_position"] == [3, 4]
+    assert inputs["cache_position"].tolist() == [[3, 4]]
+    assert inputs["position_ids"].tolist() == [[3, 4]]
 
 
 def test_policy_csv_rows_persist_session27_diagnostic_provenance() -> None:

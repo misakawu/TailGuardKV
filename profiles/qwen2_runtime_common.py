@@ -98,7 +98,7 @@ def _build_qwen2_device_map(num_hidden_layers: int, gpu_indices: tuple[int, ...]
         device_map["model.norm"] = only_gpu
         device_map["lm_head"] = only_gpu
         return device_map
-    split_index = int(ceil(num_hidden_layers / 2))
+    split_index = max(1, int(ceil(num_hidden_layers / 2)) - 1)
     left_gpu, right_gpu = gpu_indices[0], gpu_indices[1]
     device_map = {"model.embed_tokens": left_gpu}
     for layer_idx in range(num_hidden_layers):

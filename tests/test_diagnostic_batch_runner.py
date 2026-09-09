@@ -28,7 +28,7 @@ def _batch_output(tmp_path: Path, rows: list[dict[str, object]]) -> tuple[Sessio
     profile_dir = run_dir / "profile_tables"
     profile_dir.mkdir(parents=True)
     with (profile_dir / "diagnostic_profiles.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["request_id", "profile", "ok", "measured"])
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
     return SessionBatch("batch000", fixture, 1, len(rows) // 2), run_dir
@@ -455,7 +455,8 @@ outputs:
         run_dir = Path(command[command.index("--run-dir") + 1])
         config_path = Path(command[command.index("--config") + 1])
         assert run_dir == expected_root / "batch_outputs" / "batch000"
-        assert "smoke_profiles: profile_tables/diagnostic_session27_profiles.csv" in config_path.read_text(encoding="utf-8")
+        written_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert written_config["outputs"]["smoke_profiles"] == "out/profile_tables/diagnostic_session27_profiles_batch000.csv"
         _write_supervisor_output(
             {
                 "run_dir": str(run_dir),
@@ -690,8 +691,8 @@ def test_main_only_batches_runs_only_selected_batch(tmp_path: Path, monkeypatch)
 def test_main_batch_overrides_applies_matching_batch_config(tmp_path: Path, monkeypatch) -> None:
     fixture = tmp_path / "fixture.jsonl"
     rows = [
-        {"request_id": f"r{index}", "session_id": f"s{index}"}
-        for index in range(8)
+        {"request_id": f"r{index}", "session_id": f"s{index}", "arrival_index": index}
+        for index in range(9)
     ]
     fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     config = tmp_path / "config.yaml"
@@ -731,7 +732,7 @@ def test_main_batch_overrides_applies_matching_batch_config(tmp_path: Path, monk
 def test_main_batch_overrides_rejects_unknown_batch_before_execution(tmp_path: Path, monkeypatch) -> None:
     fixture = tmp_path / "fixture.jsonl"
     fixture.write_text(
-        json.dumps({"request_id": "r0", "session_id": "s0"}) + "\n",
+        json.dumps({"request_id": "r0", "session_id": "s0", "arrival_index": 0}) + "\n",
         encoding="utf-8",
     )
     config = tmp_path / "config.yaml"
@@ -801,3 +802,246 @@ def test_write_batch_config_recursively_merges_override_and_preserves_provenance
     assert written["run_dir"] == str(run_dir.resolve())
     assert written["outputs"]["profile_table"] != "override.csv"
     assert "batch007" in written["outputs"]["profile_table"]
+
+
+def test_main_validate_existing_is_read_only_and_skips_execution(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps({"request_id": "r0", "session_id": "s0", "arrival_index": 0}) + "\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text("profiles:\n  names: [full_gpu]\n", encoding="utf-8")
+    run_root = tmp_path / "run"
+    called = False
+
+    def fake_run_batches(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("validate-existing must not execute GPU batches")
+
+    monkeypatch.setattr(diagnostic_runner, "run_batches", fake_run_batches)
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(run_root),
+        "--sessions-per-batch", "1",
+        "--validate-existing",
+    ])
+
+    diagnostic_runner.main()
+    assert called is False
+
+
+
+def test_main_validate_existing_rejects_missing_batch_output_without_execution(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps({"request_id": "r0", "session_id": "s0", "arrival_index": 0}) + "\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text("profiles:\n  names: [full_gpu]\n", encoding="utf-8")
+    run_root = tmp_path / "run"
+
+    def fake_run_batches(*args, **kwargs):
+        raise AssertionError("validate-existing must not execute GPU batches")
+
+    monkeypatch.setattr(diagnostic_runner, "run_batches", fake_run_batches)
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(run_root),
+        "--sessions-per-batch", "1",
+        "--validate-existing",
+    ])
+
+    assert diagnostic_runner.main() != 0
+
+
+
+def test_main_validate_existing_does_not_modify_existing_files(tmp_path: Path, monkeypatch) -> None:
+    run_root = tmp_path / "run"
+    fixture_dir = run_root / "fixtures"
+    config_dir = run_root / "configs"
+    output_dir = run_root / "batch_outputs" / "batch000"
+    fixture_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+
+    batch_fixture = fixture_dir / "batch000.jsonl"
+    batch_fixture.write_text(
+        json.dumps({"request_id": "r0", "session_id": "s0", "arrival_index": 0}) + "\n",
+        encoding="utf-8",
+    )
+    batch_config = config_dir / "batch000.yaml"
+    batch_config.write_text("profiles:\n  names: [full_gpu]\n", encoding="utf-8")
+    manifest = {
+        "diagnostic_only": True,
+        "sessions_per_batch": 1,
+        "profile_names": ["full_gpu"],
+        "batches": [{
+            "batch_id": "batch000",
+            "fixture": str(batch_fixture),
+            "config": str(batch_config),
+            "run_dir": str(output_dir),
+            "sessions": 1,
+            "requests": 1,
+        }],
+    }
+    (run_root / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    source_fixture = tmp_path / "source.jsonl"
+    source_fixture.write_text(
+        json.dumps({"request_id": "changed", "session_id": "changed", "arrival_index": 99}) + "\n",
+        encoding="utf-8",
+    )
+    source_config = tmp_path / "source.yaml"
+    source_config.write_text("profiles:\n  names: [other_profile]\n", encoding="utf-8")
+
+    before = {
+        path.relative_to(run_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in run_root.rglob("*")
+        if path.is_file()
+    }
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(source_fixture),
+        "--config", str(source_config),
+        "--run-root", str(run_root),
+        "--validate-existing",
+    ])
+
+    assert diagnostic_runner.main() != 0
+    after = {
+        path.relative_to(run_root): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in run_root.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+
+def test_validate_existing_merges_complete_outputs_with_diagnostic_provenance(tmp_path: Path, monkeypatch) -> None:
+    manifest, root = _supervisor_manifest(tmp_path)
+    for item in manifest["batches"]:
+        _write_supervisor_output(item)
+    (root / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    fixture = tmp_path / "unused.jsonl"
+    fixture.write_text("{}\n", encoding="utf-8")
+    config = tmp_path / "unused.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(root),
+        "--validate-existing",
+    ])
+
+    assert diagnostic_runner.main() == 0
+    merged = root / "merged"
+    profile_csv = merged / "profile_tables" / "diagnostic_session27_profiles.csv"
+    assert profile_csv.is_file()
+    merged_manifest = json.loads((merged / "manifest.json").read_text(encoding="utf-8"))
+    assert merged_manifest["mixed_hardware"] is True
+    assert merged_manifest["performance_comparability"] == "diagnostic_only"
+
+
+def test_validate_existing_rejects_incomplete_global_session_coverage(tmp_path: Path, monkeypatch) -> None:
+    manifest, root = _supervisor_manifest(tmp_path)
+    manifest["expected_sessions"] = 27
+    manifest["expected_requests"] = 135
+    manifest["expected_profiles"] = 8
+    manifest["expected_profile_rows"] = 1080
+    for item in manifest["batches"]:
+        _write_supervisor_output(item)
+    (root / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    fixture = tmp_path / "unused.jsonl"
+    fixture.write_text("{}\n", encoding="utf-8")
+    config = tmp_path / "unused.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(root),
+        "--validate-existing",
+    ])
+
+    assert diagnostic_runner.main() != 0
+    assert not (root / "merged").exists()
+
+
+def test_validate_batch_output_rejects_dry_run_and_failed_chunk_residue(tmp_path: Path) -> None:
+    rows = [
+        {
+            "request_id": request_id,
+            "profile": profile,
+            "ok": "True",
+            "measured": "True",
+            "dry_run": "False",
+        }
+        for request_id in ("r1", "r2")
+        for profile in ("full_gpu", "lossy")
+    ]
+    rows[0]["dry_run"] = "True"
+    batch, run_dir = _batch_output(tmp_path, rows)
+    (run_dir / "profile_tables" / "diagnostic_session27_profiles_failed_chunks.csv").write_text(
+        "request_id,profile,error\nr1,full_gpu,CUDA error\n",
+        encoding="utf-8",
+    )
+
+    status = validate_batch_output(batch, run_dir, {"full_gpu", "lossy"})
+
+    assert status["mergeable"] is False
+    assert any("dry-run" in error for error in status["errors"])
+    assert any("failed chunk" in error for error in status["errors"])
+
+
+def test_validate_existing_rejects_duplicate_canonical_request_profile_pair(tmp_path: Path, monkeypatch) -> None:
+    manifest, root = _supervisor_manifest(tmp_path)
+    for item in manifest["batches"]:
+        _write_supervisor_output(item)
+    second = manifest["batches"][1]
+    second_fixture = Path(second["fixture"])
+    rows = [json.loads(line) for line in second_fixture.read_text(encoding="utf-8").splitlines()]
+    rows[0]["request_id"] = "r0a"
+    second_fixture.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    _write_supervisor_output(second)
+    (root / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    fixture = tmp_path / "unused.jsonl"
+    fixture.write_text("{}\n", encoding="utf-8")
+    config = tmp_path / "unused.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(root),
+        "--validate-existing",
+    ])
+
+    assert diagnostic_runner.main() != 0
+    assert not (root / "merged").exists()

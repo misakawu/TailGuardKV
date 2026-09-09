@@ -56,7 +56,7 @@ def test_load_qwen2_model_builds_explicit_two_gpu_device_map_for_odd_layers() ->
         "model.embed_tokens": 0,
         "model.layers.0": 0,
         "model.layers.1": 0,
-        "model.layers.2": 0,
+        "model.layers.2": 1,
         "model.layers.3": 1,
         "model.layers.4": 1,
         "model.norm": 1,
@@ -108,7 +108,7 @@ def test_load_qwen2_model_builds_explicit_two_gpu_device_map_for_even_layers() -
     )
 
     assert captured["device_map"]["model.layers.0"] == 0
-    assert captured["device_map"]["model.layers.1"] == 0
+    assert captured["device_map"]["model.layers.1"] == 1
     assert captured["device_map"]["model.layers.2"] == 1
     assert captured["device_map"]["model.layers.3"] == 1
     assert set(captured["device_map"].values()) == {0, 1}
@@ -376,3 +376,15 @@ def test_release_runtime_cuda_resources_clears_objects_runs_gc_and_empties_cache
     assert "empty_cache" in events
     assert ("sync", 0) in events
     assert ("sync", 1) in events
+
+
+def test_two_gpu_device_map_reserves_one_layer_of_headroom_on_gpu0() -> None:
+    device_map = qwen2_runtime_common._build_qwen2_device_map(28, (0, 1))
+
+    assert device_map["model.embed_tokens"] == 0
+    assert device_map["model.layers.12"] == 0
+    assert device_map["model.layers.13"] == 1
+    assert device_map["model.layers.27"] == 1
+    assert device_map["model.norm"] == 1
+    assert device_map["lm_head"] == 1
+    assert [device_map[f"model.layers.{index}"] for index in range(28)] == [0] * 13 + [1] * 15

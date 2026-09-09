@@ -70,6 +70,18 @@ class KIVICacheTest(unittest.TestCase):
         self.assertIsNone(cache.get_max_length())
         self.assertEqual(cache.get_usable_length(5, layer_idx=1), 0)
 
+    def test_kivi_cache_reports_mask_size_for_resident_tokens(self) -> None:
+        cache = KIVICache(1, residual_length=32, group_size=32, k_bits=4, v_bits=4)
+        tensors = [FakeTensor([]) for _ in range(8)]
+        cache.update_quantized(0, KIVILayerState(*tensors, kv_seq_len=18))
+
+        self.assertEqual(cache.get_mask_sizes(query_length=21, layer_idx=0), (21, 0))
+
+    def test_kivi_cache_reports_mask_size_for_empty_layer(self) -> None:
+        cache = KIVICache(1, residual_length=32, group_size=32, k_bits=4, v_bits=4)
+
+        self.assertEqual(cache.get_mask_sizes(query_length=21, layer_idx=0), (21, 0))
+
     def test_kivi_cache_reorder_cache_reorders_tensor_fields(self) -> None:
         cache = KIVICache(
             1,

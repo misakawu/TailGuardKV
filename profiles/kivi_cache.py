@@ -43,6 +43,10 @@ class KIVICache(Cache):
     def get_max_length(self) -> None:
         return None
 
+    def get_mask_sizes(self, query_length: int, layer_idx: int) -> tuple[int, int]:
+        del layer_idx
+        return int(query_length), 0
+
     def get_usable_length(self, new_seq_length: int, layer_idx: int = 0) -> int:
         del new_seq_length
         return self.get_seq_length(layer_idx)

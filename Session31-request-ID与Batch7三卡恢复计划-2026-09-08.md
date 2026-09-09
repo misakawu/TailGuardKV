@@ -247,33 +247,51 @@ tests/test_qwen2_session_runtime.py
 
 ## 当前执行进度（2026-09-08）
 
+> 更新时点：2026-09-08 21:13（UTC+8）。以下状态仅依据恢复工作树、现有输出文件和测试日志记录。
+
+### 总体状态
+
+恢复工作目前处于“代码修复和单批 smoke 已验证，正式 profile 恢复尚未启动”的阶段。当前没有运行中的 Session32、diagnostic batch runner 或 `batch007` 恢复进程。
+
 ### 已完成
 
-- 已创建并使用独立恢复工作树：`/DATACENTER3/zhenxiang.wang/work/TailGuardKV-session32-recovery`。
-- 当前恢复分支为：`session32-request-id-batch7-recovery`。
-- 已确认旧 Session31 输出目录仍保留，未覆盖、删除或移动旧实验现场。
-- 已定位 pressure ID 故障根因：measurement evaluation keys 中的 `session_id` 和 `request_id` 带有 `__pressure_rN_cN` 后缀，而原始 online fixture 使用无后缀 ID；旧 loader 使用未经规范化的严格三元组匹配，因此无法找到对应请求。
-- 已在 `run_util/run_policies.py` 中加入 pressure ID canonicalization，并使用 canonical `(session_id, turn_index, request_id)` 匹配 evaluation keys 与原始 fixture。
-- 匹配成功后仍返回原始 fixture `Request`，保留原始 `request_id`、`session_id`、prompt、reference 和� history 语义。
-- 已在 `tests/test_qwen_session_backend.py` 中增加回归测试，覆盖 `__pressure_r1_c1`、`__pressure_r2_c3` 和普通无后缀 ID。
+- Session31 已停止，旧输出和实验失败现场继续保留，未发现恢复任务覆盖旧 Session31 输出。
+- 已在独立恢复工作树 `/DATACENTER3/zhenxiang.wang/work/TailGuardKV-session32-recovery` 中开展修复，未把本轮改动合并回主工作树。
+- pressure evaluation key 与原始 fixture 的 request/session ID 命名空间匹配逻辑已经修复，并补充了对应测试。
+- 27 个 session 的 batch 划分和尾部 singleton 重平衡逻辑已经实现并覆盖测试。
+- diagnostic batch runner 已增加单 batch、排除 batch、batch 级 GPU override、输出命名和恢复运行所需能力，并补充相应测试。
+- 已修复 `arrival_index` 在 Session runtime 路径中的传递问题，并完成相关回归验证。
+- 已修复 KIVI mask contract 问题；KIVI 定向测试及关联回归测试通过。
+- 相关回归测试最新结果为 `87 passed in 6.14s`，日志位于：
+  `out/session32_request_id_batch7_recovery_20260908/kivi_mask_contract_tdd/related_regression_20260908_204502.log`。
+- `batch009` online policy smoke 已在位置修复和 KIVI mask 修复后成功完成。最终日志与记录分别位于：
+  - `out/session32_request_id_batch7_recovery_20260908/id_fix_smoke/batch009_policy_smoke_after_kivi_mask_fix_retry_20260908_205528.log`
+  - `out/session32_request_id_batch7_recovery_20260908/id_fix_smoke/batch009_policy_records_after_kivi_mask_fix_retry_20260908_205528.csv`
+- smoke 结果已产生有效 backend 语义证据，包括 session reuse、global resident evolution 和 backend event evidence；pressure ID 修复已不再被 fixture 命名空间不一致阻塞。
 
-### 已验证
+### 本轮新增修复
 
-- 修复前，新增回归测试稳定失败，错误为 online Qwen fixture 缺少带 pressure 后缀的 evaluation requests。
-- 修复后，目标回归测试通过。
-- `run_util/run_policies.py` Python 编译检查通过。
-- `git diff --check` 通过。
-- `tests/test_qwen_session_backend.py` 聚焦回归测试结果：�`22 passed in 4.87s`。
+- `profiles/qwen2_kv_runtime.py`：补齐 Session runtime 所需的 position/arrival 信息传递。
+- `profiles/kivi_cache.py`：修复 KIVI mask contract。
+- `scripts/run_diagnostic_session_batches.py`：扩展 batch 恢复、GPU override、输出隔离和恢复执行能力。
+- `tests/test_qwen_session_backend.py`、`tests/test_qwen2_session_runtime.py`、`tests/test_diagnostic_batch_runner.py`、`tests/test_kivi_cache.py`：增加或调整回归覆盖。
 
-### 尚未完成或尚未验证
+### 尚未完成
 
-- 尚未实现 27 个 session 到 13 个 batch 的重排和 singleton batch 消除。
-- 尚未实现 supervisor 的 `--skip-batches`、`--only-batches`、`--batch-overrides` 和 `--validate-existing`。
-- 尚未实现或验证 `balanced_three_gpu` 策略。
-- 尚未进行小规模 GPU 验证。
-- 尚未在 GPU `0,1,2` 上补跑 `batch007`，原双卡 OOM 是否由三卡方案解决仍未确认。
-- 尚未完成其余 12 个 batch 的双卡 profile。
-- 尚未生成或验证包含 27 个 session、135 个 request、8 个 profile、共 1080 行的 merged profile。
-- 尚未运行 batch009 online policy smoke，也未验证 mixed-hardware provenance 和 diagnostic-only manifest 标记。
-- 尚未运行计划中列出的完整相关回归测试和全量测试。
-- 当前改动尚未提交 commit，也未合并回主工作树。
+- 尚未正式启动除 `batch007` 外的双卡 profile 恢复运行。
+- 尚未在 GPU `0,1,2` 上独立补跑 `batch007`，因此还没有验证原 OOM 请求是否成功，也没有形成完整80行 `batch007` profile。
+- 尚未采集并回填三张 GPU 的峰值显存及运行前后空闲显存。
+- mixed-hardware provenance 和 diagnostic-only manifest 标记尚未通过最终产物验证。
+- 尚未生成并核对包含27个 session、135个 request、8个 profile、共1080行的 merged profile。
+- 尚未验证 merged profile 是否无重复、无缺失、无失败记录。
+- 完整相关测试已通过，但仓库全量测试尚未执行。
+- 当前代码、测试和本文档改动仍为本地未提交状态；本轮未提交、未推送，也未合并回主工作树。
+
+### 下一步执行顺序
+
+1. 在双卡环境运行除 `batch007` 外的正式 profile，并逐 batch 核对完成状态与行数。
+2. 清理运行残留进程和显存后，在 GPU `0,1,2` 上单独执行 `batch007`。
+3. 记录三卡显存证据，确认原 OOM 请求成功，并核对 `batch007` 恰好80行。
+4. 合并全部 profile，核对27个 session、135个 request、8个 profile和1080行总量。
+5. 验证 mixed-hardware provenance、diagnostic-only 标记、重复项、缺失项和失败项。
+6. 运行仓库全量测试，检查最终 `git diff`；未经用户明确授权不提交 commit。

@@ -150,3 +150,25 @@ def test_full_session_cache_rebuilds_noncanonical_pressure_replay() -> None:
 
     assert attached["_runtime_cache_rebuild_reason"] == "noncanonical_history"
     assert "s1" not in runtime["session_reuse"]
+
+
+
+def test_reused_cache_positions_use_cache_logical_length_for_mask_and_positions() -> None:
+    """A suffix prefill must align its mask and positions with the resident cache."""
+    import torch
+    from profiles.qwen2_kv_runtime import _with_reused_cache_positions
+
+    class Cache:
+        def get_seq_length(self) -> int:
+            return 18
+
+    tokenized = {
+        "input_ids": torch.tensor([[101, 102, 103]]),
+        "attention_mask": torch.ones((1, 3), dtype=torch.long),
+    }
+
+    aligned = _with_reused_cache_positions(torch, tokenized, Cache())
+
+    assert aligned["attention_mask"].shape[-1] == 21
+    assert aligned["cache_position"].tolist() == [18, 19, 20]
+    assert aligned["position_ids"].tolist() == [[18, 19, 20]]

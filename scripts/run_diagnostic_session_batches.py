@@ -78,7 +78,11 @@ def validate_batch_output(batch: SessionBatch, run_dir: Path, profile_names: set
     errors: list[str] = []
     fixture_ids: list[str] = []
     try:
-        fixture_rows = [json.loads(line) for line in batch.fixture_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        fixture_rows = [
+            json.loads(line)
+            for line in batch.fixture_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         for row in fixture_rows:
             request_id = str(row.get("request_id") or "")
             if not request_id:
@@ -87,52 +91,63 @@ def validate_batch_output(batch: SessionBatch, run_dir: Path, profile_names: set
                 errors.append(f"duplicate fixture request_id: {request_id}")
             fixture_ids.append(request_id)
     except (OSError, json.JSONDecodeError, TypeError, AttributeError) as exc:
-        errors.append(f"invalid batch fixture: {exc}")
+        errors.append(f"invalid fixture: {exc}")
 
     if len(fixture_ids) != batch.request_count:
         errors.append(
-            f"fixture request count mismatch: expected {batch.request_count}, found {len(fixture_ids)}"
+            f"fixture request count mismatch: expected {batch.request_count}, got {len(fixture_ids)}"
         )
 
-    csv_paths = sorted((run_dir / "profile_tables").glob("*_profiles.csv"))
-    rows: list[dict[str, Any]] = []
-    if len(csv_paths) != 1:
-        errors.append(f"expected one profile CSV, found {len(csv_paths)}")
+    profile_csv = _artifact_path(run_dir, "profile_tables", "*_profiles.csv")
+    profile_rows: list[dict[str, str]] = []
+    if profile_csv is None:
+        errors.append("missing profile CSV")
     else:
         try:
-            with csv_paths[0].open(encoding="utf-8", newline="") as handle:
-                reader = csv.DictReader(handle)
-                required_columns = {"request_id", "profile", "ok", "measured"}
-                if not required_columns.issubset(set(reader.fieldnames or ())):
-                    errors.append(f"invalid profile CSV: missing columns {sorted(required_columns - set(reader.fieldnames or ()))}")
-                else:
-                    rows = list(reader)
-        except (OSError, csv.Error) as exc:
-            errors.append(f"invalid profile CSV: {exc}")
+            _, profile_rows = _read_csv_rows(Path(profile_csv))
+        except ValueError as exc:
+            errors.append(str(exc))
 
-    expected = {(request_id, profile) for request_id in fixture_ids for profile in profile_names}
-    observed: set[tuple[str, str]] = set()
-    for row in rows:
-        key = (
-            _canonical_request_id(str(row.get("request_id") or "")),
-            str(row.get("profile") or ""),
-        )
-        if key in observed:
-            errors.append(f"duplicate profile coverage: request_id={key[0]} profile={key[1]}")
-        observed.add(key)
-        if not _is_true(row.get("ok")) or not _is_true(row.get("measured")):
-            errors.append(f"failed measurement: request_id={key[0]} profile={key[1]}")
-    unknown = sorted(observed - expected)
-    missing = sorted(expected - observed)
-    if unknown:
-        errors.append(f"unknown profile coverage: {unknown}")
-    if missing:
-        errors.append(f"missing profile coverage: {missing}")
+    expected_pairs = {(request_id, profile) for request_id in fixture_ids for profile in profile_names}
+    actual_pairs: list[tuple[str, str]] = []
+    for row in profile_rows:
+        request_id = _canonical_request_id(str(row.get("request_id") or ""))
+        profile = str(row.get("profile") or "")
+        pair = (request_id, profile)
+        actual_pairs.append(pair)
+        if not _is_true(row.get("ok")):
+            errors.append(f"unsuccessful profile row: {request_id}/{profile}")
+        if not _is_true(row.get("measured")):
+            errors.append(f"unmeasured profile row: {request_id}/{profile}")
+        if "dry_run" in row and _is_true(row.get("dry_run")):
+            errors.append(f"dry-run profile row: {request_id}/{profile}")
+
+    actual_pair_set = set(actual_pairs)
+    if len(actual_pairs) != len(actual_pair_set):
+        errors.append("duplicate canonical request-profile pair")
+    missing_pairs = sorted(expected_pairs - actual_pair_set)
+    unexpected_pairs = sorted(actual_pair_set - expected_pairs)
+    if missing_pairs:
+        errors.append(f"missing request-profile pairs: {missing_pairs}")
+    if unexpected_pairs:
+        errors.append(f"unexpected request-profile pairs: {unexpected_pairs}")
+
+    failed_chunk_paths = sorted((run_dir / "profile_tables").glob("*_failed_chunks.csv"))
+    for path in failed_chunk_paths:
+        try:
+            _, failed_rows = _read_csv_rows(path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if failed_rows:
+            errors.append(f"failed chunk residue: {path}")
+
+    expected_profile_rows = len(expected_pairs)
     return {
         "batch_id": batch.batch_id,
         "mergeable": not errors,
-        "profile_rows": len(rows),
-        "expected_profile_rows": len(expected),
+        "profile_rows": len(profile_rows),
+        "expected_profile_rows": expected_profile_rows,
         "errors": errors,
     }
 
@@ -164,7 +179,11 @@ def materialize_session_batches(fixture_path: Path, output_root: Path, *, sessio
         selected = set(session_group)
         batch_rows = [dict(row) for row in rows if str(row["session_id"]) in selected]
         row_order = {id(row): index for index, row in enumerate(rows)}
-        batch_rows.sort(key=lambda row: int(row.get("arrival_index", row_order[id(row)])))
+        batch_rows.sort(
+            key=lambda row: int(row["arrival_index"])
+            if "arrival_index" in row
+            else row_order[id(row)]
+        )
         for arrival_index, row in enumerate(batch_rows):
             row["arrival_index"] = arrival_index
             row["metadata"] = {**dict(row.get("metadata") or {}), "diagnostic_only": True, "batch_id": f"batch{index:03d}"}
@@ -310,6 +329,8 @@ def merge_batch_outputs(statuses: list[dict[str, Any]], root: Path) -> Path:
         merged_manifest = {
             "diagnostic_only": True,
             "merged": True,
+            "mixed_hardware": True,
+            "performance_comparability": "diagnostic_only",
             "batches": statuses,
         }
         (staging_root / "manifest.json").write_text(
@@ -402,6 +423,42 @@ def run_batches(
         _write_supervisor_manifest(root, manifest, statuses, merged=False)
 
     mergeable = bool(statuses) and all(status["mergeable"] for status in statuses)
+    if not partial_execution and mergeable:
+        expected_sessions = manifest.get("expected_sessions")
+        expected_requests = manifest.get("expected_requests")
+        expected_profiles = manifest.get("expected_profiles")
+        expected_profile_rows = manifest.get("expected_profile_rows")
+        actual_sessions = sum(int(item.get("sessions", 0)) for item in all_batches)
+        actual_requests = sum(int(item.get("requests", 0)) for item in all_batches)
+        actual_profile_rows = sum(int(status.get("profile_rows", 0)) for status in statuses)
+        actual_profiles = len(set().union(*(set(status.get("expected_profiles", [])) for status in statuses)))
+        global_errors = []
+        for label, expected, actual in (
+            ("sessions", expected_sessions, actual_sessions),
+            ("requests", expected_requests, actual_requests),
+            ("profiles", expected_profiles, actual_profiles),
+            ("profile rows", expected_profile_rows, actual_profile_rows),
+        ):
+            if expected is not None and int(expected) != actual:
+                global_errors.append(f"global {label} coverage mismatch: expected {expected}, got {actual}")
+        seen_pairs: set[tuple[str, str]] = set()
+        for status in statuses:
+            path = status.get("profile_csv")
+            if not path:
+                continue
+            try:
+                _, rows = _read_csv_rows(Path(str(path)))
+            except ValueError as exc:
+                global_errors.append(str(exc))
+                continue
+            for row in rows:
+                pair = (_canonical_request_id(str(row.get("request_id") or "")), str(row.get("profile") or ""))
+                if pair in seen_pairs:
+                    global_errors.append(f"duplicate canonical request-profile pair across batches: {pair}")
+                seen_pairs.add(pair)
+        if global_errors:
+            mergeable = False
+            statuses.append({"batch_id": "global", "mergeable": False, "errors": global_errors})
     if partial_execution:
         _write_supervisor_manifest(root, manifest, statuses, merged=False)
         return 0 if mergeable else 1
@@ -455,12 +512,86 @@ def main() -> int:
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--profile-only", action="store_true", help="只测量 profiles，不跑 policy 实验轨")
+    parser.add_argument("--validate-existing", action="store_true", help="只读验证已有 batch 输出，不执行 GPU 任务")
     parser.add_argument("--batch-overrides")
     batch_filter = parser.add_mutually_exclusive_group()
     batch_filter.add_argument("--skip-batches", nargs="+", default=[])
     batch_filter.add_argument("--only-batches", nargs="+", default=[])
     args = parser.parse_args()
     root = Path(args.run_root).resolve()
+    if args.validate_existing:
+        manifest_path = root / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": f"invalid manifest: {exc}"}, ensure_ascii=False))
+            return 1
+
+        reports: list[dict[str, Any]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        global_errors: list[str] = []
+        for item in manifest.get("batches", []):
+            batch = _batch_from_manifest_item(item)
+            run_dir = Path(item.get("run_dir", root / "batch_outputs" / batch.batch_id))
+            profile_names = _profile_names(manifest, item)
+            report = validate_batch_output(batch, run_dir, profile_names)
+            report.update({
+                "diagnostic_only": True,
+                "fixture": str(batch.fixture_path),
+                "config": str(item["config"]),
+                "run_dir": str(run_dir),
+                "expected_requests": batch.request_count,
+                "expected_profiles": sorted(profile_names),
+                "profile_csv": _artifact_path(run_dir, "profile_tables", "*_profiles.csv"),
+                "trace_csv": _artifact_path(run_dir, "session_traces", "*_trace.csv"),
+            })
+            reports.append(report)
+            profile_csv = report.get("profile_csv")
+            if profile_csv:
+                try:
+                    _, rows = _read_csv_rows(Path(str(profile_csv)))
+                except ValueError as exc:
+                    global_errors.append(str(exc))
+                else:
+                    for row in rows:
+                        pair = (
+                            _canonical_request_id(str(row.get("request_id") or "")),
+                            str(row.get("profile") or ""),
+                        )
+                        if pair in seen_pairs:
+                            global_errors.append(
+                                f"duplicate canonical request-profile pair across batches: {pair}"
+                            )
+                        seen_pairs.add(pair)
+
+        actual_sessions = sum(int(item.get("sessions", 0)) for item in manifest.get("batches", []))
+        actual_requests = sum(int(item.get("requests", 0)) for item in manifest.get("batches", []))
+        actual_profile_rows = sum(int(report.get("profile_rows", 0)) for report in reports)
+        actual_profiles = len(set().union(*(set(report.get("expected_profiles", [])) for report in reports))) if reports else 0
+        for label, key, actual in (
+            ("sessions", "expected_sessions", actual_sessions),
+            ("requests", "expected_requests", actual_requests),
+            ("profiles", "expected_profiles", actual_profiles),
+            ("profile rows", "expected_profile_rows", actual_profile_rows),
+        ):
+            expected = manifest.get(key)
+            if expected is not None and int(expected) != actual:
+                global_errors.append(
+                    f"global {label} coverage mismatch: expected {expected}, got {actual}"
+                )
+
+        if global_errors:
+            reports.append({"batch_id": "global", "mergeable": False, "errors": global_errors})
+        mergeable = bool(reports) and all(report.get("mergeable", False) for report in reports)
+        _remove_output_directory(root / "merged")
+        if mergeable:
+            try:
+                merge_batch_outputs(reports, root)
+            except Exception as exc:
+                print(json.dumps({"batches": reports, "merge_error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
+                return 1
+        print(json.dumps({"batches": reports}, ensure_ascii=False))
+        return 0 if mergeable else 1
     batches = materialize_session_batches(Path(args.fixture), root / "fixtures", sessions_per_batch=args.sessions_per_batch)
     base = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
     overrides: dict[str, dict[str, Any]] = {}
