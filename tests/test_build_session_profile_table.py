@@ -5,8 +5,9 @@ import csv
 from pathlib import Path
 from unittest.mock import patch
 
+from run_util.data_utils import validate_requests_for_experiment_type
 from profiles.base import PersistentWorkerFatalError
-from run_util.build_profile_table import build_profile_table
+from run_util.build_profile_table import _order_requests_for_session_residency, build_profile_table
 from run_util.core_types import ProfileMeasurement, ProfileSpec, Request
 
 
@@ -703,3 +704,35 @@ def test_build_profile_table_closes_previous_persistent_worker_before_next_adapt
 
     assert code == 0
     assert close_events == ["full", "kivi"]
+
+
+def test_grouped_baseline_session_requests_pass_experiment_validation() -> None:
+    requests = [
+        Request("s1-t0", "qa", "p", session_id="s1", turn_index=0, arrival_index=0),
+        Request("s2-t0", "qa", "p", session_id="s2", turn_index=0, arrival_index=1),
+        Request("s1-t1", "qa", "p", session_id="s1", turn_index=1, arrival_index=2),
+        Request("s2-t1", "qa", "p", session_id="s2", turn_index=1, arrival_index=3),
+    ]
+
+    grouped = _order_requests_for_session_residency(requests, "baseline_session")
+
+    validate_requests_for_experiment_type(grouped, "baseline_session")
+
+
+def test_baseline_session_requests_are_grouped_for_single_session_gpu_residency() -> None:
+    requests = [
+        Request("s1-t0", "qa", "p", session_id="s1", turn_index=0, arrival_index=0),
+        Request("s2-t0", "qa", "p", session_id="s2", turn_index=0, arrival_index=1),
+        Request("s1-t1", "qa", "p", session_id="s1", turn_index=1, arrival_index=2),
+        Request("s2-t1", "qa", "p", session_id="s2", turn_index=1, arrival_index=3),
+    ]
+
+    ordered = _order_requests_for_session_residency(requests, "baseline_session")
+
+    assert [(request.session_id, request.turn_index) for request in ordered] == [
+        ("s1", 0),
+        ("s1", 1),
+        ("s2", 0),
+        ("s2", 1),
+    ]
+    assert {request.request_id for request in ordered} == {request.request_id for request in requests}

@@ -184,6 +184,34 @@ def _limit_requests_for_experiment(requests: list, max_requests: int, experiment
     return limit_requests_by_split(requests, max_requests)
 
 
+def _order_requests_for_session_residency(requests: list, experiment_type: str) -> list:
+    if experiment_type != "baseline_session":
+        return list(requests)
+
+    first_seen: dict[str, int] = {}
+    for index, request in enumerate(requests):
+        session_id = str(
+            getattr(request, "session_id", "")
+            or getattr(request, "request_id", "")
+        )
+        first_seen.setdefault(session_id, index)
+
+    return sorted(
+        requests,
+        key=lambda request: (
+            first_seen[
+                str(
+                    getattr(request, "session_id", "")
+                    or getattr(request, "request_id", "")
+                )
+            ],
+            int(getattr(request, "turn_index", 0)),
+            int(getattr(request, "arrival_index", 0)),
+            str(getattr(request, "request_id", "")),
+        ),
+    )
+
+
 def _active_profile_names(adapters: list, configured_profiles: list[str]) -> list[str]:
     configured = set(configured_profiles)
     active: list[str] = []
@@ -383,6 +411,7 @@ def build_profile_table(args: argparse.Namespace) -> int:
         else:
             requests = list(preloaded_requests)
             fallback_requests = bool(getattr(args, "fallback_requests", False))
+        requests = _order_requests_for_session_residency(requests, experiment_type)
         requests = expand_repeated_requests(requests, int(runtime.get("repeat", 1)))
         requests = [
             replace(

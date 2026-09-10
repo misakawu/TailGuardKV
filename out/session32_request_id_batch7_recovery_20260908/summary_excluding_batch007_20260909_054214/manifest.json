@@ -1,0 +1,111 @@
+{
+  "repository": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV",
+  "source_run": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908",
+  "diagnostic_only": true,
+  "merged": true,
+  "schema_strategy": "union_of_source_columns",
+  "excluded_batches": [
+    "batch007"
+  ],
+  "source_batches": [
+    "batch000",
+    "batch001",
+    "batch002",
+    "batch003",
+    "batch004",
+    "batch005",
+    "batch006",
+    "batch008",
+    "batch009",
+    "batch010",
+    "batch011",
+    "batch012"
+  ],
+  "source_files": [
+    {
+      "batch_id": "batch000",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch000/profile_tables/diagnostic_session27_profiles_batch000.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch001",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch001/profile_tables/diagnostic_session27_profiles_batch001.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch002",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch002/profile_tables/diagnostic_session27_profiles_batch002.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch003",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch003/profile_tables/diagnostic_session27_profiles_batch003.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch004",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch004/profile_tables/diagnostic_session27_profiles_batch004.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch005",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch005/profile_tables/diagnostic_session27_profiles_batch005.csv",
+      "rows": 9
+    },
+    {
+      "batch_id": "batch006",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch006/profile_tables/diagnostic_session27_profiles_batch006.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch008",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch008/profile_tables/diagnostic_session27_profiles_batch008.csv",
+      "rows": 74
+    },
+    {
+      "batch_id": "batch009",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch009/profile_tables/diagnostic_session27_profiles_batch009.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch010",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch010/profile_tables/diagnostic_session27_profiles_batch010.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch011",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch011/profile_tables/diagnostic_session27_profiles_batch011.csv",
+      "rows": 80
+    },
+    {
+      "batch_id": "batch012",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch012/profile_tables/diagnostic_session27_profiles_batch012.csv",
+      "rows": 120
+    }
+  ],
+  "merged_profile_rows": 923,
+  "merged_columns": 102,
+  "profiles": [
+    "full_gpu",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64"
+  ],
+  "failed_chunk_sidecars": [
+    {
+      "batch_id": "batch005",
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch005/profile_tables/diagnostic_session27_profiles_batch005_failed_chunks.csv",
+      "rows": 1
+    }
+  ],
+  "limitations": [
+    "Batch7 is completely excluded.",
+    "Source schemas differ, so missing source fields are represented as empty cells.",
+    "Only available profile tables are summarized; no overall policy or session-trace claim is made.",
+    "Performance measurements are diagnostic-only and may not be directly comparable across execution conditions."
+  ]
+}

@@ -152,6 +152,58 @@ def validate_batch_output(batch: SessionBatch, run_dir: Path, profile_names: set
     }
 
 
+
+def filter_fixture_sessions(
+    fixture_path: Path,
+    output_path: Path,
+    *,
+    excluded_session_ids: set[str],
+) -> dict[str, Any]:
+    """Validate a fixture, remove complete sessions, and write a filtered copy."""
+    rows = [json.loads(line) for line in fixture_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    request_ids: set[str] = set()
+    sessions: dict[str, list[dict[str, Any]]] = {}
+    previous_arrival: int | None = None
+    for row_index, row in enumerate(rows):
+        request_id = str(row.get("request_id") or "")
+        session_id = str(row.get("session_id") or "")
+        if not request_id:
+            raise ValueError(f"fixture row {row_index} has empty request_id")
+        if request_id in request_ids:
+            raise ValueError(f"duplicate request_id: {request_id}")
+        request_ids.add(request_id)
+        if not session_id:
+            raise ValueError(f"fixture row {row_index} has empty session_id")
+        arrival = int(row.get("arrival_index", row_index))
+        if previous_arrival is not None and arrival < previous_arrival:
+            raise ValueError("arrival order is not monotonic")
+        previous_arrival = arrival
+        sessions.setdefault(session_id, []).append(row)
+
+    for session_id, session_rows in sessions.items():
+        turns = [int(row.get("turn_index", index)) for index, row in enumerate(session_rows)]
+        if turns != sorted(turns) or len(turns) != len(set(turns)):
+            raise ValueError(f"invalid turn order for session {session_id}")
+
+    missing = sorted(excluded_session_ids - set(sessions))
+    if missing:
+        raise ValueError(f"excluded sessions not found: {', '.join(missing)}")
+    filtered_rows = [row for row in rows if str(row["session_id"]) not in excluded_session_ids]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in filtered_rows),
+        encoding="utf-8",
+    )
+    filtered_sessions = {str(row["session_id"]) for row in filtered_rows}
+    return {
+        "excluded_sessions": sorted(excluded_session_ids),
+        "excluded_requests": len(rows) - len(filtered_rows),
+        "source_sessions": len(sessions),
+        "source_requests": len(rows),
+        "filtered_sessions": len(filtered_sessions),
+        "filtered_requests": len(filtered_rows),
+    }
+
 def materialize_session_batches(fixture_path: Path, output_root: Path, *, sessions_per_batch: int) -> list[SessionBatch]:
     if sessions_per_batch <= 0:
         raise ValueError("sessions_per_batch must be positive")
@@ -214,6 +266,7 @@ def _write_batch_config(
     config = _recursive_mapping_merge(base_config, override or {})
     config["diagnostic_only"] = True
     config["run_dir"] = str(run_dir.resolve())
+    config.setdefault("output", {})["run_dir"] = str(run_dir.resolve())
     data = dict(config.get("data") or {})
     data.update({"requests": str(batch.fixture_path.resolve()), "max_requests": batch.request_count, "diagnostic_only": True})
     config["data"] = data
@@ -509,6 +562,7 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--sessions-per-batch", type=int, default=2)
+    parser.add_argument("--exclude-session", action="append", default=[], help="exclude a complete session before batching")
     parser.add_argument("--conda-env", default="tailguardkv-base")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--profile-only", action="store_true", help="只测量 profiles，不跑 policy 实验轨")
@@ -592,7 +646,15 @@ def main() -> int:
                 return 1
         print(json.dumps({"batches": reports}, ensure_ascii=False))
         return 0 if mergeable else 1
-    batches = materialize_session_batches(Path(args.fixture), root / "fixtures", sessions_per_batch=args.sessions_per_batch)
+    source_fixture = Path(args.fixture)
+    filtered_fixture = root / "filtered_fixture.jsonl"
+    filter_audit = filter_fixture_sessions(
+        source_fixture,
+        filtered_fixture,
+        excluded_session_ids=set(args.exclude_session),
+    )
+    batching_fixture = filtered_fixture if args.exclude_session else source_fixture
+    batches = materialize_session_batches(batching_fixture, root / "fixtures", sessions_per_batch=args.sessions_per_batch)
     base = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
     overrides: dict[str, dict[str, Any]] = {}
     if args.batch_overrides:
@@ -608,7 +670,19 @@ def main() -> int:
                 raise ValueError(f"batch override for {batch_id} must be a mapping")
             overrides[str(batch_id)] = override
     profile_names = [str(name) for name in ((base.get("profiles") or {}).get("names") or [])]
-    manifest = {"diagnostic_only": True, "sessions_per_batch": args.sessions_per_batch, "profile_names": profile_names, "batches": []}
+    manifest = {
+        "diagnostic_only": True,
+        "sessions_per_batch": args.sessions_per_batch,
+        "profile_names": profile_names,
+        "filter_audit": filter_audit,
+        "filtered_fixture": str(filtered_fixture),
+        "rebuilt_batches": len(batches),
+        "expected_sessions": filter_audit["filtered_sessions"],
+        "expected_requests": filter_audit["filtered_requests"],
+        "expected_profiles": len(profile_names),
+        "expected_profile_rows": filter_audit["filtered_requests"] * len(profile_names),
+        "batches": [],
+    }
     for batch in batches:
         config_path = root / "configs" / f"{batch.batch_id}.yaml"
         run_dir = root / "batch_outputs" / batch.batch_id

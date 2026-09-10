@@ -1045,3 +1045,125 @@ def test_validate_existing_rejects_duplicate_canonical_request_profile_pair(tmp_
 
     assert diagnostic_runner.main() != 0
     assert not (root / "merged").exists()
+
+
+def test_filter_sessions_removes_complete_sessions_and_records_audit(tmp_path: Path) -> None:
+    fixture = tmp_path / "source.jsonl"
+    rows = []
+    for session_index in range(5):
+        session_id = f"hybrid-session-{session_index:03d}"
+        for turn in range(5):
+            rows.append({
+                "request_id": f"request-{session_index:03d}-{turn}",
+                "session_id": session_id,
+                "turn_index": turn,
+                "arrival_index": session_index * 5 + turn,
+            })
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    filtered = tmp_path / "filtered.jsonl"
+
+    audit = diagnostic_runner.filter_fixture_sessions(
+        fixture,
+        filtered,
+        excluded_session_ids={"hybrid-session-001", "hybrid-session-003"},
+    )
+
+    filtered_rows = [json.loads(line) for line in filtered.read_text(encoding="utf-8").splitlines()]
+    assert {row["session_id"] for row in filtered_rows} == {
+        "hybrid-session-000", "hybrid-session-002", "hybrid-session-004"
+    }
+    assert len(filtered_rows) == 15
+    assert audit == {
+        "excluded_sessions": ["hybrid-session-001", "hybrid-session-003"],
+        "excluded_requests": 10,
+        "source_sessions": 5,
+        "source_requests": 25,
+        "filtered_sessions": 3,
+        "filtered_requests": 15,
+    }
+
+
+def test_filter_sessions_rejects_duplicate_request_ids_and_invalid_turn_order(tmp_path: Path) -> None:
+    fixture = tmp_path / "source.jsonl"
+    fixture.write_text(
+        "".join(json.dumps(row) + "\n" for row in [
+            {"request_id": "duplicate", "session_id": "s0", "turn_index": 1, "arrival_index": 0},
+            {"request_id": "duplicate", "session_id": "s0", "turn_index": 0, "arrival_index": 1},
+        ]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate request_id|turn order"):
+        diagnostic_runner.filter_fixture_sessions(fixture, tmp_path / "filtered.jsonl", excluded_session_ids=set())
+
+
+def test_filtered_fixture_rebatches_continuously_with_existing_tail_merge(tmp_path: Path) -> None:
+    fixture = tmp_path / "source.jsonl"
+    rows = []
+    for session_index in range(7):
+        for turn in range(2):
+            rows.append({
+                "request_id": f"r{session_index}-{turn}",
+                "session_id": f"s{session_index}",
+                "turn_index": turn,
+                "arrival_index": session_index * 2 + turn,
+            })
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    filtered = tmp_path / "filtered.jsonl"
+    diagnostic_runner.filter_fixture_sessions(fixture, filtered, excluded_session_ids={"s2", "s3"})
+
+    batches = materialize_session_batches(filtered, tmp_path / "batches", sessions_per_batch=2)
+
+    assert [batch.batch_id for batch in batches] == ["batch000", "batch001"]
+    batch_sessions = []
+    for batch in batches:
+        batch_rows = [json.loads(line) for line in batch.fixture_path.read_text(encoding="utf-8").splitlines()]
+        batch_sessions.append({row["session_id"] for row in batch_rows})
+    assert batch_sessions == [{"s0", "s1"}, {"s4", "s5", "s6"}]
+
+
+def test_prepare_only_writes_filter_audit_and_consistent_batch_configs(tmp_path: Path, monkeypatch) -> None:
+    fixture = tmp_path / "source.jsonl"
+    rows = []
+    for session_index in range(4):
+        for turn in range(5):
+            rows.append({
+                "request_id": f"r{session_index}-{turn}",
+                "session_id": f"hybrid-session-{session_index:03d}",
+                "turn_index": turn,
+                "arrival_index": session_index * 5 + turn,
+            })
+    fixture.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "seed": 17,
+        "profiles": {"names": ["full_gpu", "kivi", "h2o"]},
+        "policies": {"names": ["lru", "tailguard"]},
+        "data": {},
+        "output": {},
+    }), encoding="utf-8")
+    root = tmp_path / "rebuilt"
+    monkeypatch.setattr(sys, "argv", [
+        "run_diagnostic_session_batches.py",
+        "--fixture", str(fixture),
+        "--config", str(config),
+        "--run-root", str(root),
+        "--exclude-session", "hybrid-session-001",
+        "--exclude-session", "hybrid-session-002",
+        "--prepare-only",
+    ])
+
+    assert diagnostic_runner.main() == 0
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["filter_audit"]["excluded_requests"] == 10
+    assert manifest["filter_audit"]["source_requests"] == 20
+    assert manifest["filter_audit"]["filtered_requests"] == 10
+    assert manifest["rebuilt_batches"] == 1
+    item = manifest["batches"][0]
+    generated = yaml.safe_load(Path(item["config"]).read_text(encoding="utf-8"))
+    assert generated["seed"] == 17
+    assert generated["profiles"]["names"] == ["full_gpu", "kivi", "h2o"]
+    assert generated["policies"]["names"] == ["lru", "tailguard"]
+    assert generated["data"]["requests"] == item["fixture"]
+    assert generated["data"]["max_requests"] == item["requests"]
+    assert generated["output"]["run_dir"] == item["run_dir"]

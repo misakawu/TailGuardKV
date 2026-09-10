@@ -1,0 +1,50 @@
+{
+  "covered_tasks": [],
+  "errors": [
+    "KIVI 敏感组至少需要一个主流 profile 的 group mean quality loss > 0.02。",
+    "kivi_sensitive 风险质量记录必须同时覆盖 QA 与 Summary。",
+    "kivi_sensitive 或 low_risk 对照组缺少同家族质量证据，无法计算风险差。",
+    "H2O 敏感组至少需要一个主流 profile 的 group mean quality loss > 0.02。",
+    "h2o_sensitive 风险质量记录必须同时覆盖 QA 与 Summary。",
+    "h2o_sensitive 或 low_risk 对照组缺少同家族质量证据，无法计算风险差。",
+    "chat/unknown full_gpu 缺少 calibration/eval 双侧样本。",
+    "chat/unknown h2o_heavy10_recent10 缺少 calibration/eval 双侧样本。",
+    "chat/unknown h2o_heavy15_recent15 缺少 calibration/eval 双侧样本。",
+    "chat/unknown h2o_heavy20_recent20 缺少 calibration/eval 双侧样本。",
+    "chat/unknown kivi_2bit_residual32 缺少 calibration/eval 双侧样本。",
+    "chat/unknown kivi_2bit_residual64 缺少 calibration/eval 双侧样本。",
+    "chat/unknown kivi_4bit_residual32 缺少 calibration/eval 双侧样本。",
+    "chat/unknown kivi_4bit_residual64 缺少 calibration/eval 双侧样本。",
+    "qa/unknown full_gpu 缺少 calibration/eval 双侧样本。",
+    "qa/unknown h2o_heavy10_recent10 缺少 calibration/eval 双侧样本。",
+    "qa/unknown h2o_heavy15_recent15 缺少 calibration/eval 双侧样本。",
+    "qa/unknown h2o_heavy20_recent20 缺少 calibration/eval 双侧样本。",
+    "qa/unknown kivi_2bit_residual32 缺少 calibration/eval 双侧样本。",
+    "qa/unknown kivi_2bit_residual64 缺少 calibration/eval 双侧样本。",
+    "qa/unknown kivi_4bit_residual32 缺少 calibration/eval 双侧样本。",
+    "qa/unknown kivi_4bit_residual64 缺少 calibration/eval 双侧样本。",
+    "summary/unknown full_gpu 缺少 calibration/eval 双侧样本。",
+    "summary/unknown h2o_heavy10_recent10 缺少 calibration/eval 双侧样本。",
+    "summary/unknown h2o_heavy15_recent15 缺少 calibration/eval 双侧样本。",
+    "summary/unknown h2o_heavy20_recent20 缺少 calibration/eval 双侧样本。",
+    "summary/unknown kivi_2bit_residual32 缺少 calibration/eval 双侧样本。",
+    "summary/unknown kivi_2bit_residual64 缺少 calibration/eval 双侧样本。",
+    "summary/unknown kivi_4bit_residual32 缺少 calibration/eval 双侧样本。",
+    "summary/unknown kivi_4bit_residual64 缺少 calibration/eval 双侧样本。"
+  ],
+  "group_means": {},
+  "passed": false,
+  "policy_comparison_status": "risk_evidence_insufficient",
+  "profile_means": {},
+  "provenance_failures": [],
+  "qualifying_profiles": [],
+  "quality_records": [],
+  "sensitive_control_gaps": {
+    "h2o_sensitive": null,
+    "kivi_sensitive": null
+  },
+  "task_coverage": {
+    "h2o_sensitive": [],
+    "kivi_sensitive": []
+  }
+}

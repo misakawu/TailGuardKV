@@ -1,0 +1,102 @@
+{
+  "diagnostic_only": true,
+  "eviction_policy": "none",
+  "full_profile": "full_gpu",
+  "memory_budgets_mib": [
+    4.40234375,
+    24.69140625,
+    57.955078125,
+    72.13828124999999
+  ],
+  "occupancy_sequence": [
+    {
+      "arrival_index": 0,
+      "diagnostic_only": true,
+      "occupancy_mib": 0.9296875,
+      "request_id": "hybrid-session-000-turn-0__pressure_r1_c1",
+      "session_id": "hybrid-session-000__pressure_r1_c1",
+      "turn_index": 0
+    },
+    {
+      "arrival_index": 1,
+      "diagnostic_only": true,
+      "occupancy_mib": 2.078125,
+      "request_id": "hybrid-session-001-turn-0__pressure_r1_c1",
+      "session_id": "hybrid-session-001__pressure_r1_c1",
+      "turn_index": 0
+    },
+    {
+      "arrival_index": 2,
+      "diagnostic_only": true,
+      "occupancy_mib": 3.5546875,
+      "request_id": "hybrid-session-000-turn-1__pressure_r1_c1",
+      "session_id": "hybrid-session-000__pressure_r1_c1",
+      "turn_index": 1
+    },
+    {
+      "arrival_index": 3,
+      "diagnostic_only": true,
+      "occupancy_mib": 6.9453125,
+      "request_id": "hybrid-session-001-turn-1__pressure_r1_c1",
+      "session_id": "hybrid-session-001__pressure_r1_c1",
+      "turn_index": 1
+    },
+    {
+      "arrival_index": 4,
+      "diagnostic_only": true,
+      "occupancy_mib": 19.9609375,
+      "request_id": "hybrid-session-000-turn-2__pressure_r1_c1",
+      "session_id": "hybrid-session-000__pressure_r1_c1",
+      "turn_index": 2
+    },
+    {
+      "arrival_index": 5,
+      "diagnostic_only": true,
+      "occupancy_mib": 29.421875,
+      "request_id": "hybrid-session-001-turn-2__pressure_r1_c1",
+      "session_id": "hybrid-session-001__pressure_r1_c1",
+      "turn_index": 2
+    },
+    {
+      "arrival_index": 6,
+      "diagnostic_only": true,
+      "occupancy_mib": 31.5,
+      "request_id": "hybrid-session-000-turn-3__pressure_r1_c1",
+      "session_id": "hybrid-session-000__pressure_r1_c1",
+      "turn_index": 3
+    },
+    {
+      "arrival_index": 7,
+      "diagnostic_only": true,
+      "occupancy_mib": 66.7734375,
+      "request_id": "hybrid-session-001-turn-3__pressure_r1_c1",
+      "session_id": "hybrid-session-001__pressure_r1_c1",
+      "turn_index": 3
+    },
+    {
+      "arrival_index": 8,
+      "diagnostic_only": true,
+      "occupancy_mib": 68.6328125,
+      "request_id": "hybrid-session-000-turn-4__pressure_r1_c1",
+      "session_id": "hybrid-session-000__pressure_r1_c1",
+      "turn_index": 4
+    },
+    {
+      "arrival_index": 9,
+      "diagnostic_only": true,
+      "occupancy_mib": 103.6875,
+      "request_id": "hybrid-session-001-turn-4__pressure_r1_c1",
+      "session_id": "hybrid-session-001__pressure_r1_c1",
+      "turn_index": 4
+    }
+  ],
+  "percentiles_mib": {
+    "p25": 4.40234375,
+    "p50": 24.69140625,
+    "p75": 57.955078125,
+    "p90": 72.13828124999999
+  },
+  "quality_status": "risk_evidence_insufficient",
+  "split_seed": 20260906,
+  "violation_status": "risk_evidence_insufficient"
+}

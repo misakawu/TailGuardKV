@@ -559,17 +559,6 @@ def validate_requests_for_experiment_type(
         return
     if not requests:
         raise ValueError("baseline_session 要求非空 session-aware 请求输入")
-    ordered = sorted(
-        requests,
-        key=lambda request: (
-            request.arrival_index,
-            request.session_id or request.request_id,
-            request.turn_index,
-            request.request_id,
-        ),
-    )
-    if ordered != requests:
-        raise ValueError("baseline_session 要求请求按 arrival_index 排序")
     missing_session = [request.request_id for request in requests if not request.session_id]
     if missing_session:
         raise ValueError(

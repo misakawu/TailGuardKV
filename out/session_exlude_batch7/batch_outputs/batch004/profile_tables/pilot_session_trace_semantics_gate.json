@@ -1,0 +1,29 @@
+{
+  "arrival_valid": true,
+  "errors": [],
+  "fixture_valid": true,
+  "global_resident_evolution": true,
+  "global_resident_kv_mib": [
+    1.3671875,
+    2.734375,
+    19.5234375,
+    9.6796875,
+    21.6015625,
+    21.6015625,
+    21.6015625,
+    21.6015625,
+    21.6015625,
+    21.6015625
+  ],
+  "memory_budget_mib": 21.6015625,
+  "passed": true,
+  "profile_history_fields_valid": true,
+  "profile_resident_fields_valid": true,
+  "profile_table_valid": true,
+  "real_pressure_event": true,
+  "replay_profile": "full_gpu",
+  "replay_rows": 10,
+  "session_reuse": true,
+  "session_valid": true,
+  "turn_valid": true
+}

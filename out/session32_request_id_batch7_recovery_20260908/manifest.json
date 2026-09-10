@@ -1,0 +1,24 @@
+{
+  "diagnostic_only": true,
+  "sessions_per_batch": 2,
+  "profile_names": [
+    "full_gpu",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20"
+  ],
+  "batches": [
+    {
+      "batch_id": "batch000",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/fixtures/batch000.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/configs/batch000.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/out/session32_request_id_batch7_recovery_20260908/batch_outputs/batch000",
+      "sessions": 2,
+      "requests": 10
+    }
+  ]
+}
