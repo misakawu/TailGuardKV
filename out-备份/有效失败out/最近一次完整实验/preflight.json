@@ -1,0 +1,29 @@
+{
+  "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/second_memory_pressure_20260912/coarse_config.yaml",
+  "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/pilot_tight_budget_coarse_batch007_20260911/fixtures/batch007.jsonl",
+  "measurements": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/pilot_tight_budget_coarse_batch007_20260911/batch_outputs/batch007/baseline_wide_sweep/profile_tables/pilot_smoke_measured_profiles_batch007.csv",
+  "request_count": 10,
+  "fixture_request_count": 10,
+  "profile_count": 8,
+  "measurement_count": 80,
+  "budgets_mib": [
+    15,
+    20,
+    25,
+    30,
+    35,
+    50
+  ],
+  "epsilon": 0.1,
+  "delta": 0.1,
+  "split_seed": 20260906,
+  "policies": [
+    "full_lru",
+    "static_best",
+    "static_safe",
+    "utility_dynamic",
+    "uncalibrated_dynamic"
+  ],
+  "backend": "measured_replay",
+  "diagnostic_only": true
+}

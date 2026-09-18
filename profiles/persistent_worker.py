@@ -43,6 +43,8 @@ def main() -> int:
         try:
             if op == "init":
                 response = runtime_module.worker_init(message, worker_state)
+            elif op == "warm_profile":
+                response = runtime_module.worker_warm_profile(message, worker_state)
             elif op == "run_batch":
                 response = runtime_module.worker_run_batch(message, worker_state)
             elif op == "shutdown":

@@ -123,11 +123,13 @@ def _load_replay_inputs(
         raise ValueError("run-policies 默认拒绝 dry-run replay；请提供 measured=True 的 profile 表。")
     data_config = config.get("data", {})
     data_config = data_config if isinstance(data_config, dict) else {}
-    calibration_measurements, evaluation_measurements = split_measurements(
-        measurements,
-        split_seed=int(data_config.get("split_seed", 20260906)),
-        stratify_session=bool(data_config.get("stratify_session", False)),
-    )
+    split_kwargs = {
+        "split_seed": int(data_config.get("split_seed", 20260906)),
+        "stratify_session": bool(data_config.get("stratify_session", False)),
+    }
+    if "calibration_fraction" in data_config:
+        split_kwargs["calibration_fraction"] = float(data_config["calibration_fraction"])
+    calibration_measurements, evaluation_measurements = split_measurements(measurements, **split_kwargs)
     replay_measurements = measurements if experiment_type == "baseline_session" else evaluation_measurements
     replay_requests = requests_from_measurements(replay_measurements)
     evaluation_requests = requests_from_measurements(evaluation_measurements)
@@ -201,7 +203,7 @@ def _failure_record(policy: Policy, request: Request, error: BaseException, *, a
         audit_rate=action.audit_rate if action is not None else None,
         drift_state=action.drift_state if action is not None else "",
         active_session_count=None,
-        budget_hit=action.budget_hit if action is not None else False,
+        budget_hit=False,
         policy_budget_filtered=action.policy_budget_filtered if action is not None else False,
         primary_profile=(action.rejected_profile or action.profile) if action is not None else profile,
     )
@@ -243,7 +245,7 @@ def _record_from_backend_result(
         audit_rate=action.audit_rate,
         drift_state=action.drift_state,
         active_session_count=_active_session_count(backend_result.extra),
-        budget_hit=action.budget_hit,
+        budget_hit=False,
         policy_budget_filtered=action.policy_budget_filtered,
         primary_profile=action.rejected_profile or action.profile,
     )
@@ -400,6 +402,7 @@ def _run_policy_matrix(
         if hasattr(backend, "reset"):
             backend.reset()
         cache_state = getattr(backend, "cache_state", CacheState())
+        warmed_initial_action = False
         for request in sorted(
             replay_requests,
             key=lambda item: (item.arrival_index, item.session_id or item.request_id, item.turn_index),
@@ -421,9 +424,19 @@ def _run_policy_matrix(
                     )
                 continue
             try:
+                if not warmed_initial_action:
+                    warm_profile = getattr(backend, "warm_profile", None)
+                    if callable(warm_profile):
+                        warm_profile(request, action.profile)
+                    warmed_initial_action = True
                 full_shadow_result = None
                 shadow_execute = getattr(backend, "execute_full_shadow", None)
-                if audit_selected and getattr(backend, "name", "") == "online_qwen" and callable(shadow_execute):
+                if (
+                    audit_selected
+                    and action.profile not in exact
+                    and getattr(backend, "name", "") == "online_qwen"
+                    and callable(shadow_execute)
+                ):
                     try:
                         full_shadow_result = shadow_execute(request, cache_state)
                     except Exception:
@@ -434,6 +447,8 @@ def _run_policy_matrix(
                 else:
                     backend_result = backend.run([request], [action.profile])[0]
                 validate_backend_results([backend_result], path=f"{policy.name}:{request.request_id}")
+                if audit_selected and action.profile in exact:
+                    full_shadow_result = backend_result
                 cache_state = getattr(backend, "cache_state", cache_state)
                 if emit_record:
                     record = _record_quality_audit(

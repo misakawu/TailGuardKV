@@ -530,7 +530,8 @@ def test_uncalibrated_dynamic_uses_cache_state_for_memory_filtering() -> None:
     action = policy.decide(request, cache_state, DeviceState())
 
     assert action.profile == "full_cpu"
-    assert action.budget_hit is True
+    assert action.policy_budget_filtered is True
+    assert action.budget_hit is False
     assert action.candidate_safe_count == 1.0
 
 
@@ -560,7 +561,8 @@ def test_utility_dynamic_uses_cache_state_for_memory_filtering() -> None:
     action = policy.decide(request, cache_state, DeviceState())
 
     assert action.profile == "full_cpu"
-    assert action.budget_hit is True
+    assert action.policy_budget_filtered is True
+    assert action.budget_hit is False
     assert action.candidate_safe_count == 1.0
 
 
@@ -604,7 +606,7 @@ def test_static_best_keeps_full_when_lossy_has_no_ttft_benefit() -> None:
     assert action.profile == "full_gpu"
 
 
-def test_static_safe_records_lossy_primary_when_it_falls_back_to_exact() -> None:
+def test_static_safe_fixes_exact_when_no_lossy_profile_meets_tail_slo() -> None:
     calibration = [
         _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0, kv_cumulative_mib=40.0),
         _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.20, kv_incremental_mib=18.0, kv_cumulative_mib=18.0),
@@ -622,8 +624,25 @@ def test_static_safe_records_lossy_primary_when_it_falls_back_to_exact() -> None
     action = policy.decide(Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1), CacheState(), DeviceState())
 
     assert action.profile == "full_gpu"
-    assert action.rejected_profile == "kivi_4bit_residual32"
-    assert action.fallback_reason == "calibrated unsafe"
+    assert action.rejected_profile == ""
+    assert action.fallback_reason == ""
+
+
+def test_static_safe_profile_does_not_change_with_runtime_state() -> None:
+    calibration = [
+        _measurement("s1_t0", "full_gpu", quality_loss=0.0, kv_incremental_mib=40.0),
+        _measurement("s1_t0", "kivi_4bit_residual32", quality_loss=0.01, kv_incremental_mib=18.0),
+        _measurement("s2_t0", "kivi_4bit_residual32", quality_loss=0.01, kv_incremental_mib=18.0),
+    ]
+    policy = StaticSafePolicy(calibration, ["full_gpu", "kivi_4bit_residual32"], 0.05, 0.05, {"full_gpu"})
+    request = Request("s1_t1", "chat", "next turn", session_id="s1", turn_index=1)
+    empty = policy.decide(request, CacheState(), DeviceState())
+    pressured = policy.decide(
+        request,
+        CacheState(global_resident_kv_mib=1000.0, global_budget_mib=1.0),
+        DeviceState(gpu_free_mib=0.0),
+    )
+    assert empty.profile == pressured.profile == "kivi_4bit_residual32"
 
 
 def test_policy_run_record_keeps_policy_and_backend_budget_signals_separate() -> None:
@@ -651,6 +670,6 @@ def test_policy_run_record_keeps_policy_and_backend_budget_signals_separate() ->
         budget_hit=True,
     )
 
-    assert record.policy_budget_filtered is True
+    assert record.policy_budget_filtered is False
     assert record.backend_budget_hit is False
     assert record.budget_hit is False

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from profiles.base import PersistentProfileWorker
 from profiles import qwen2_kv_runtime
@@ -69,6 +72,28 @@ def test_worker_run_batch_reuses_runtime_between_batches() -> None:
     assert first["worker"]["mode"] == "persistent"
     assert second["worker"]["mode"] == "persistent"
     assert second["session_runtime_state"]["sessions"]["s1"]["resident_gpu_mib"] == 3.0
+
+
+def test_warm_profile_loads_runtime_without_creating_session_state() -> None:
+    worker_state: dict[str, object] = {}
+    runtime = {"runtime_id": "sentinel", "startup_ms": 12.0, "model_load_ms": 34.0}
+    warm_payload = {
+        "profile": "full_gpu",
+        "request": _payload("warm only", 0)["requests"][0],
+    }
+
+    with patch("profiles.qwen2_kv_runtime._prepare_full_runtime", return_value=runtime) as prepare_runtime:
+        qwen2_kv_runtime.worker_init({"adapter": "full", "runtime_config": {}}, worker_state)
+        warmed = qwen2_kv_runtime.worker_warm_profile(warm_payload, worker_state)
+
+    assert warmed["ok"] is True
+    assert warmed["worker"]["warm_profile"] == "full_gpu"
+    assert warmed["worker"]["warm_profile_success"] is True
+    assert warmed["worker"]["worker_model_load_ms"] == 34.0
+    assert prepare_runtime.call_count == 1
+    assert worker_state["runtime"] is runtime
+    assert runtime["session_reuse"] == {}
+    assert "session_runtime_state" not in warmed
 
 
 def test_worker_run_batch_reports_fatal_error_and_releases_runtime() -> None:
@@ -215,6 +240,67 @@ def test_persistent_worker_starts_with_env_python_instead_of_conda_run() -> None
     command = popen.call_args.args[0]
     assert command[:3] == ["/opt/miniforge3/envs/tailguardkv-base/bin/python", "-m", "profiles.persistent_worker"]
     assert "conda" not in command[0]
+
+
+def test_persistent_worker_broken_pipe_reports_exit_code_and_stderr() -> None:
+    class ClosedInput:
+        def write(self, _: str) -> int:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self) -> None:
+            raise AssertionError("flush must not run after a broken pipe")
+
+    worker = PersistentProfileWorker(
+        adapter="kivi",
+        env_name="tailguardkv-base",
+        runtime_module="profiles.qwen2_kv_runtime",
+        runtime_config={},
+    )
+    worker._proc = SimpleNamespace(
+        stdin=ClosedInput(),
+        stdout=object(),
+        stderr=io.StringIO("CUDA out of memory"),
+        poll=lambda: -9,
+    )
+
+    with pytest.raises(RuntimeError, match=r"returncode=-9; stderr=CUDA out of memory"):
+        worker.request({"op": "run_batch"}, timeout_s=1)
+
+
+def test_persistent_worker_close_finishes_cleanup_after_broken_pipe() -> None:
+    class Stream:
+        def __init__(self, *, broken: bool = False) -> None:
+            self.broken = broken
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            if self.broken:
+                raise BrokenPipeError(32, "Broken pipe")
+
+    stdin = Stream(broken=True)
+    stdout = Stream()
+    stderr = Stream()
+    worker = PersistentProfileWorker(
+        adapter="kivi",
+        env_name="tailguardkv-base",
+        runtime_module="profiles.qwen2_kv_runtime",
+        runtime_config={},
+    )
+    worker._proc = SimpleNamespace(
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        poll=lambda: -9,
+    )
+
+    with patch.object(worker, "request", side_effect=BrokenPipeError(32, "Broken pipe")):
+        worker.close()
+
+    assert stdin.closed is True
+    assert stdout.closed is True
+    assert stderr.closed is True
+    assert worker._proc is None
 
 
 def test_release_runtime_resources_drops_model_refs_before_empty_cache() -> None:

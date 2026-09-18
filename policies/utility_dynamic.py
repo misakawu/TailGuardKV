@@ -60,7 +60,6 @@ class UtilityDynamicPolicy(StatsPolicy):
                 pred_loss=candidate.pred_loss,
                 risk_upper=candidate.risk_upper,
                 safe=candidate.safe,
-                budget_hit=budget_filtered,
                 policy_budget_filtered=budget_filtered,
                 epsilon=self.epsilon,
                 delta=self.delta,

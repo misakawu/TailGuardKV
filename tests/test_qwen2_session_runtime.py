@@ -172,3 +172,23 @@ def test_reused_cache_positions_use_cache_logical_length_for_mask_and_positions(
     assert aligned["attention_mask"].shape[-1] == 21
     assert aligned["cache_position"].tolist() == [18, 19, 20]
     assert aligned["position_ids"].tolist() == [[18, 19, 20]]
+
+
+def test_kivi_reused_cache_positions_use_cache_logical_length() -> None:
+    import torch
+    from profiles.qwen2_kivi_runtime import with_reused_cache_positions
+
+    class Cache:
+        def get_seq_length(self) -> int:
+            return 38
+
+    tokenized = {
+        "input_ids": torch.tensor([[201, 202, 203, 204]]),
+        "attention_mask": torch.ones((1, 4), dtype=torch.long),
+    }
+
+    aligned = with_reused_cache_positions(torch, tokenized, Cache())
+
+    assert aligned["attention_mask"].shape[-1] == 42
+    assert aligned["cache_position"].tolist() == [38, 39, 40, 41]
+    assert aligned["position_ids"].tolist() == [[38, 39, 40, 41]]

@@ -8,7 +8,12 @@ from threading import Lock
 from typing import Any
 
 from backends.base import Backend
-from profiles.base import PersistentWorkerFatalError, ProfileAdapter, create_persistent_profile_worker
+from profiles.base import (
+    PersistentWorkerFatalError,
+    ProfileAdapter,
+    create_persistent_profile_worker,
+    warm_persistent_qwen2_profile,
+)
 from run_util.canonical_history import canonical_history_hash
 from run_util.core_types import Action, BackendResult, CacheEvent, CacheState, ProfileMeasurement, ProfileSpec, Request
 
@@ -40,6 +45,7 @@ class OnlineQwenSessionBackend(Backend):
         self._workers: dict[str, Any] = {}
         self._shadow_workers: dict[str, Any] = {}
         self._online_histories: dict[str, list[str]] = {}
+        self._worker_audit: dict[str, dict[str, object]] = {}
         self._loaded_profile: str | None = None
         self._global_budget_mib = float(global_budget_mib) if global_budget_mib > 0 else inf
         self._lock = Lock()
@@ -48,6 +54,7 @@ class OnlineQwenSessionBackend(Backend):
     def reset(self) -> None:
         self.close()
         self._online_histories.clear()
+        self._worker_audit.clear()
         self.cache_state = CacheState(global_budget_mib=self._global_budget_mib)
 
     def close(self) -> None:
@@ -58,6 +65,26 @@ class OnlineQwenSessionBackend(Backend):
         self._workers.clear()
         self._shadow_workers.clear()
         self._loaded_profile = None
+
+    def warm_profile(self, request: Request, profile: str) -> dict[str, object]:
+        """Load a policy's initial runtime without changing serving state."""
+        with self._lock:
+            if profile not in self._specs:
+                raise KeyError(f"online Qwen backend has no profile: {profile}")
+            spec = self._specs[profile]
+            adapter = self._adapters[spec.family]
+            result = warm_persistent_qwen2_profile(
+                self._worker(adapter),
+                adapter=adapter.name,
+                request=self._online_execution_request(request, profile, self.cache_state, reset_history=False),
+                spec=spec,
+                runtime_config=adapter.runtime_config,
+            )
+            worker = result.get("worker")
+            if isinstance(worker, dict):
+                self._worker_audit[adapter.name] = dict(worker)
+            self._loaded_profile = profile
+            return dict(worker) if isinstance(worker, dict) else {}
 
     def __enter__(self) -> "OnlineQwenSessionBackend":
         return self
@@ -190,10 +217,12 @@ class OnlineQwenSessionBackend(Backend):
         service_elapsed_ms = max(0.0, self._clock() - service_started_at)
         raw_latency_ms = float(measurement.latency_ms or 0.0)
         transition_ms = max(0.0, service_elapsed_ms - raw_latency_ms) if runtime_transition else 0.0
+        worker_audit = self._worker_audit.get(self._specs[profile].family, {})
         baseline = BackendResult.from_profile_measurement(
             measurement,
             backend_name=self.name,
             replay_source="",
+            extra=worker_audit,
         )
         worker_state_lost = str(measurement.extra.get("worker_state_lost") or "").lower() == "true"
         state_lost_victims: list[tuple[str, str, float]] = []
@@ -393,6 +422,8 @@ class OnlineQwenSessionBackend(Backend):
             self._online_histories[session_id] = []
         history = list(self._online_histories.get(session_id, ()))
         reuse_expected = (
+            not profile.startswith("h2o_heavy")
+            and
             cache_state.get_current_profile(session_id) == profile
             and cache_state.get_resident_kv(session_id, profile) > 0
             and cache_state.get_dropped_kv(session_id) <= 0

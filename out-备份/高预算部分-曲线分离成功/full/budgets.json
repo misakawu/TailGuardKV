@@ -1,0 +1,1022 @@
+{
+  "diagnostic_only": true,
+  "quality_status": "risk_evidence_insufficient",
+  "violation_status": "risk_evidence_insufficient",
+  "split_seed": 20260906,
+  "full_profile": "full_gpu",
+  "eviction_policy": "none",
+  "occupancy_sequence": [
+    {
+      "request_id": "hybrid-session-000-turn-0",
+      "session_id": "hybrid-session-000",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 0.9296875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-002-turn-0",
+      "session_id": "hybrid-session-002",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 2.734375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-004-turn-0",
+      "session_id": "hybrid-session-004",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 4.2109375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-006-turn-0",
+      "session_id": "hybrid-session-006",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 6.5625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-008-turn-0",
+      "session_id": "hybrid-session-008",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 7.9296875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-010-turn-0",
+      "session_id": "hybrid-session-010",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 9.2421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-012-turn-0",
+      "session_id": "hybrid-session-012",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 11.6484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-016-turn-0",
+      "session_id": "hybrid-session-016",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 14.0546875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-018-turn-0",
+      "session_id": "hybrid-session-018",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 14.9296875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-020-turn-0",
+      "session_id": "hybrid-session-020",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 17.0625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-022-turn-0",
+      "session_id": "hybrid-session-022",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 18.2109375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-024-turn-0",
+      "session_id": "hybrid-session-024",
+      "turn_index": 0,
+      "arrival_index": 0,
+      "occupancy_mib": 21.0,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-001-turn-0",
+      "session_id": "hybrid-session-001",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 22.1484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-003-turn-0",
+      "session_id": "hybrid-session-003",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 23.40625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-005-turn-0",
+      "session_id": "hybrid-session-005",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 25.1015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-007-turn-0",
+      "session_id": "hybrid-session-007",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 26.0859375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-009-turn-0",
+      "session_id": "hybrid-session-009",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 27.453125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-011-turn-0",
+      "session_id": "hybrid-session-011",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 29.2578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-013-turn-0",
+      "session_id": "hybrid-session-013",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 30.7890625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-017-turn-0",
+      "session_id": "hybrid-session-017",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 32.8671875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-019-turn-0",
+      "session_id": "hybrid-session-019",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 34.0703125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-021-turn-0",
+      "session_id": "hybrid-session-021",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 36.1484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-023-turn-0",
+      "session_id": "hybrid-session-023",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 37.953125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-025-turn-0",
+      "session_id": "hybrid-session-025",
+      "turn_index": 0,
+      "arrival_index": 1,
+      "occupancy_mib": 39.6484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-000-turn-1",
+      "session_id": "hybrid-session-000",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 41.125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-002-turn-1",
+      "session_id": "hybrid-session-002",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 52.9375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-004-turn-1",
+      "session_id": "hybrid-session-004",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 60.9765625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-006-turn-1",
+      "session_id": "hybrid-session-006",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 65.3515625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-008-turn-1",
+      "session_id": "hybrid-session-008",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 82.140625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-010-turn-1",
+      "session_id": "hybrid-session-010",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 90.671875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-012-turn-1",
+      "session_id": "hybrid-session-012",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 106.2578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-016-turn-1",
+      "session_id": "hybrid-session-016",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 120.2578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-018-turn-1",
+      "session_id": "hybrid-session-018",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 121.734375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-020-turn-1",
+      "session_id": "hybrid-session-020",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 129.4453125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-022-turn-1",
+      "session_id": "hybrid-session-022",
+      "turn_index": 1,
+      "arrival_index": 2,
+      "occupancy_mib": 135.953125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-026-turn-0",
+      "session_id": "hybrid-session-026",
+      "turn_index": 0,
+      "arrival_index": 2,
+      "occupancy_mib": 137.8671875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-001-turn-1",
+      "session_id": "hybrid-session-001",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 141.2578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-003-turn-1",
+      "session_id": "hybrid-session-003",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 144.3203125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-005-turn-1",
+      "session_id": "hybrid-session-005",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 150.5,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-007-turn-1",
+      "session_id": "hybrid-session-007",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 157.5,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-009-turn-1",
+      "session_id": "hybrid-session-009",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 165.8125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-011-turn-1",
+      "session_id": "hybrid-session-011",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 172.921875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-013-turn-1",
+      "session_id": "hybrid-session-013",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 187.90625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-017-turn-1",
+      "session_id": "hybrid-session-017",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 195.1796875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-019-turn-1",
+      "session_id": "hybrid-session-019",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 200.8125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-021-turn-1",
+      "session_id": "hybrid-session-021",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 209.1796875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-023-turn-1",
+      "session_id": "hybrid-session-023",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 224.4375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-024-turn-1",
+      "session_id": "hybrid-session-024",
+      "turn_index": 1,
+      "arrival_index": 3,
+      "occupancy_mib": 232.5859375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-000-turn-2",
+      "session_id": "hybrid-session-000",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 245.6015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-002-turn-2",
+      "session_id": "hybrid-session-002",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 263.046875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-004-turn-2",
+      "session_id": "hybrid-session-004",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 275.953125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-006-turn-2",
+      "session_id": "hybrid-session-006",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 294.2734375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-008-turn-2",
+      "session_id": "hybrid-session-008",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 311.5,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-010-turn-2",
+      "session_id": "hybrid-session-010",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 328.1796875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-012-turn-2",
+      "session_id": "hybrid-session-012",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 339.828125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-016-turn-2",
+      "session_id": "hybrid-session-016",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 356.0703125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-018-turn-2",
+      "session_id": "hybrid-session-018",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 368.15625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-020-turn-2",
+      "session_id": "hybrid-session-020",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 383.03125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-022-turn-2",
+      "session_id": "hybrid-session-022",
+      "turn_index": 2,
+      "arrival_index": 4,
+      "occupancy_mib": 397.6875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-025-turn-1",
+      "session_id": "hybrid-session-025",
+      "turn_index": 1,
+      "arrival_index": 4,
+      "occupancy_mib": 442.3671875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-001-turn-2",
+      "session_id": "hybrid-session-001",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 451.828125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-003-turn-2",
+      "session_id": "hybrid-session-003",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 458.0625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-005-turn-2",
+      "session_id": "hybrid-session-005",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 469.6015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-007-turn-2",
+      "session_id": "hybrid-session-007",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 488.46875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-009-turn-2",
+      "session_id": "hybrid-session-009",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 501.6484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-011-turn-2",
+      "session_id": "hybrid-session-011",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 533.2578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-013-turn-2",
+      "session_id": "hybrid-session-013",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 548.3515625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-017-turn-2",
+      "session_id": "hybrid-session-017",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 559.671875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-019-turn-2",
+      "session_id": "hybrid-session-019",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 580.234375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-021-turn-2",
+      "session_id": "hybrid-session-021",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 595.109375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-023-turn-2",
+      "session_id": "hybrid-session-023",
+      "turn_index": 2,
+      "arrival_index": 5,
+      "occupancy_mib": 611.2421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-026-turn-1",
+      "session_id": "hybrid-session-026",
+      "turn_index": 1,
+      "arrival_index": 5,
+      "occupancy_mib": 614.359375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-000-turn-3",
+      "session_id": "hybrid-session-000",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 616.4375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-002-turn-3",
+      "session_id": "hybrid-session-002",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 619.0625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-004-turn-3",
+      "session_id": "hybrid-session-004",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 622.5078125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-006-turn-3",
+      "session_id": "hybrid-session-006",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 624.8046875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-008-turn-3",
+      "session_id": "hybrid-session-008",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 628.796875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-010-turn-3",
+      "session_id": "hybrid-session-010",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 630.546875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-012-turn-3",
+      "session_id": "hybrid-session-012",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 633.8828125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-016-turn-3",
+      "session_id": "hybrid-session-016",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 636.5078125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-018-turn-3",
+      "session_id": "hybrid-session-018",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 638.6953125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-020-turn-3",
+      "session_id": "hybrid-session-020",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 640.7734375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-022-turn-3",
+      "session_id": "hybrid-session-022",
+      "turn_index": 3,
+      "arrival_index": 6,
+      "occupancy_mib": 642.5234375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-024-turn-2",
+      "session_id": "hybrid-session-024",
+      "turn_index": 2,
+      "arrival_index": 6,
+      "occupancy_mib": 655.375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-001-turn-3",
+      "session_id": "hybrid-session-001",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 690.6484375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-003-turn-3",
+      "session_id": "hybrid-session-003",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 733.8515625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-005-turn-3",
+      "session_id": "hybrid-session-005",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 775.7421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-007-turn-3",
+      "session_id": "hybrid-session-007",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 819.6015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-009-turn-3",
+      "session_id": "hybrid-session-009",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 863.2421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-011-turn-3",
+      "session_id": "hybrid-session-011",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 906.71875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-013-turn-3",
+      "session_id": "hybrid-session-013",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 947.7890625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-017-turn-3",
+      "session_id": "hybrid-session-017",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 992.7421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-019-turn-3",
+      "session_id": "hybrid-session-019",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 1041.578125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-021-turn-3",
+      "session_id": "hybrid-session-021",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 1078.1640625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-023-turn-3",
+      "session_id": "hybrid-session-023",
+      "turn_index": 3,
+      "arrival_index": 7,
+      "occupancy_mib": 1127.3828125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-025-turn-2",
+      "session_id": "hybrid-session-025",
+      "turn_index": 2,
+      "arrival_index": 7,
+      "occupancy_mib": 1133.78125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-000-turn-4",
+      "session_id": "hybrid-session-000",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1135.640625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-002-turn-4",
+      "session_id": "hybrid-session-002",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1137.9921875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-004-turn-4",
+      "session_id": "hybrid-session-004",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1141.1640625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-006-turn-4",
+      "session_id": "hybrid-session-006",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1143.2421875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-008-turn-4",
+      "session_id": "hybrid-session-008",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1147.015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-010-turn-4",
+      "session_id": "hybrid-session-010",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1148.4921875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-012-turn-4",
+      "session_id": "hybrid-session-012",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1151.5546875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-016-turn-4",
+      "session_id": "hybrid-session-016",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1153.90625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-018-turn-4",
+      "session_id": "hybrid-session-018",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1155.8203125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-020-turn-4",
+      "session_id": "hybrid-session-020",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1157.625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-022-turn-4",
+      "session_id": "hybrid-session-022",
+      "turn_index": 4,
+      "arrival_index": 8,
+      "occupancy_mib": 1159.1015625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-026-turn-2",
+      "session_id": "hybrid-session-026",
+      "turn_index": 2,
+      "arrival_index": 8,
+      "occupancy_mib": 1172.9921875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-001-turn-4",
+      "session_id": "hybrid-session-001",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1208.046875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-003-turn-4",
+      "session_id": "hybrid-session-003",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1251.0859375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-005-turn-4",
+      "session_id": "hybrid-session-005",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1292.8125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-007-turn-4",
+      "session_id": "hybrid-session-007",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1336.453125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-009-turn-4",
+      "session_id": "hybrid-session-009",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1379.9296875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-011-turn-4",
+      "session_id": "hybrid-session-011",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1423.1875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-013-turn-4",
+      "session_id": "hybrid-session-013",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1464.0390625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-017-turn-4",
+      "session_id": "hybrid-session-017",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1508.7734375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-019-turn-4",
+      "session_id": "hybrid-session-019",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1557.4453125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-021-turn-4",
+      "session_id": "hybrid-session-021",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1593.8125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-023-turn-4",
+      "session_id": "hybrid-session-023",
+      "turn_index": 4,
+      "arrival_index": 9,
+      "occupancy_mib": 1642.8125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-024-turn-3",
+      "session_id": "hybrid-session-024",
+      "turn_index": 3,
+      "arrival_index": 9,
+      "occupancy_mib": 1644.78125,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-025-turn-3",
+      "session_id": "hybrid-session-025",
+      "turn_index": 3,
+      "arrival_index": 10,
+      "occupancy_mib": 1682.296875,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-026-turn-3",
+      "session_id": "hybrid-session-026",
+      "turn_index": 3,
+      "arrival_index": 11,
+      "occupancy_mib": 1686.34375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-024-turn-4",
+      "session_id": "hybrid-session-024",
+      "turn_index": 4,
+      "arrival_index": 12,
+      "occupancy_mib": 1688.0390625,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-025-turn-4",
+      "session_id": "hybrid-session-025",
+      "turn_index": 4,
+      "arrival_index": 13,
+      "occupancy_mib": 1725.3359375,
+      "diagnostic_only": true
+    },
+    {
+      "request_id": "hybrid-session-026-turn-4",
+      "session_id": "hybrid-session-026",
+      "turn_index": 4,
+      "arrival_index": 14,
+      "occupancy_mib": 1729.109375,
+      "diagnostic_only": true
+    }
+  ],
+  "percentiles_mib": {
+    "p25": 120.2578125,
+    "p50": 469.6015625,
+    "p75": 1078.1640625,
+    "p90": 1362.5390625000005
+  },
+  "memory_budgets_mib": [
+    120.2578125,
+    469.6015625,
+    1078.1640625,
+    1362.5390625000005
+  ]
+}

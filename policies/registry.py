@@ -31,7 +31,24 @@ def build_policies(
         elif name == "static_best":
             policies.append(StaticBestPolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
         elif name == "static_safe":
-            policies.append(StaticSafePolicy(calibration_measurements, profiles, epsilon, delta, exact_profiles, memory_budget_mib))
+            fixed_profile = options.get("fixed_profile")
+            if fixed_profile is not None:
+                fixed_profile = str(fixed_profile)
+                if fixed_profile not in profiles:
+                    raise ValueError(f"static_safe.fixed_profile 必须在 profiles 中: {fixed_profile}")
+                if fixed_profile in exact_profiles:
+                    raise ValueError(f"static_safe.fixed_profile 必须是 lossy profile: {fixed_profile}")
+            policies.append(
+                StaticSafePolicy(
+                    calibration_measurements,
+                    profiles,
+                    epsilon,
+                    delta,
+                    exact_profiles,
+                    memory_budget_mib,
+                    fixed_profile=fixed_profile,
+                )
+            )
         elif name == "tailguard":
             policies.append(
                 TailGuardPolicy(

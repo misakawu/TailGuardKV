@@ -1,0 +1,182 @@
+{
+  "diagnostic_only": true,
+  "ok": true,
+  "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/configs/pilot_diagnostic_session25_fourth.yaml",
+  "run_root": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full",
+  "profile_table": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/merged/profile_tables/session25_fourth_profiles_batch000.csv",
+  "total_request_count": 125,
+  "calibration_request_count": 60,
+  "evaluation_request_count": 65,
+  "selected_sessions": [
+    "hybrid-session-002",
+    "hybrid-session-003",
+    "hybrid-session-004"
+  ],
+  "scenarios": [
+    {
+      "name": "exact_two_turn",
+      "ok": true,
+      "errors": [],
+      "rows": [
+        {
+          "request_id": "hybrid-session-002-turn-0",
+          "session_id": "hybrid-session-002",
+          "turn_index": 0,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 39113.03570524976,
+          "latency_ms": 40282.39732313156,
+          "kv_cache_memory_mib": 2.078125,
+          "resident_kv_mib_after": 2.078125,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 35145.40943720564,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-002-turn-1",
+          "session_id": "hybrid-session-002",
+          "turn_index": 1,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 87.75891805998981,
+          "latency_ms": 1229.6547060832381,
+          "kv_cache_memory_mib": 3.8828125,
+          "resident_kv_mib_after": 3.8828125,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        }
+      ]
+    },
+    {
+      "name": "kivi_three_turn",
+      "ok": true,
+      "errors": [],
+      "rows": [
+        {
+          "request_id": "hybrid-session-003-turn-0",
+          "session_id": "hybrid-session-003",
+          "turn_index": 0,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 39742.07707101852,
+          "latency_ms": 40947.4182639122,
+          "kv_cache_memory_mib": 1.4765625,
+          "resident_kv_mib_after": 1.4765625,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 35892.58599400893,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-003-turn-1",
+          "session_id": "hybrid-session-003",
+          "turn_index": 1,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 90.26816301047802,
+          "latency_ms": 1334.1562699060887,
+          "kv_cache_memory_mib": 2.8984375,
+          "resident_kv_mib_after": 2.8984375,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-003-turn-2",
+          "session_id": "hybrid-session-003",
+          "turn_index": 2,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 3748.9943851251155,
+          "latency_ms": 5641.226643929258,
+          "kv_cache_memory_mib": 5.149169921875,
+          "resident_kv_mib_after": 5.149169921875,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        }
+      ]
+    },
+    {
+      "name": "runtime_switch",
+      "ok": true,
+      "errors": [],
+      "rows": [
+        {
+          "request_id": "hybrid-session-004-turn-0",
+          "session_id": "hybrid-session-004",
+          "turn_index": 0,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 40833.653824744746,
+          "latency_ms": 41936.76109576225,
+          "kv_cache_memory_mib": 1.75,
+          "resident_kv_mib_after": 1.75,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 36477.71932381764,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-003-turn-0",
+          "session_id": "hybrid-session-003",
+          "turn_index": 0,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 42059.49121728726,
+          "latency_ms": 43269.53507113457,
+          "kv_cache_memory_mib": 1.4765625,
+          "resident_kv_mib_after": 1.4765625,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 37995.26129724644,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-004-turn-1",
+          "session_id": "hybrid-session-004",
+          "turn_index": 1,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 41932.013779878616,
+          "latency_ms": 43035.99601984024,
+          "kv_cache_memory_mib": 5.03125,
+          "resident_kv_mib_after": 5.03125,
+          "recompute_ms": 41930.7661880739,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 37707.22326403484,
+          "backend_name": "online_qwen"
+        }
+      ]
+    }
+  ]
+}

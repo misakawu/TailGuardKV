@@ -434,7 +434,10 @@ def split_measurements(
     *,
     split_seed: int = 20260906,
     stratify_session: bool = True,
+    calibration_fraction: float = 0.5,
 ) -> tuple[list[ProfileMeasurement], list[ProfileMeasurement]]:
+    if not 0.0 < calibration_fraction < 1.0:
+        raise ValueError("calibration_fraction must be between 0 and 1")
     if not stratify_session:
         calibration = [row for row in measurements if row.extra.get("split") == "calibration"]
         evaluation = [row for row in measurements if row.extra.get("split") != "calibration"]
@@ -448,7 +451,8 @@ def split_measurements(
         return (measurements, []) if stratify_session else (measurements, measurements)
 
     if not stratify_session:
-        calibration_ids = set(sorted(sessions)[: max(1, len(sessions) // 2)])
+        calibration_count = max(1, min(len(sessions) - 1, int(len(sessions) * calibration_fraction)))
+        calibration_ids = set(sorted(sessions)[:calibration_count])
     else:
         strata: dict[tuple[str, str, int], list[str]] = {}
         for session_id, rows in sessions.items():
@@ -463,7 +467,8 @@ def split_measurements(
         for stratum, session_ids in strata.items():
             ordered = sorted(session_ids)
             random.Random(f"{split_seed}:{stratum}").shuffle(ordered)
-            calibration_ids.update(ordered[: max(1, len(ordered) // 2)])
+            calibration_count = max(1, min(len(ordered) - 1, int(len(ordered) * calibration_fraction))) if len(ordered) > 1 else 1
+            calibration_ids.update(ordered[:calibration_count])
     return (
         [row for row in measurements if (row.session_id or row.request_id) in calibration_ids],
         [row for row in measurements if (row.session_id or row.request_id) not in calibration_ids],

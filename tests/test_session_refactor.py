@@ -310,7 +310,7 @@ def test_policy_record_from_backend_result_uses_backend_runtime_fields() -> None
     assert record.ttft_ms == 20.0
     assert record.kv_cache_memory_mib == 70.0
     assert record.restore_ms == 4.0
-    assert record.policy_budget_filtered is True
+    assert record.policy_budget_filtered is False
     assert record.backend_budget_hit is False
     assert record.budget_hit is False
 
@@ -416,7 +416,7 @@ def test_metric_collector_policy_summary_includes_session_aggregates() -> None:
     summary = MetricCollector().summarize_policy_runs(records, epsilon=0.05, delta=0.05, exact_profiles={"full_cpu"})["tailguard"]
 
     assert summary["switch_count"] == 1.0
-    assert summary["budget_hit_rate"] == 0.5
+    assert summary["budget_hit_rate"] == 0.0
     assert summary["restore_count"] == 1.0
     assert summary["restore_time_ms"] == 5.0
     assert summary["recompute_count"] == 1.0

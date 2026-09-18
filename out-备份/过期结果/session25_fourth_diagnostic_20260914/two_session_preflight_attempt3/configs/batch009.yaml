@@ -1,0 +1,94 @@
+experiment:
+  type: baseline_session
+backend:
+  name: online_qwen
+model:
+  pilot_model: /DATACENTER3/zhenxiang.wang/resource/Qwen2.5-7B-Instruct
+  cache_dir: /DATACENTER3/zhenxiang.wang/resource/huggingface
+profiles:
+  adapters:
+  - full
+  - kivi
+  - h2o
+  names:
+  - full_gpu
+  - kivi_4bit_residual32
+  - kivi_4bit_residual64
+  - kivi_2bit_residual32
+  - kivi_2bit_residual64
+  - h2o_heavy10_recent10
+  - h2o_heavy15_recent15
+  - h2o_heavy20_recent20
+  specs:
+    full_gpu:
+      exact: true
+    kivi_4bit_residual32:
+      exact: false
+    kivi_4bit_residual64:
+      exact: false
+    kivi_2bit_residual32:
+      exact: false
+    kivi_2bit_residual64:
+      exact: false
+    h2o_heavy10_recent10:
+      exact: false
+    h2o_heavy15_recent15:
+      exact: false
+    h2o_heavy20_recent20:
+      exact: false
+policies:
+  backend: online_qwen
+  record_rejected_unsafe: true
+  names:
+  - full_lru
+  - static_best
+  - static_safe
+  - utility_dynamic
+  - uncalibrated_dynamic
+pilot:
+  epsilons:
+  - 0.05
+  - 0.1
+  deltas:
+  - 0.05
+  - 0.1
+  memory_budgets_mib:
+  - 4900
+  - 5000
+data:
+  source: fixture
+  quality_mode: session_diagnostic
+  requests: /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/fixtures/batch009.jsonl
+  calibration_fraction: 0.5
+  split_seed: 20260906
+  max_requests: 10
+  diagnostic_only: true
+diagnostic_only: true
+profile_smoke:
+  max_new_tokens: 16
+  profile_chunk_size: 1
+  use_persistent_workers: true
+  device_strategy: balanced_two_gpu
+  require_ttft: true
+  timeout_s: 180
+  repeat: 1
+  local_files_only: true
+  vllm_enforce_eager: true
+  vllm_gpu_memory_utilization: 0.75
+  vllm_max_model_len: 1024
+outputs:
+  smoke_profiles: out/profile_tables/session25_fourth_profiles_batch009.csv
+  smoke_session_trace: out/session_traces/session25_fourth_trace_batch009.csv
+  smoke_profile_checks: out/profile_tables/session25_fourth_profile_checks_batch009.csv
+  smoke_policy: out/policy_tables/session25_fourth_policy_batch009.csv
+  smoke_summary: out/policy_tables/session25_fourth_summary_batch009.csv
+  smoke_trace_semantics_gate: out/profile_tables/session25_fourth_trace_semantics_gate_batch009.json
+  smoke_risk_signal_gate: out/profile_tables/session25_fourth_risk_signal_gate_batch009.json
+run_dir: /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/batch_outputs/batch009
+output:
+  run_dir: /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/batch_outputs/batch009
+session_trace:
+  copies: 1
+  repeat_rounds: 1
+  memory_budgets_mib:
+  - 4900

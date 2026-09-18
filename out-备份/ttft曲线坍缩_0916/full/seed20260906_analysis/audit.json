@@ -1,0 +1,198 @@
+{
+  "ok": true,
+  "diagnostic_only": true,
+  "seed": "20260906",
+  "cell_count": 16,
+  "raw_record_count": 5200,
+  "requests_per_policy": 65,
+  "cells": [
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p05_mem120p258.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p1_mem120p258.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p05_mem120p258.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p1_mem120p258.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p05_mem469p602.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p1_mem469p602.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p05_mem469p602.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p1_mem469p602.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p05_mem1078p16.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p1_mem1078p16.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p05_mem1078p16.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p1_mem1078p16.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p05_mem1362p54.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p05_delta0p1_mem1362p54.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p05_mem1362p54.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    },
+    {
+      "path": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/policy_attempts/retry2_20260915/seed20260906/policy_tables/session25_policy_eps0p1_delta0p1_mem1362p54.csv",
+      "records": 325,
+      "policies": [
+        "full_lru",
+        "static_best",
+        "static_safe",
+        "uncalibrated_dynamic",
+        "utility_dynamic"
+      ]
+    }
+  ],
+  "policy_rows": 80,
+  "summary_csv": "out/full_25session_baseline_9_14/full/seed20260906_analysis/seed20260906_total_summary.csv",
+  "events_csv": "out/full_25session_baseline_9_14/full/seed20260906_analysis/seed20260906_events.csv",
+  "session_points_csv": "out/full_25session_baseline_9_14/full/seed20260906_analysis/seed20260906_session_points.csv",
+  "plot_outputs": [
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/summary_policy_p95_ttft.png",
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/summary_policy_kv_memory.png",
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/summary_policy_quality_loss.png",
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/summary_policy_violation_rate.png",
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/action_distribution.png",
+    "out/full_25session_baseline_9_14/full/seed20260906_analysis/event_rates.png"
+  ]
+}

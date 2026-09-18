@@ -224,7 +224,11 @@ class StatsPolicy(Policy):
     def _best_static_best_profile(self) -> str:
         fastest_lossy = ""
         fastest_lossy_ttft = inf
-        for profile in self._candidate_profiles(include_exact=False):
+        # Static baselines choose from the complete calibration table once.
+        # A runtime budget is a backend constraint, not a policy selection input.
+        for profile in self.profiles:
+            if profile in self.exact_profiles:
+                continue
             stat = self.stats.get(profile)
             if stat is None or stat.known_loss_count == 0 or self._loss_or_inf(profile) > self.epsilon:
                 continue
@@ -247,12 +251,17 @@ class StatsPolicy(Policy):
     def _lowest_empirical_loss_lossy_profile(self) -> str:
         best_profile = ""
         best_loss = inf
-        for profile in self._candidate_profiles(include_exact=False):
+        for profile in self.profiles:
+            if profile in self.exact_profiles:
+                continue
             stat = self.stats.get(profile)
             if stat is None or stat.known_loss_count == 0:
                 continue
             loss = self._loss_or_inf(profile)
-            if loss < best_loss:
+            violation = stat.violation_rate if stat.violation_rate is not None else inf
+            if loss > self.epsilon or violation > self.delta:
+                continue
+            if loss < best_loss or (loss == best_loss and profile < best_profile):
                 best_profile = profile
                 best_loss = loss
         return best_profile or self._fastest_exact_profile()

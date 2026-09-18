@@ -1,0 +1,126 @@
+{
+  "diagnostic_only": true,
+  "sessions_per_batch": 2,
+  "profile_names": [
+    "full_gpu",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20"
+  ],
+  "filter_audit": {
+    "excluded_sessions": [],
+    "excluded_requests": 0,
+    "source_sessions": 25,
+    "source_requests": 125,
+    "filtered_sessions": 25,
+    "filtered_requests": 125
+  },
+  "filtered_fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/filtered_fixture.jsonl",
+  "rebuilt_batches": 12,
+  "expected_sessions": 25,
+  "expected_requests": 125,
+  "expected_profiles": 8,
+  "expected_profile_rows": 1000,
+  "batches": [
+    {
+      "batch_id": "batch000",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch000.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch000.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch000",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch001",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch001.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch001.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch001",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch002",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch002.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch002.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch002",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch003",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch003.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch003.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch003",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch004",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch004.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch004.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch004",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch005",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch005.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch005.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch005",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch006",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch006.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch006.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch006",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch007",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch007.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch007.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch007",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch008",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch008.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch008.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch008",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch009",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch009.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch009.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch009",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch010",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch010.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch010.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch010",
+      "sessions": 2,
+      "requests": 10
+    },
+    {
+      "batch_id": "batch011",
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/fixtures/batch011.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/configs/batch011.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/full/batch_outputs/batch011",
+      "sessions": 3,
+      "requests": 15
+    }
+  ]
+}

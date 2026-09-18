@@ -136,6 +136,36 @@ def test_plot_summary_creates_subplot_grid_by_constraint(tmp_path: Path) -> None
     assert outputs
 
 
+def test_plot_summary_caps_linear_ttft_chart_at_five_hundred_ms(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from matplotlib.axes import Axes
+
+    summary_csv = tmp_path / "summary.csv"
+    with summary_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["section", "policy", "epsilon", "delta", "memory_budget_mib", "p95_ttft_ms"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {"section": "policy", "policy": "static_best", "epsilon": "0.05", "delta": "0.05", "memory_budget_mib": "15", "p95_ttft_ms": "42000"}
+        )
+    limits: list[tuple[float, float]] = []
+    original_set_ylim = Axes.set_ylim
+
+    def capture_ylim(self, bottom=None, top=None, *args, **kwargs):
+        if bottom == 0 and top == 500:
+            limits.append((bottom, top))
+        return original_set_ylim(self, bottom, top, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_ylim", capture_ylim)
+
+    plot_summary(summary_csv, tmp_path)
+
+    assert limits == [(0, 500)]
+
+
 def _ci_row(
     *,
     policy: str,
@@ -198,6 +228,34 @@ def test_plot_summary_with_ci_and_session_scatter_keeps_chart_names(tmp_path: Pa
 
     session_rows = _read_rows(session_csv)
     assert _policy_session_values(session_rows, "p95_ttft_ms", ("0.05", "0.05"))[("full_lru", "B=1\ne=0.05\nd=0.05")] == [1.1]
+
+
+def test_plot_summary_does_not_render_ci_bands(tmp_path: Path, monkeypatch) -> None:
+    from matplotlib.figure import Figure
+
+    summary_csv = tmp_path / "summary.csv"
+    rows = [
+        _ci_row(policy="full_lru", memory="1", ttft="1", ci_low="0.9", ci_high="1.1", kv_mib="2", quality="0.01", violation="0.0"),
+        _ci_row(policy="full_lru", memory="2", ttft="2", ci_low="1.8", ci_high="2.2", kv_mib="3", quality="0.02", violation="0.0"),
+    ]
+    with summary_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    collection_counts: list[int] = []
+    original_savefig = Figure.savefig
+
+    def capture_savefig(self, *args, **kwargs):
+        collection_counts.extend(len(axis.collections) for axis in self.axes)
+        return original_savefig(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "savefig", capture_savefig)
+
+    plot_summary(summary_csv, tmp_path)
+
+    assert collection_counts
+    assert all(count == 0 for count in collection_counts)
 
 
 def test_plot_summary_without_ci_or_scatter_still_works(tmp_path: Path) -> None:

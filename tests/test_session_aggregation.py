@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import csv
+import pytest
 import math
 import tempfile
 from pathlib import Path
@@ -296,3 +299,110 @@ def test_session_block_bootstrap_deterministic_with_fixed_seed() -> None:
     assert first[0] <= first[1]
     loss_ci = session_block_bootstrap_ci(records, "violation_rate", epsilon=0.05, seed=20260906)
     assert 0.0 <= loss_ci[0] <= loss_ci[1] <= 1.0
+
+
+def test_diagnostic_batch_audit_rejects_missing_batch(tmp_path: Path) -> None:
+    from scripts.aggregate_session27_baselines import audit_diagnostic_batches
+
+    root = tmp_path / "diagnostic"
+    (root / "fixtures").mkdir(parents=True)
+    (root / "batch_outputs" / "batch000").mkdir(parents=True)
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "diagnostic_only": True,
+                "batches": [
+                    {
+                        "batch_id": "batch000",
+                        "sessions": 1,
+                        "requests": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "fixtures" / "batch000.jsonl").write_text(
+        json.dumps({"session_id": "s0", "request_id": "r0"}) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="batch"):
+        audit_diagnostic_batches(
+            root,
+            expected_batches=2,
+            expected_sessions=1,
+            expected_requests=1,
+            require_diagnostic_only=True,
+        )
+
+
+def test_diagnostic_batch_audit_rejects_duplicate_request(tmp_path: Path) -> None:
+    from scripts.aggregate_session27_baselines import audit_diagnostic_batches
+
+    root = tmp_path / "diagnostic"
+    (root / "fixtures").mkdir(parents=True)
+    batches = []
+    for index in range(2):
+        batch_id = f"batch{index:03d}"
+        (root / "batch_outputs" / batch_id).mkdir(parents=True)
+        (root / "fixtures" / f"{batch_id}.jsonl").write_text(
+            json.dumps({"session_id": f"s{index}", "request_id": "duplicate"}) + "\n",
+            encoding="utf-8",
+        )
+        batches.append({"batch_id": batch_id, "sessions": 1, "requests": 1})
+    (root / "manifest.json").write_text(
+        json.dumps({"diagnostic_only": True, "batches": batches}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate request"):
+        audit_diagnostic_batches(
+            root,
+            expected_batches=2,
+            expected_sessions=2,
+            expected_requests=2,
+            require_diagnostic_only=True,
+        )
+
+
+def test_diagnostic_batch_audit_reports_expected_counts(tmp_path: Path) -> None:
+    from scripts.aggregate_session27_baselines import audit_diagnostic_batches
+
+    root = tmp_path / "diagnostic"
+    (root / "fixtures").mkdir(parents=True)
+    batches = []
+    for index in range(2):
+        batch_id = f"batch{index:03d}"
+        run_dir = root / "batch_outputs" / batch_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "provenance.json").write_text(
+            json.dumps({"diagnostic_only": True}), encoding="utf-8"
+        )
+        rows = [
+            {"session_id": f"s{index}", "request_id": f"r{index}-0"},
+            {"session_id": f"s{index}", "request_id": f"r{index}-1"},
+        ]
+        (root / "fixtures" / f"{batch_id}.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+        batches.append({"batch_id": batch_id, "sessions": 1, "requests": 2})
+    (root / "manifest.json").write_text(
+        json.dumps({"diagnostic_only": True, "batches": batches}),
+        encoding="utf-8",
+    )
+
+    audit = audit_diagnostic_batches(
+        root,
+        expected_batches=2,
+        expected_sessions=2,
+        expected_requests=4,
+        require_diagnostic_only=True,
+    )
+
+    assert audit["status"] == "passed"
+    assert audit["diagnostic_only"] is True
+    assert audit["batch_count"] == 2
+    assert audit["session_count"] == 2
+    assert audit["request_count"] == 4
+    assert [batch["batch_id"] for batch in audit["batches"]] == ["batch000", "batch001"]

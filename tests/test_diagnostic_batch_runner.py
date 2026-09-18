@@ -52,6 +52,44 @@ def test_materialize_session_batches_keeps_complete_sessions_and_arrival_order(t
     assert [row["arrival_index"] for row in first] == list(range(20))
 
 
+def test_validate_batch_output_accepts_batch_suffix_on_profiles(tmp_path: Path) -> None:
+    rows = [
+        {"request_id": "r1", "profile": "full_gpu", "ok": "True", "measured": "True"},
+        {"request_id": "r1", "profile": "lossy", "ok": "True", "measured": "True"},
+    ]
+    batch, run_dir = _batch_output(tmp_path, rows)
+    (run_dir / "profile_tables" / "diagnostic_profiles.csv").rename(
+        run_dir / "profile_tables" / "diagnostic_profiles_batch000.csv"
+    )
+
+    assert validate_batch_output(batch, run_dir, {"full_gpu", "lossy"})["mergeable"] is True
+
+
+def test_validate_batch_output_accepts_retried_batch_suffix(tmp_path: Path) -> None:
+    rows = [
+        {"request_id": "r1", "profile": "full_gpu", "ok": "True", "measured": "True"},
+        {"request_id": "r1", "profile": "lossy", "ok": "True", "measured": "True"},
+    ]
+    batch, run_dir = _batch_output(tmp_path, rows)
+    (run_dir / "profile_tables" / "diagnostic_profiles.csv").rename(
+        run_dir / "profile_tables" / "diagnostic_profiles_batch000_batch005.csv"
+    )
+
+    assert validate_batch_output(batch, run_dir, {"full_gpu", "lossy"})["mergeable"] is True
+
+
+def test_validate_batch_output_rejects_ambiguous_profile_csvs(tmp_path: Path) -> None:
+    rows = [
+        {"request_id": "r1", "profile": "full_gpu", "ok": "True", "measured": "True"},
+        {"request_id": "r1", "profile": "lossy", "ok": "True", "measured": "True"},
+    ]
+    batch, run_dir = _batch_output(tmp_path, rows)
+    source = run_dir / "profile_tables" / "diagnostic_profiles.csv"
+    (run_dir / "profile_tables" / "diagnostic_profiles_batch005.csv").write_bytes(source.read_bytes())
+
+    assert validate_batch_output(batch, run_dir, {"full_gpu", "lossy"})["mergeable"] is False
+
+
 def test_session27_runners_default_to_two_sessions_per_batch(tmp_path: Path, monkeypatch) -> None:
     fixture = tmp_path / "fixture.jsonl"
     fixture.write_text("", encoding="utf-8")
@@ -956,6 +994,9 @@ def test_validate_existing_merges_complete_outputs_with_diagnostic_provenance(tm
     merged_manifest = json.loads((merged / "manifest.json").read_text(encoding="utf-8"))
     assert merged_manifest["mixed_hardware"] is True
     assert merged_manifest["performance_comparability"] == "diagnostic_only"
+    supervisor = json.loads((root / "supervisor_manifest.json").read_text(encoding="utf-8"))
+    assert supervisor["merged"] is True
+    assert supervisor["diagnostic_only"] is True
 
 
 def test_validate_existing_rejects_incomplete_global_session_coverage(tmp_path: Path, monkeypatch) -> None:

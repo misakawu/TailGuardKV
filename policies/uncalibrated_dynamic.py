@@ -56,7 +56,6 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                     fallback_reason="",
                     safety_reason="point_prediction_eligible",
                     candidate_safe_count=candidate_safe_count,
-                    budget_hit=budget_filtered,
                     policy_budget_filtered=budget_filtered,
                 )
             )
@@ -75,7 +74,6 @@ class UncalibratedDynamicPolicy(StatsPolicy):
                 fallback_reason=fallback.reason,
                 safety_reason="point_prediction_rejected",
                 candidate_safe_count=candidate_safe_count,
-                budget_hit=budget_filtered,
                 policy_budget_filtered=budget_filtered,
             )
         )

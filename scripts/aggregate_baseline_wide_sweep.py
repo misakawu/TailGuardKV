@@ -80,6 +80,63 @@ def _policy_csvs(policy_dir: Path) -> list[Path]:
     return sorted(path for path in policy_dir.glob("*.csv") if _is_sweep_csv(path.name))
 
 
+
+def validate_sweep_cells(
+    rows: list[dict[str, str]],
+    *,
+    expected_policies: list[str],
+    high_budget_mib: float,
+    expected_requests: int = 10,
+) -> None:
+    """Validate request-level invariants across a baseline-session sweep."""
+    cells: dict[tuple[str, float], list[dict[str, str]]] = {}
+    for row in rows:
+        policy = str(row.get("policy", "")).strip()
+        if policy not in expected_policies:
+            continue
+        try:
+            budget = float(row.get("memory_budget_mib", ""))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid memory_budget_mib for policy={policy}: {row}") from exc
+        cells.setdefault((policy, budget), []).append(row)
+
+    pressure_seen = False
+    for policy in expected_policies:
+        policy_cells = {budget: cell for (name, budget), cell in cells.items() if name == policy}
+        if high_budget_mib not in policy_cells:
+            raise ValueError(f"missing high-budget control for policy={policy}: {high_budget_mib:g} MiB")
+        for budget, cell in policy_cells.items():
+            if len(cell) != expected_requests:
+                raise ValueError(
+                    f"policy={policy} budget={budget:g} must contain exactly {expected_requests} requests; "
+                    f"found {len(cell)}"
+                )
+            cell_pressure = False
+            for row in cell:
+                try:
+                    resident = float(row.get("global_resident_kv_mib", ""))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"invalid global_resident_kv_mib for policy={policy} budget={budget:g}"
+                    ) from exc
+                if resident > budget + 1e-9:
+                    raise ValueError(
+                        f"global_resident_kv_mib exceeds budget for policy={policy}: "
+                        f"resident={resident:g} budget={budget:g}"
+                    )
+                row_pressure = any(
+                    _parse_bool(row.get(field))
+                    for field in ("budget_hit", "policy_budget_filtered", "backend_budget_hit")
+                )
+                cell_pressure = cell_pressure or row_pressure
+            if budget == high_budget_mib and cell_pressure:
+                raise ValueError(f"high-budget control has pressure for policy={policy}")
+            if budget < high_budget_mib and cell_pressure:
+                pressure_seen = True
+
+    if not pressure_seen:
+        raise ValueError("low-budget sweep contains no request-level pressure event")
+
 def aggregate_directory(policy_dir: str | Path, output_csv: str | Path) -> tuple[Path, list[Path]]:
     source_dir = Path(policy_dir)
     csv_paths = _policy_csvs(source_dir)
@@ -87,11 +144,15 @@ def aggregate_directory(policy_dir: str | Path, output_csv: str | Path) -> tuple
         raise FileNotFoundError(f"未找到可聚合的 policy CSV: {source_dir}")
 
     rows: list[dict[str, Any]] = []
+    all_source_rows: list[dict[str, str]] = []
     collector = MetricCollector()
     for csv_path in csv_paths:
         sweep = parse_sweep_filename(csv_path.name)
         with csv_path.open("r", encoding="utf-8", newline="") as handle:
             source_rows = list(csv.DictReader(handle))
+        for source_row in source_rows:
+            source_row.setdefault("memory_budget_mib", str(sweep["memory_budget_mib"]))
+        all_source_rows.extend(source_rows)
         records = [_record_from_row(row) for row in source_rows]
         provenance = _source_provenance(source_rows, source_dir)
         exact_profiles = {record.action_profile for record in records if record.exact}
@@ -116,6 +177,23 @@ def aggregate_directory(policy_dir: str | Path, output_csv: str | Path) -> tuple
                 if column in metrics:
                     row[column] = metrics[column]
             rows.append(row)
+
+    session_rows = [
+        row for row in all_source_rows
+        if str(row.get("experiment_type", "")).strip() == "baseline_session"
+    ]
+    if session_rows:
+        expected_policies = sorted({
+            str(row.get("policy", "")).strip()
+            for row in session_rows
+            if row.get("policy")
+        })
+        high_budget_mib = 96.0
+        validate_sweep_cells(
+            session_rows,
+            expected_policies=expected_policies,
+            high_budget_mib=high_budget_mib,
+        )
 
     provenance_keys = {(row["config"], row["run_dir"]) for row in rows}
     if len(provenance_keys) > 1:

@@ -1,0 +1,43 @@
+{
+  "diagnostic_only": true,
+  "merged": false,
+  "profile_names": [
+    "full_gpu",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64"
+  ],
+  "batches": [
+    {
+      "batch_id": "batch000",
+      "mergeable": true,
+      "profile_rows": 80,
+      "expected_profile_rows": 80,
+      "errors": [],
+      "diagnostic_only": true,
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/fixtures/batch000.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/configs/batch000.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/batch_outputs/batch000",
+      "returncode": 0,
+      "expected_requests": 10,
+      "expected_profiles": [
+        "full_gpu",
+        "h2o_heavy10_recent10",
+        "h2o_heavy15_recent15",
+        "h2o_heavy20_recent20",
+        "kivi_2bit_residual32",
+        "kivi_2bit_residual64",
+        "kivi_4bit_residual32",
+        "kivi_4bit_residual64"
+      ],
+      "profile_csv": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/session25_fourth_diagnostic_20260914/two_session_preflight_attempt3/batch_outputs/batch000/profile_tables/session25_fourth_profiles_batch000.csv",
+      "trace_csv": null,
+      "gate_only_failure": false,
+      "diagnostic_gate_failed": false
+    }
+  ]
+}

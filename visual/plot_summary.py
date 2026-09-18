@@ -11,17 +11,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from run_util.session_aggregation import bootstrap_ci_columns
-
-
 ChartSpec = tuple[str, str, str, str]
 
 
 POLICY_CHARTS: tuple[ChartSpec, ...] = (
-    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "Server-side replay P95 TTFT by budget and constraint", "Replay outcome P95 TTFT (ms)"),
-    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "Server-side replay KV residency by budget and constraint", "Replay outcome mean resident KV (MiB)"),
-    ("p95_quality_loss", "summary_policy_quality_loss.png", "Server-side replay quality by budget and constraint", "Replay outcome P95 quality loss"),
-    ("violation_rate", "summary_policy_violation_rate.png", "Server-side replay violation rate by budget and constraint", "Replay violation rate"),
+    ("p95_ttft_ms", "summary_policy_p95_ttft.png", "Policy P95 TTFT by budget and constraint", "P95 TTFT (ms)"),
+    ("mean_kv_cache_memory_mib", "summary_policy_kv_memory.png", "Policy KV residency by budget and constraint", "Mean resident KV (MiB)"),
+    ("p95_quality_loss", "summary_policy_quality_loss.png", "Policy quality by budget and constraint", "P95 quality loss"),
+    ("violation_rate", "summary_policy_violation_rate.png", "Policy violation rate by budget and constraint", "Violation rate"),
 )
 RISK_ANNOTATED_CHARTS = {"p95_quality_loss", "violation_rate"}
 RISK_LABEL = "diagnostic_only \u00b7 risk_evidence_insufficient"
@@ -84,14 +81,6 @@ def _cell_label(row: dict[str, str]) -> str:
     return "\n".join(parts)
 
 
-def _numeric_pair(row: dict[str, str], low_key: str, high_key: str) -> tuple[float | None, float | None]:
-    low = _numeric(row.get(low_key))
-    high = _numeric(row.get(high_key))
-    if low is None or high is None:
-        return None, None
-    return low, high
-
-
 def _is_diagnostic_risk(row: dict[str, str]) -> bool:
     return str(row.get("quality_status") or "").strip() == "risk_evidence_insufficient"
 
@@ -99,11 +88,9 @@ def _is_diagnostic_risk(row: dict[str, str]) -> bool:
 def _policy_metric_series(
     rows: list[dict[str, str]],
     metric: str,
-) -> tuple[list[str], dict[str, list[float | None]], dict[str, dict[str, tuple[float, float]]]]:
+) -> tuple[list[str], dict[str, list[float | None]]]:
     cell_rows: dict[str, dict[str, str]] = {}
     values: dict[str, dict[str, float]] = defaultdict(dict)
-    ci_low_key, ci_high_key = bootstrap_ci_columns(metric)
-    bands: dict[str, dict[str, tuple[float, float]]] = defaultdict(dict)
     for row in rows:
         policy = _policy_name(row)
         if not policy:
@@ -116,15 +103,12 @@ def _policy_metric_series(
             continue
         cell_rows.setdefault(label, row)
         values[policy][label] = value
-        low, high = _numeric_pair(row, ci_low_key, ci_high_key)
-        if low is not None and high is not None:
-            bands[policy][label] = (low, high)
     labels = sorted(cell_rows, key=lambda label: _cell_sort_key(cell_rows[label]))
     series = {
         policy: [policy_values.get(label) for label in labels]
         for policy, policy_values in sorted(values.items())
     }
-    return labels, series, {policy: dict(band_values) for policy, band_values in bands.items()}
+    return labels, series
 
 
 def _policy_session_values(
@@ -186,66 +170,34 @@ def _line_chart(
     session_rows: list[dict[str, str]] | None = None,
 ) -> Path | None:
     grouped = _constraint_groups(rows)
-    panels: list[tuple[tuple[str, str], list[str], dict[str, list[float | None]], dict[str, dict[str, tuple[float, float]]]]] = []
+    panels: list[tuple[tuple[str, str], list[str], dict[str, list[float | None]]]] = []
     for constraint, group_rows in grouped.items():
-        labels, series, bands = _policy_metric_series(group_rows, metric)
+        labels, series = _policy_metric_series(group_rows, metric)
         if labels and series:
-            panels.append((constraint, labels, series, bands))
+            panels.append((constraint, labels, series))
     if not panels:
         return None
     output.parent.mkdir(parents=True, exist_ok=True)
     columns = 2 if len(panels) > 1 else 1
     rows_count = math.ceil(len(panels) / columns)
-    max_labels = max(len(labels) for _, labels, _, _ in panels)
+    max_labels = max(len(labels) for _, labels, _ in panels)
     width = max(7.0, min(18.0, 1.1 * max_labels + 4.0 * columns))
     height = max(4.5, 4.2 * rows_count)
     fig, axes = plt.subplots(rows_count, columns, figsize=(width, height), squeeze=False)
     flat_axes = [axis for row_axes in axes for axis in row_axes]
-    for axis, (constraint, labels, series, bands) in zip(flat_axes, panels, strict=False):
+    for axis, (constraint, labels, series) in zip(flat_axes, panels, strict=False):
         x_values = list(range(len(labels)))
         risk_group = group_rows_any(constraint, rows)
-        session_points = (
-            _policy_session_values(session_rows, metric, constraint) if session_rows is not None else {}
-        )
         for policy, values in series.items():
             if all(value is None for value in values):
                 continue
             axis.plot(x_values, values, marker="o", linewidth=1.7, markersize=4.0, label=policy)
-            band_values = bands.get(policy, {})
-            lows = [band_values[label][0] if label in band_values else None for label in labels]
-            highs = [band_values[label][1] if label in band_values else None for label in labels]
-            finite = [index for index, (low, high) in enumerate(zip(lows, highs, strict=True)) if low is not None and high is not None]
-            if finite:
-                axis.fill_between(
-                    [x_values[index] for index in finite],
-                    [lows[index] for index in finite],
-                    [highs[index] for index in finite],
-                    alpha=0.15,
-                    linewidth=0,
-                )
-        session_values = session_points
-        if session_values:
-            for policy in sorted({key[0] for key in session_values}):
-                x_list: list[float] = []
-                y_list: list[float] = []
-                for label_index, label in enumerate(labels):
-                    for value in session_values.get((policy, label), []):
-                        x_list.append(x_values[label_index])
-                        y_list.append(value)
-                if x_list:
-                    axis.scatter(
-                        x_list,
-                        y_list,
-                        marker=".",
-                        s=14,
-                        alpha=0.35,
-                        color="0.35",
-                        zorder=1.5,
-                    )
         epsilon, delta = constraint
         axis.set_title(f"epsilon={epsilon or '?'} delta={delta or '?'}")
         axis.set_xlabel("Memory budget")
         axis.set_ylabel(ylabel)
+        if metric == "p95_ttft_ms":
+            axis.set_ylim(0, 500)
         axis.set_xticks(x_values)
         axis.set_xticklabels(labels)
         axis.tick_params(axis="x", rotation=0, labelsize=8)

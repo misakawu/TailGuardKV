@@ -547,6 +547,8 @@ def write_baseline_smoke_markdown(
     rows: list[dict[str, Any]],
     events: Iterable[dict[str, Any]] | None,
     path: str | Path,
+    *,
+    title: str = "Session27 online baseline smoke",
 ) -> Path:
     """Write the baseline smoke markdown table for the session27 run."""
     output = Path(path)
@@ -556,7 +558,7 @@ def write_baseline_smoke_markdown(
     }
     ordered_rows = sorted(rows, key=_key)
     lines = [
-        "# Session27 online baseline smoke（diagnostic_only）",
+        f"# {title}（diagnostic_only）",
         "",
         "| memory_budget_mib | policy | p95_ttft_ms | mean_ttft_ms | mean_kv_cache_memory_mib | budget_hit_rate | restore_count | recompute_count | mean_quality_loss | quality_status |",
         "|---|---|---|---|---|---|---|---|---|---|",

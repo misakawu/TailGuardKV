@@ -9,6 +9,7 @@ from backends.qwen_session import OnlineQwenSessionBackend
 from profiles.base import PersistentWorkerFatalError
 from profiles.full import FullKVAdapter
 from profiles.generation_timing import generate_with_first_token_timing
+from profiles.h2o import H2OAdapter
 from profiles.kivi import KIVIAdapter
 from profiles import qwen2_kv_runtime
 from run_util.canonical_history import canonical_history_hash
@@ -29,6 +30,19 @@ class FakeOnlineWorker:
     def request(self, message: dict[str, object], *, timeout_s: int) -> dict[str, object]:
         del timeout_s
         self.messages.append(message)
+        if message.get("op") == "warm_profile":
+            return {
+                "ok": True,
+                "worker": {
+                    "mode": "persistent",
+                    "worker_pid": 1234,
+                    "worker_generation": 1,
+                    "warm_profile": message["profile"],
+                    "warm_profile_success": True,
+                    "worker_startup_ms": 21.0,
+                    "worker_model_load_ms": 34.0,
+                },
+            }
         requests = list(message.get("requests") or [])
         if not requests:
             return {
@@ -69,6 +83,24 @@ class FakeOnlineWorker:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_h2o_online_turn_rebuilds_from_full_history_without_runtime_cache_reuse() -> None:
+    worker = FakeOnlineWorker({"s1_t0": 10.0, "s1_t1": 12.0})
+    backend = OnlineQwenSessionBackend(
+        adapters=[H2OAdapter({"pilot_model": "/fake/qwen", "max_new_tokens": 4})],
+        global_budget_mib=100.0,
+        worker_factory=lambda **kwargs: worker,
+    )
+    first = Request("s1_t0", "chat", "first", session_id="s1", turn_index=0, arrival_index=0)
+    second = Request("s1_t1", "chat", "second", session_id="s1", turn_index=1, arrival_index=1)
+
+    assert backend.execute(first, Action(profile="h2o_heavy15_recent15"), backend.cache_state).ok is True
+    assert backend.execute(second, Action(profile="h2o_heavy15_recent15"), backend.cache_state).ok is True
+
+    second_payload = worker.messages[1]["requests"][0]
+    assert second_payload["online_cache_reuse_expected"] is False
+    assert second_payload["prompt"] == "User: first\nAssistant: generated:s1_t0\nUser: second\nAssistant:"
 
 
 def _backend(
@@ -124,6 +156,24 @@ def test_same_profile_consecutive_turn_reuses_resident_kv_and_fixture_history() 
         "User: hello",
         "Assistant: generated:s1_t0",
     ]
+
+
+def test_warm_profile_keeps_startup_cost_out_of_first_service_measurement() -> None:
+    backend, workers = _backend({"s1_t0": 10.0})
+    request = Request("s1_t0", "chat", "hello", session_id="s1", turn_index=0, arrival_index=0)
+
+    audit = backend.warm_profile(request, "full_gpu")
+    result = backend.execute(request, Action("full_gpu"), backend.cache_state)
+
+    assert result.ttft_ms == 3.0
+    assert result.latency_ms == 8.0
+    assert result.recompute_ms == 0.0
+    assert result.extra["worker_startup_ms"] == 21.0
+    assert result.extra["worker_model_load_ms"] == 34.0
+    assert result.extra["warm_profile_success"] is True
+    assert backend.cache_state.active_sessions == ("s1",)
+    assert audit["warm_profile"] == "full_gpu"
+    assert workers["full"].messages[0]["op"] == "warm_profile"
 
 
 def test_full_shadow_execution_does_not_mutate_online_policy_state() -> None:

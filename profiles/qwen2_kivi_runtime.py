@@ -107,6 +107,8 @@ def run_kivi_request(
         )
     elif isinstance(cached_prompt_token_ids, list):
         effective_tokenized = _trim_tokenized_inputs(runtime["torch"], tokenized, prefix_len=len(cached_prompt_token_ids))
+    if isinstance(reusable_cache, KIVICache):
+        effective_tokenized = with_reused_cache_positions(runtime["torch"], effective_tokenized, cache)
     result = invoke_generate_decode(
         runtime["model"],
         runtime["tokenizer"],
@@ -155,6 +157,30 @@ def _trim_tokenized_inputs(torch: Any, tokenized: dict[str, Any], *, prefix_len:
             sliced = value[:, -1:]
         trimmed[key] = sliced
     return trimmed
+
+
+def with_reused_cache_positions(torch: Any, tokenized: dict[str, Any], cache: Any) -> dict[str, Any]:
+    result = dict(tokenized)
+    prefix_len = int(cache.get_seq_length())
+    input_ids = result.get("input_ids")
+    if input_ids is None:
+        return result
+    query_len = int(input_ids.shape[-1])
+    attention_mask = result.get("attention_mask")
+    if attention_mask is not None:
+        prefix_mask = torch.ones(
+            (int(attention_mask.shape[0]), prefix_len),
+            dtype=attention_mask.dtype,
+            device=attention_mask.device,
+        )
+        result["attention_mask"] = torch.cat([prefix_mask, attention_mask], dim=-1)
+    result["cache_position"] = torch.arange(
+        prefix_len,
+        prefix_len + query_len,
+        device=input_ids.device,
+    )
+    result["position_ids"] = result["cache_position"].unsqueeze(0)
+    return result
 
 
 def _token_ids_list(input_ids: Any) -> list[int]:
@@ -212,6 +238,29 @@ def split_prefill_kivi_states(
         value_q, value_scale, value_mn = quant_pack(value_q_src, group_size, v_bits)
 
     return key_q, key_full, key_scale, key_mn, value_q, value_full, value_scale, value_mn
+
+
+def split_key_residual_overflow(key_full: Any, *, residual_length: int) -> tuple[Any | None, Any | None]:
+    key_full_len = int(key_full.shape[-2])
+    quant_len = (key_full_len // residual_length) * residual_length
+    if quant_len <= 0:
+        return None, key_full
+    quantize = key_full[:, :, :quant_len, :].contiguous()
+    residual = key_full[:, :, quant_len:, :].contiguous()
+    if int(residual.shape[-2]) == 0:
+        residual = None
+    return quantize, residual
+
+
+def split_value_residual_overflow(value_full: Any, *, residual_length: int) -> tuple[Any | None, Any]:
+    value_full_len = int(value_full.shape[-2])
+    overflow_len = value_full_len - residual_length
+    if overflow_len <= 0:
+        return None, value_full
+    return (
+        value_full[:, :, :overflow_len, :].contiguous(),
+        value_full[:, :, overflow_len:, :].contiguous(),
+    )
 
 
 class Qwen2KIVIAttention:
@@ -277,13 +326,16 @@ class Qwen2KIVIAttention:
                     attn_full = torch.matmul(query_states, repeat_kv(key_full, self.num_key_value_groups).transpose(2, 3))
                     attn_weights = torch.cat([attn_q, attn_full], dim=-1) if attn_q is not None else attn_full
                     attn_weights = attn_weights / math.sqrt(self.head_dim)
-                    if key_full.shape[-2] == self.residual_length:
+                    key_overflow, key_full = split_key_residual_overflow(
+                        key_full,
+                        residual_length=self.residual_length,
+                    )
+                    if key_overflow is not None:
                         assert self.residual_length % self.group_size == 0
-                        key_new, scale_new, mn_new = quant_pack(key_full.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
+                        key_new, scale_new, mn_new = quant_pack(key_overflow.transpose(2, 3).contiguous(), self.group_size, self.k_bits)
                         self.tracker["kivi_quantize_calls"] += 1
                         self.tracker["kivi_quantized_layers"] += 1
-                        self.tracker["kivi_quantized_tokens"] += int(key_full.shape[-2])
-                        key_full = None
+                        self.tracker["kivi_quantized_tokens"] += int(key_overflow.shape[-2])
                         key_q = torch.cat([key_q, key_new], dim=3) if key_q is not None else key_new
                         key_scale = torch.cat([key_scale, scale_new], dim=3) if key_scale is not None else scale_new
                         key_mn = torch.cat([key_mn, mn_new], dim=3) if key_mn is not None else mn_new
@@ -298,11 +350,13 @@ class Qwen2KIVIAttention:
                             attn_output = cuda_bmm(self.group_size, attn_weights[:, :, :, :-value_full_len], value_q, value_scale, value_mn, self.v_bits)
                         self.tracker["kivi_kernel_calls"] += 1
                         attn_output = attn_output + torch.matmul(attn_weights[:, :, :, -value_full_len:], repeat_kv(value_full, self.num_key_value_groups))
-                    if value_full_len > self.residual_length:
-                        assert value_full_len == self.residual_length + 1
-                        value_new, scale_new, mn_new = quant_pack(value_full[:, :, :1, :].contiguous(), self.group_size, self.v_bits)
+                    value_overflow, value_full = split_value_residual_overflow(
+                        value_full,
+                        residual_length=self.residual_length,
+                    )
+                    if value_overflow is not None:
+                        value_new, scale_new, mn_new = quant_pack(value_overflow, self.group_size, self.v_bits)
                         self.tracker["kivi_quantize_calls"] += 1
-                        value_full = value_full[:, :, 1:, :].contiguous()
                         value_q = torch.cat([value_q, value_new], dim=2) if value_q is not None else value_new
                         value_scale = torch.cat([value_scale, scale_new], dim=2) if value_scale is not None else scale_new
                         value_mn = torch.cat([value_mn, mn_new], dim=2) if value_mn is not None else mn_new

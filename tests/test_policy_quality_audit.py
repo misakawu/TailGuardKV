@@ -93,6 +93,60 @@ def test_shadow_audit_samples_the_emitted_evaluation_population() -> None:
     }
 
 
+def test_online_exact_action_reuses_candidate_as_shadow_without_second_execution() -> None:
+    class ExactOnlineBackend:
+        name = "online_qwen"
+
+        def __init__(self) -> None:
+            self.cache_state = CacheState()
+            self.executed = 0
+            self.shadow_executed = 0
+
+        def reset(self) -> None:
+            self.cache_state = CacheState()
+
+        def execute(self, request: Request, action, cache_state: CacheState) -> BackendResult:
+            del cache_state
+            self.executed += 1
+            return BackendResult(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                turn_index=request.turn_index,
+                profile=action.profile,
+                ok=True,
+                measured=True,
+                output_text="correct answer",
+                latency_ms=10.0,
+                ttft_ms=5.0,
+                peak_memory_mib=10.0,
+                kv_cache_memory_mib=10.0,
+                resident_memory_mib=10.0,
+                kv_incremental_mib=10.0,
+                kv_cumulative_mib=10.0,
+                backend_name=self.name,
+            )
+
+        def execute_full_shadow(self, request: Request, cache_state: CacheState) -> BackendResult:
+            del request, cache_state
+            self.shadow_executed += 1
+            raise AssertionError("exact action must not load a second full worker")
+
+    requests = [replace(_request(index), reference="correct answer") for index in range(10)]
+    backend = ExactOnlineBackend()
+
+    records = run_policies._run_policy_matrix(
+        [FullLRUPolicy("full_gpu")],
+        requests,
+        backend,
+        {"full_gpu"},
+    )
+
+    assert backend.executed == len(requests)
+    assert backend.shadow_executed == 0
+    assert sum(record.audit_selected for record in records) == 1
+    assert all(record.observed_quality_loss == 0.0 for record in records if record.audit_selected)
+
+
 def test_shadow_audit_records_observed_and_inverse_probability_quality_estimates() -> None:
     requests = [_request(index) for index in range(10)]
     audit_keys = run_policies._shadow_audit_request_keys(requests)
@@ -351,7 +405,7 @@ def test_serving_failure_after_audit_selection_preserves_audit_markers() -> None
     assert (audited.session_id or "", audited.turn_index, audited.request_id) in audit_keys
 
 
-def test_static_safe_fallback_keeps_primary_profile_and_final_execution_metrics() -> None:
+def test_static_safe_fixed_exact_profile_has_no_runtime_fallback() -> None:
     request = _request(0)
     calibration = [
         _measurement(request, "full_gpu", loss=0.0, ttft_ms=100.0, kv_mib=100.0),
@@ -365,7 +419,7 @@ def test_static_safe_fallback_keeps_primary_profile_and_final_execution_metrics(
     )
 
     assert policy.decide(request, CacheState(), DeviceState()).profile == "full_gpu"
-    assert record.primary_profile == "lossy"
+    assert record.primary_profile == "full_gpu"
     assert record.action_profile == "full_gpu"
     assert record.ttft_ms == 125.0
     assert record.kv_cache_memory_mib == 120.0

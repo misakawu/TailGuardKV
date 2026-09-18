@@ -8,6 +8,7 @@ import subprocess
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -140,8 +141,20 @@ class PersistentProfileWorker:
         proc = self._require_proc()
         assert proc.stdin is not None
         assert proc.stdout is not None
-        proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        proc.stdin.flush()
+        try:
+            proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            proc.stdin.flush()
+        except BrokenPipeError as exc:
+            returncode = proc.poll()
+            stderr_tail = ""
+            if returncode is not None and proc.stderr is not None:
+                try:
+                    stderr_tail = proc.stderr.read()[-1200:]
+                except Exception:
+                    stderr_tail = ""
+            raise RuntimeError(
+                f"persistent worker pipe closed: returncode={returncode}; stderr={stderr_tail}"
+            ) from exc
         line = self._readline(timeout_s)
         try:
             result = json.loads(line)
@@ -174,11 +187,14 @@ class PersistentProfileWorker:
             pass
         finally:
             if proc.stdin:
-                proc.stdin.close()
+                with suppress(OSError):
+                    proc.stdin.close()
             if proc.stdout:
-                proc.stdout.close()
+                with suppress(OSError):
+                    proc.stdout.close()
             if proc.stderr:
-                proc.stderr.close()
+                with suppress(OSError):
+                    proc.stderr.close()
             if proc.poll() is None:
                 proc.terminate()
                 try:
@@ -999,6 +1015,33 @@ def _run_persistent_runtime_batch(
         return None, None, f"persistent worker request failed: {type(exc).__name__}: {exc}"
     proc = SimpleNamespace(returncode=0, stdout=json.dumps(result, ensure_ascii=False), stderr="")
     return proc, result, None
+
+
+def warm_persistent_qwen2_profile(
+    worker: PersistentProfileWorker,
+    *,
+    adapter: str,
+    request: Request,
+    spec: ProfileSpec,
+    runtime_config: dict[str, object],
+) -> dict[str, object]:
+    """Load a persistent Qwen2 profile without generating or changing session state."""
+    model_name = _runtime_model_name(runtime_config)
+    if not model_name:
+        raise ValueError("未配置 model.pilot_model，无法预热 Qwen2 KV runtime。")
+    result = worker.request(
+        {
+            "op": "warm_profile",
+            "adapter": adapter,
+            "profile": spec.name,
+            "request": _qwen2_payload(request, spec, runtime_config, model_name),
+        },
+        timeout_s=max(30, int(runtime_config.get("timeout_s", 180))),
+    )
+    if not isinstance(result, dict) or not bool(result.get("ok")):
+        detail = result.get("error") if isinstance(result, dict) else repr(result)
+        raise RuntimeError(f"persistent worker warm_profile failed: {detail}")
+    return result
 
 
 def _payload_cuda_visible_devices(payload: dict[str, object]) -> str:

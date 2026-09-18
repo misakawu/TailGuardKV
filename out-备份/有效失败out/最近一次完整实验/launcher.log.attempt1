@@ -1,0 +1,8 @@
+START 2026-09-12T19:19:04+08:00 root=/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation
+Traceback (most recent call last):
+  File "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/second_memory_pressure_20260912/preflight.py", line 9, in <module>
+    from run_util.config_loader import config_experiment_type, load_config
+ModuleNotFoundError: No module named 'run_util'
+ERROR conda.cli.main_run:execute(148): `conda run python /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/second_memory_pressure_20260912/preflight.py /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation /DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/second_memory_pressure_20260912` failed. (See above for error)
+PREFLIGHT_FAILED: no experiment cells were started
+FINISHED 2026-09-12T19:19:08+08:00 exit=2

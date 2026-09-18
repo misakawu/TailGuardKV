@@ -10,7 +10,7 @@ from run_util.core_types import PolicyRunRecord
 from run_util.experiment_common import load_config, write_csv
 from run_util.run_policies import _policy_rows_with_provenance
 
-from scripts.aggregate_baseline_wide_sweep import aggregate_directory, parse_sweep_filename
+from scripts.aggregate_baseline_wide_sweep import aggregate_directory, parse_sweep_filename, validate_sweep_cells
 from scripts.baseline_wide_sweep_grid import load_sweep_grid
 
 
@@ -51,12 +51,12 @@ class BaselineWideSweepTest(unittest.TestCase):
         config = load_config(Path("configs/baseline_wide_sweep.yaml"))
         grid = load_sweep_grid("configs/baseline_wide_sweep.yaml")
 
-        self.assertEqual(config["pilot"]["memory_budgets_mib"], [18, 22, 26, 30, 35, 40, 50, 60, 75])
-        self.assertEqual(config["pilot"]["epsilons"], [0.02, 0.05, 0.10])
-        self.assertEqual(config["pilot"]["deltas"], [0.01, 0.05, 0.10])
-        self.assertEqual(grid["memory_budgets_mib"], [18.0, 22.0, 26.0, 30.0, 35.0, 40.0, 50.0, 60.0, 75.0])
-        self.assertEqual(grid["epsilons"], [0.02, 0.05, 0.1])
-        self.assertEqual(grid["deltas"], [0.01, 0.05, 0.1])
+        self.assertEqual(config["pilot"]["memory_budgets_mib"], [15, 20, 25, 30, 35, 50, 64, 80, 96, 112, 128, 160, 192, 256])
+        self.assertEqual(config["pilot"]["epsilons"], [0.10])
+        self.assertEqual(config["pilot"]["deltas"], [0.10])
+        self.assertEqual(grid["memory_budgets_mib"], [15.0, 20.0, 25.0, 30.0, 35.0, 50.0, 64.0, 80.0, 96.0, 112.0, 128.0, 160.0, 192.0, 256.0])
+        self.assertEqual(grid["epsilons"], [0.1])
+        self.assertEqual(grid["deltas"], [0.1])
 
     def test_parse_sweep_filename_extracts_constraint_cell(self) -> None:
         parsed = parse_sweep_filename("pilot_smoke_measured_policy_eps0p05_delta0p1_mem5000.csv")
@@ -123,7 +123,7 @@ class BaselineWideSweepTest(unittest.TestCase):
             self.assertAlmostEqual(float(utility_1500["mean_quality_loss"]), 0.04)
             self.assertEqual(json.loads(utility_1500["action_distribution"]), {"h2o_heavy20_recent20": 2})
 
-            self.assertEqual(len(plots), 4)
+            self.assertEqual(len(plots), 5)
             for plot in plots:
                 self.assertTrue(plot.exists(), plot)
 
@@ -296,6 +296,102 @@ class BaselineWideSweepTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 aggregate_directory(policy_dir, policy_dir / "baseline_wide_sweep_total_summary.csv")
 
+class CorrectedCriticalSweepTests(unittest.TestCase):
+    def test_corrected_grid_uses_single_epsilon_delta_and_required_coarse_budgets(self):
+        grid = load_sweep_grid("configs/baseline_wide_sweep.yaml")
+        self.assertEqual(grid["epsilons"], [0.1])
+        self.assertEqual(grid["deltas"], [0.1])
+        self.assertEqual(
+            grid["memory_budgets_mib"],
+            [15.0, 20.0, 25.0, 30.0, 35.0, 50.0, 64.0, 80.0, 96.0, 112.0, 128.0, 160.0, 192.0, 256.0],
+        )
+
+class CorrectedSessionSweepContractTests(unittest.TestCase):
+    def test_wide_sweep_explicitly_uses_baseline_session(self) -> None:
+        config = load_config(Path("configs/baseline_wide_sweep.yaml"))
+        self.assertEqual(config["experiment"]["type"], "baseline_session")
+        self.assertEqual(config["backend"]["name"], "measured_replay")
+        self.assertEqual(config["data"]["max_requests"], 10)
+
+class SweepCellValidationTests(unittest.TestCase):
+    def _rows(self, *, policy: str = "full_lru", budget: float = 256.0, pressure: bool = False):
+        return [
+            {
+                "policy": policy,
+                "request_id": f"request_{index}",
+                "session_id": f"session_{index % 2}",
+                "turn_index": str(index // 2),
+                "memory_budget_mib": str(budget),
+                "global_resident_kv_mib": str(min(budget, index + 1)),
+                "budget_hit": str(pressure and index == 9).lower(),
+                "policy_budget_filtered": "false",
+                "backend_budget_hit": "false",
+                "fallback_reason": "",
+                "ok": "true",
+            }
+            for index in range(10)
+        ]
+
+    def test_validate_sweep_cells_accepts_high_control_and_low_pressure(self) -> None:
+        rows = self._rows(budget=256.0) + self._rows(budget=15.0, pressure=True)
+        validate_sweep_cells(rows, expected_policies=["full_lru"], high_budget_mib=256.0)
+
+    def test_validate_sweep_cells_rejects_non_ten_request_cell(self) -> None:
+        rows = self._rows(budget=256.0)[:-1] + self._rows(budget=15.0, pressure=True)
+        with self.assertRaisesRegex(ValueError, "10"):
+            validate_sweep_cells(rows, expected_policies=["full_lru"], high_budget_mib=256.0)
+
+    def test_validate_sweep_cells_rejects_resident_over_budget(self) -> None:
+        rows = self._rows(budget=256.0) + self._rows(budget=15.0, pressure=True)
+        rows[-1]["global_resident_kv_mib"] = "16"
+        with self.assertRaisesRegex(ValueError, "global_resident"):
+            validate_sweep_cells(rows, expected_policies=["full_lru"], high_budget_mib=256.0)
+
+    def test_validate_sweep_cells_rejects_pressure_at_high_control(self) -> None:
+        rows = self._rows(budget=256.0, pressure=True) + self._rows(budget=15.0, pressure=True)
+        with self.assertRaisesRegex(ValueError, "high-budget"):
+            validate_sweep_cells(rows, expected_policies=["full_lru"], high_budget_mib=256.0)
+
+    def test_validate_sweep_cells_requires_low_budget_pressure(self) -> None:
+        rows = self._rows(budget=256.0) + self._rows(budget=15.0)
+        with self.assertRaisesRegex(ValueError, "low-budget"):
+            validate_sweep_cells(rows, expected_policies=["full_lru"], high_budget_mib=256.0)
+
+class AggregateSweepValidationIntegrationTests(unittest.TestCase):
+    def test_aggregate_directory_invokes_session_sweep_validation(self) -> None:
+        source = Path("scripts/aggregate_baseline_wide_sweep.py").read_text(encoding="utf-8")
+        aggregate_body = source.split("def aggregate_directory", 1)[1]
+        self.assertIn("validate_sweep_cells(", aggregate_body)
 
 if __name__ == "__main__":
     unittest.main()
+
+class FourthExperimentContractTests(unittest.TestCase):
+    def test_fourth_experiment_grid_is_two_by_two_and_excludes_forbidden_budgets(self) -> None:
+        grid = load_sweep_grid("configs/baseline_wide_sweep_fourth.yaml")
+        self.assertEqual(len(grid["epsilons"]), 2)
+        self.assertEqual(len(grid["deltas"]), 2)
+        self.assertEqual(grid["memory_budgets_mib"], [15.0, 20.0, 25.0, 30.0, 35.0, 50.0, 64.0, 80.0, 96.0, 256.0])
+        self.assertTrue({112.0, 128.0, 160.0, 192.0}.isdisjoint(grid["memory_budgets_mib"]))
+
+    def test_fourth_experiment_uses_independent_output_directory(self) -> None:
+        config = load_config(Path("configs/baseline_wide_sweep_fourth.yaml"))
+        output_paths = [str(value) for value in config["outputs"].values()]
+        self.assertTrue(output_paths)
+        self.assertTrue(all("fourth" in path for path in output_paths))
+        self.assertTrue(all("baseline_smoke_final_rerun_20260913" not in path for path in output_paths))
+
+    def test_runner_supports_safe_preflight_without_executing_cells(self) -> None:
+        source = Path("scripts/run_baseline_wide_sweep.sh").read_text(encoding="utf-8")
+        self.assertIn("--preflight", source)
+        self.assertIn("PREFLIGHT_OK", source)
+
+    def test_runner_records_distinct_cell_states_and_known_256_failure(self) -> None:
+        source = Path("scripts/run_baseline_wide_sweep.sh").read_text(encoding="utf-8")
+        for state in ("success", "known_failure", "runtime_failure", "skipped"):
+            self.assertIn(state, source)
+        self.assertIn("256", source)
+
+    def test_high_budget_control_is_96_mib(self) -> None:
+        source = Path("scripts/aggregate_baseline_wide_sweep.py").read_text(encoding="utf-8")
+        self.assertIn("96.0", source)

@@ -300,7 +300,13 @@ def _profile_names(manifest: dict[str, Any], item: dict[str, Any]) -> set[str]:
 
 
 def _artifact_path(run_dir: Path, directory: str, pattern: str) -> str | None:
-    paths = sorted((run_dir / directory).glob(pattern))
+    if pattern == "*_profiles.csv":
+        paths = sorted(
+            path for path in (run_dir / directory).glob("*_profiles*.csv")
+            if not path.name.endswith("_failed_chunks.csv")
+        )
+    else:
+        paths = sorted((run_dir / directory).glob(pattern))
     return str(paths[0]) if len(paths) == 1 else None
 
 
@@ -644,6 +650,7 @@ def main() -> int:
             except Exception as exc:
                 print(json.dumps({"batches": reports, "merge_error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
                 return 1
+            _write_supervisor_manifest(root, manifest, reports, merged=True)
         print(json.dumps({"batches": reports}, ensure_ascii=False))
         return 0 if mergeable else 1
     source_fixture = Path(args.fixture)

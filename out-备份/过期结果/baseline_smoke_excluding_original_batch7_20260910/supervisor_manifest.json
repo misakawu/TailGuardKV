@@ -1,0 +1,46 @@
+{
+  "diagnostic_only": true,
+  "merged": false,
+  "profile_names": [
+    "full_gpu",
+    "h2o_heavy10_recent10",
+    "h2o_heavy15_recent15",
+    "h2o_heavy20_recent20",
+    "kivi_2bit_residual32",
+    "kivi_2bit_residual64",
+    "kivi_4bit_residual32",
+    "kivi_4bit_residual64"
+  ],
+  "batches": [
+    {
+      "batch_id": "batch000",
+      "mergeable": false,
+      "profile_rows": 0,
+      "expected_profile_rows": 80,
+      "errors": [
+        "missing profile CSV",
+        "missing request-profile pairs: [('hybrid-session-000-turn-0', 'full_gpu'), ('hybrid-session-000-turn-0', 'h2o_heavy10_recent10'), ('hybrid-session-000-turn-0', 'h2o_heavy15_recent15'), ('hybrid-session-000-turn-0', 'h2o_heavy20_recent20'), ('hybrid-session-000-turn-0', 'kivi_2bit_residual32'), ('hybrid-session-000-turn-0', 'kivi_2bit_residual64'), ('hybrid-session-000-turn-0', 'kivi_4bit_residual32'), ('hybrid-session-000-turn-0', 'kivi_4bit_residual64'), ('hybrid-session-000-turn-1', 'full_gpu'), ('hybrid-session-000-turn-1', 'h2o_heavy10_recent10'), ('hybrid-session-000-turn-1', 'h2o_heavy15_recent15'), ('hybrid-session-000-turn-1', 'h2o_heavy20_recent20'), ('hybrid-session-000-turn-1', 'kivi_2bit_residual32'), ('hybrid-session-000-turn-1', 'kivi_2bit_residual64'), ('hybrid-session-000-turn-1', 'kivi_4bit_residual32'), ('hybrid-session-000-turn-1', 'kivi_4bit_residual64'), ('hybrid-session-000-turn-2', 'full_gpu'), ('hybrid-session-000-turn-2', 'h2o_heavy10_recent10'), ('hybrid-session-000-turn-2', 'h2o_heavy15_recent15'), ('hybrid-session-000-turn-2', 'h2o_heavy20_recent20'), ('hybrid-session-000-turn-2', 'kivi_2bit_residual32'), ('hybrid-session-000-turn-2', 'kivi_2bit_residual64'), ('hybrid-session-000-turn-2', 'kivi_4bit_residual32'), ('hybrid-session-000-turn-2', 'kivi_4bit_residual64'), ('hybrid-session-000-turn-3', 'full_gpu'), ('hybrid-session-000-turn-3', 'h2o_heavy10_recent10'), ('hybrid-session-000-turn-3', 'h2o_heavy15_recent15'), ('hybrid-session-000-turn-3', 'h2o_heavy20_recent20'), ('hybrid-session-000-turn-3', 'kivi_2bit_residual32'), ('hybrid-session-000-turn-3', 'kivi_2bit_residual64'), ('hybrid-session-000-turn-3', 'kivi_4bit_residual32'), ('hybrid-session-000-turn-3', 'kivi_4bit_residual64'), ('hybrid-session-000-turn-4', 'full_gpu'), ('hybrid-session-000-turn-4', 'h2o_heavy10_recent10'), ('hybrid-session-000-turn-4', 'h2o_heavy15_recent15'), ('hybrid-session-000-turn-4', 'h2o_heavy20_recent20'), ('hybrid-session-000-turn-4', 'kivi_2bit_residual32'), ('hybrid-session-000-turn-4', 'kivi_2bit_residual64'), ('hybrid-session-000-turn-4', 'kivi_4bit_residual32'), ('hybrid-session-000-turn-4', 'kivi_4bit_residual64'), ('hybrid-session-001-turn-0', 'full_gpu'), ('hybrid-session-001-turn-0', 'h2o_heavy10_recent10'), ('hybrid-session-001-turn-0', 'h2o_heavy15_recent15'), ('hybrid-session-001-turn-0', 'h2o_heavy20_recent20'), ('hybrid-session-001-turn-0', 'kivi_2bit_residual32'), ('hybrid-session-001-turn-0', 'kivi_2bit_residual64'), ('hybrid-session-001-turn-0', 'kivi_4bit_residual32'), ('hybrid-session-001-turn-0', 'kivi_4bit_residual64'), ('hybrid-session-001-turn-1', 'full_gpu'), ('hybrid-session-001-turn-1', 'h2o_heavy10_recent10'), ('hybrid-session-001-turn-1', 'h2o_heavy15_recent15'), ('hybrid-session-001-turn-1', 'h2o_heavy20_recent20'), ('hybrid-session-001-turn-1', 'kivi_2bit_residual32'), ('hybrid-session-001-turn-1', 'kivi_2bit_residual64'), ('hybrid-session-001-turn-1', 'kivi_4bit_residual32'), ('hybrid-session-001-turn-1', 'kivi_4bit_residual64'), ('hybrid-session-001-turn-2', 'full_gpu'), ('hybrid-session-001-turn-2', 'h2o_heavy10_recent10'), ('hybrid-session-001-turn-2', 'h2o_heavy15_recent15'), ('hybrid-session-001-turn-2', 'h2o_heavy20_recent20'), ('hybrid-session-001-turn-2', 'kivi_2bit_residual32'), ('hybrid-session-001-turn-2', 'kivi_2bit_residual64'), ('hybrid-session-001-turn-2', 'kivi_4bit_residual32'), ('hybrid-session-001-turn-2', 'kivi_4bit_residual64'), ('hybrid-session-001-turn-3', 'full_gpu'), ('hybrid-session-001-turn-3', 'h2o_heavy10_recent10'), ('hybrid-session-001-turn-3', 'h2o_heavy15_recent15'), ('hybrid-session-001-turn-3', 'h2o_heavy20_recent20'), ('hybrid-session-001-turn-3', 'kivi_2bit_residual32'), ('hybrid-session-001-turn-3', 'kivi_2bit_residual64'), ('hybrid-session-001-turn-3', 'kivi_4bit_residual32'), ('hybrid-session-001-turn-3', 'kivi_4bit_residual64'), ('hybrid-session-001-turn-4', 'full_gpu'), ('hybrid-session-001-turn-4', 'h2o_heavy10_recent10'), ('hybrid-session-001-turn-4', 'h2o_heavy15_recent15'), ('hybrid-session-001-turn-4', 'h2o_heavy20_recent20'), ('hybrid-session-001-turn-4', 'kivi_2bit_residual32'), ('hybrid-session-001-turn-4', 'kivi_2bit_residual64'), ('hybrid-session-001-turn-4', 'kivi_4bit_residual32'), ('hybrid-session-001-turn-4', 'kivi_4bit_residual64')]"
+      ],
+      "diagnostic_only": true,
+      "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/baseline_smoke_excluding_original_batch7_20260910/fixtures/batch000.jsonl",
+      "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/baseline_smoke_excluding_original_batch7_20260910/configs/batch000.yaml",
+      "run_dir": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/baseline_smoke_excluding_original_batch7_20260910/batch_outputs/batch000",
+      "returncode": 0,
+      "expected_requests": 10,
+      "expected_profiles": [
+        "full_gpu",
+        "h2o_heavy10_recent10",
+        "h2o_heavy15_recent15",
+        "h2o_heavy20_recent20",
+        "kivi_2bit_residual32",
+        "kivi_2bit_residual64",
+        "kivi_4bit_residual32",
+        "kivi_4bit_residual64"
+      ],
+      "profile_csv": null,
+      "trace_csv": null,
+      "gate_only_failure": false,
+      "diagnostic_gate_failed": false
+    }
+  ]
+}

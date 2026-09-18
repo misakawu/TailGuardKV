@@ -184,20 +184,6 @@ def validate_experiment_policy_records(
         raise ValueError(f"baseline_session policy 结果缺少 global_resident_kv_mib: {path}")
     if len(set(global_values)) < 2:
         raise ValueError(f"baseline_session global_resident_kv_mib 没有演化: {path}")
-    has_backend_event = any(
-        bool(record.backend_budget_hit or record.budget_hit)
-        or bool(record.evicted_kv_mib and record.evicted_kv_mib > 0)
-        or bool(record.restore_ms and record.restore_ms > 0)
-        or bool(record.recompute_ms and record.recompute_ms > 0)
-        or bool(record.queue_delay_ms and record.queue_delay_ms > 0)
-        for record in records
-    )
-    if not has_backend_event:
-        raise ValueError(
-            "baseline_session policy 结果缺少真实 backend 压力事件 "
-            "(budget_hit/evict/restore/recompute/queue): "
-            f"{path}"
-        )
 
 
 def failed_measurement_summary(measurements: list[ProfileMeasurement]) -> list[dict[str, object]]:

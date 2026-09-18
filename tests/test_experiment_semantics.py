@@ -236,15 +236,14 @@ def test_quality_summary_marks_backend_metrics_not_applicable() -> None:
     assert summary["backend_semantics_status"] == "not_applicable"
 
 
-def test_session_policy_validation_requires_backend_event_evidence() -> None:
-    with pytest.raises(ValueError, match="backend"):
-        validate_experiment_policy_records(
-            [
-                _record("r1", session_id="s1", turn_index=0, global_resident=10.0),
-                _record("r2", session_id="s2", turn_index=1, global_resident=11.0),
-            ],
-            "baseline_session",
-        )
+def test_session_policy_validation_accepts_no_pressure_control_records() -> None:
+    validate_experiment_policy_records(
+        [
+            _record("r1", session_id="s1", turn_index=0, global_resident=10.0),
+            _record("r2", session_id="s1", turn_index=1, global_resident=11.0),
+        ],
+        "baseline_session",
+    )
 
 
 def test_session_policy_validation_accepts_nontrivial_backend_trace() -> None:

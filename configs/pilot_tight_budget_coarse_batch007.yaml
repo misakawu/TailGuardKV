@@ -1,0 +1,5 @@
+batch007:
+  pilot:
+    epsilons: [0.05, 0.10]
+    deltas: [0.05, 0.10]
+    memory_budgets_mib: [4900, 4400, 3900, 3400]

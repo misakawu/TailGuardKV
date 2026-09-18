@@ -5244,12 +5244,58 @@ class TailGuardCoreTest(unittest.TestCase):
                 {path.name for path in outputs},
                 {
                     "summary_policy_p95_ttft.png",
+                    "summary_policy_p95_ttft_log.png",
                     "summary_policy_kv_memory.png",
                     "summary_policy_quality_loss.png",
                     "summary_policy_violation_rate.png",
                 },
             )
             self.assertTrue(all(path.exists() and path.stat().st_size > 0 for path in outputs))
+
+    def test_visual_plot_summary_with_session_points_has_no_scatter_collection(self) -> None:
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PathCollection
+        from visual.plot_summary import plot_summary
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.csv"
+            summary_path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,p95_ttft_ms,p95_ttft_ci_low_ms,p95_ttft_ci_high_ms,mean_kv_cache_memory_mib,mean_kv_cache_memory_mib_ci_low,mean_kv_cache_memory_mib_ci_high,p95_quality_loss,p95_quality_loss_ci_low,p95_quality_loss_ci_high,violation_rate,violation_rate_ci_low,violation_rate_ci_high",
+                        "full_lru,4900,0.05,0.05,120,110,130,800,780,820,0.01,0.005,0.015,0.0,0.0,0.0",
+                        "tailguard,4900,0.05,0.05,90,85,95,600,580,620,0.03,0.02,0.04,0.02,0.01,0.03",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            session_path = Path(tmpdir) / "session_points.csv"
+            session_path.write_text(
+                "\n".join(
+                    [
+                        "policy,memory_budget_mib,epsilon,delta,session_id,p95_ttft_ms,mean_kv_cache_memory_mib,p95_quality_loss,mean_quality_loss,violation_rate",
+                        "full_lru,4900,0.05,0.05,s1,121,801,0.01,0.01,0.0",
+                        "tailguard,4900,0.05,0.05,s1,91,601,0.03,0.03,0.02",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            axes = []
+            original_subplots = plt.subplots
+
+            def capture_subplots(*args, **kwargs):
+                figure, created_axes = original_subplots(*args, **kwargs)
+                axes.extend(figure.axes)
+                return figure, created_axes
+
+            with patch("visual.plot_summary.plt.subplots", side_effect=capture_subplots):
+                outputs = plot_summary(summary_path, tmpdir, session_points_csv=session_path)
+
+            self.assertTrue(outputs)
+            self.assertTrue(axes)
+            collections = [collection for axis in axes for collection in axis.collections]
+            self.assertFalse(any(isinstance(collection, PathCollection) for collection in collections))
+            self.assertTrue(any(not isinstance(collection, PathCollection) for collection in collections))
 
     def test_visual_plot_summary_skips_missing_numeric_data_without_raising(self) -> None:
         from visual.plot_summary import plot_summary
@@ -5269,7 +5315,10 @@ class TailGuardCoreTest(unittest.TestCase):
 
             outputs = plot_summary(summary_path)
 
-            self.assertEqual({path.name for path in outputs}, {"summary_policy_p95_ttft.png"})
+            self.assertEqual(
+                {path.name for path in outputs},
+                {"summary_policy_p95_ttft.png", "summary_policy_p95_ttft_log.png"},
+            )
 
     def test_pilot_smoke_measured_stops_when_profile_stage_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

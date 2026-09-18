@@ -1,0 +1,124 @@
+{
+  "diagnostic_only": true,
+  "ok": false,
+  "config": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/configs/pilot_diagnostic_session25_fourth.yaml",
+  "run_root": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full",
+  "profile_table": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/out/full_25session_baseline_9_14/full/merged/profile_tables/session25_fourth_profiles_batch000.csv",
+  "total_request_count": 125,
+  "calibration_request_count": 60,
+  "evaluation_request_count": 65,
+  "selected_sessions": [
+    "hybrid-session-002",
+    "hybrid-session-003",
+    "hybrid-session-004"
+  ],
+  "scenarios": [
+    {
+      "name": "exact_two_turn",
+      "ok": true,
+      "errors": [],
+      "rows": [
+        {
+          "request_id": "hybrid-session-002-turn-0",
+          "session_id": "hybrid-session-002",
+          "turn_index": 0,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 40893.045064833015,
+          "latency_ms": 42012.3333067894,
+          "kv_cache_memory_mib": 2.078125,
+          "resident_kv_mib_after": 2.078125,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 36577.07946568541,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-002-turn-1",
+          "session_id": "hybrid-session-002",
+          "turn_index": 1,
+          "profile": "full_gpu",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 87.77915895916522,
+          "latency_ms": 1196.2100348901004,
+          "kv_cache_memory_mib": 3.8828125,
+          "resident_kv_mib_after": 3.8828125,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        }
+      ]
+    },
+    {
+      "name": "kivi_three_turn",
+      "ok": false,
+      "errors": [
+        "runtime failure at row 2: KIVI proof/runtime failed (kivi_4bit_residual64): AssertionError: ",
+        "invalid TTFT at row 2: None"
+      ],
+      "rows": [
+        {
+          "request_id": "hybrid-session-003-turn-0",
+          "session_id": "hybrid-session-003",
+          "turn_index": 0,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 40876.14448539913,
+          "latency_ms": 42108.60103726387,
+          "kv_cache_memory_mib": 1.4765625,
+          "resident_kv_mib_after": 1.4765625,
+          "recompute_ms": 0.0,
+          "cache_reused": false,
+          "cache_rebuild_reason": "new_session",
+          "runtime_transition_ms": 36940.43757425621,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-003-turn-1",
+          "session_id": "hybrid-session-003",
+          "turn_index": 1,
+          "profile": "kivi_4bit_residual64",
+          "ok": true,
+          "measured": true,
+          "error": "",
+          "ttft_ms": 86.64374309591949,
+          "latency_ms": 1317.0313499867916,
+          "kv_cache_memory_mib": 2.8984375,
+          "resident_kv_mib_after": 2.8984375,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        },
+        {
+          "request_id": "hybrid-session-003-turn-2",
+          "session_id": "hybrid-session-003",
+          "turn_index": 2,
+          "profile": "kivi_4bit_residual64",
+          "ok": false,
+          "measured": false,
+          "error": "KIVI proof/runtime failed (kivi_4bit_residual64): AssertionError: ",
+          "ttft_ms": null,
+          "latency_ms": null,
+          "kv_cache_memory_mib": null,
+          "resident_kv_mib_after": 2.8984375,
+          "recompute_ms": 0.0,
+          "cache_reused": true,
+          "cache_rebuild_reason": "",
+          "runtime_transition_ms": 0.0,
+          "backend_name": "online_qwen"
+        }
+      ]
+    }
+  ]
+}

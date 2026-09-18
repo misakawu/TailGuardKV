@@ -98,7 +98,7 @@ class MetricCollector:
             actions: Counter[str] = Counter()
             profile_resident_totals: Counter[str] = Counter()
             candidate_safe_counts: list[float] = []
-            budget_hit_count = 0
+            backend_budget_hit_count = 0
             policy_budget_filter_count = 0
             switch_count = 0
             restore_count = 0
@@ -166,8 +166,8 @@ class MetricCollector:
                     candidate_safe_counts.append(row.candidate_safe_count)
                 if row.fallback_reason:
                     fallback_count += 1
-                if row.backend_budget_hit or row.budget_hit:
-                    budget_hit_count += 1
+                if row.backend_budget_hit:
+                    backend_budget_hit_count += 1
                 if row.policy_budget_filtered:
                     policy_budget_filter_count += 1
                 if row.action_profile in exact_profiles:
@@ -256,7 +256,8 @@ class MetricCollector:
                 "optimality_gap": _mean(optimality_gaps),
                 "audit_rate": _mean(audit_rates),
                 "switch_count": float(switch_count),
-                "budget_hit_rate": budget_hit_count / len(rows) if rows else float("nan"),
+                "budget_hit_rate": backend_budget_hit_count / len(rows) if rows else float("nan"),
+                "backend_budget_hit_rate": backend_budget_hit_count / len(rows) if rows else float("nan"),
                 "policy_budget_filter_rate": policy_budget_filter_count / len(rows) if rows else float("nan"),
                 "restore_count": float(restore_count),
                 "restore_time_ms": _mean(restore_times),
@@ -267,7 +268,9 @@ class MetricCollector:
                 "queue_delay_ms": _mean(queue_delays),
                 "queue_event_count": float(queue_event_count),
                 "evict_event_count": float(evict_event_count),
-                "budget_hit_count": float(budget_hit_count),
+                "budget_hit_count": float(backend_budget_hit_count),
+                "backend_budget_hit_count": float(backend_budget_hit_count),
+                "policy_budget_filtered_count": float(policy_budget_filter_count),
                 "triggered_restore": bool(restore_count),
                 "triggered_recompute": bool(recompute_count),
                 "triggered_evict": bool(evict_event_count),
@@ -318,7 +321,7 @@ class MetricCollector:
                     ),
                     "global_resident_evolution": len(set(global_resident_kv)) >= 2,
                     "backend_event_evidence": bool(
-                        budget_hit_count
+                        backend_budget_hit_count
                         or evict_event_count
                         or restore_count
                         or recompute_count

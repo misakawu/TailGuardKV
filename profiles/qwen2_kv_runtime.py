@@ -190,9 +190,40 @@ def worker_init(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[s
     worker_state["adapter"] = str(payload.get("adapter") or "")
     worker_state["runtime_config"] = dict(payload.get("runtime_config") or {})
     worker_state["binding_diagnostics"] = _worker_binding_diagnostics(worker_state["runtime_config"])
+    worker_state["worker_started_at"] = time.perf_counter()
+    worker_state["worker_generation"] = 1
     return {
         "ok": True,
         "worker": _worker_metadata(worker_state),
+    }
+
+
+def worker_warm_profile(payload: dict[str, Any], worker_state: dict[str, Any]) -> dict[str, Any]:
+    profile = str(payload.get("profile") or "")
+    request = payload.get("request")
+    if not isinstance(request, dict):
+        return {
+            "ok": False,
+            "error": "warm_profile requires a request payload",
+            "worker": _worker_metadata(worker_state, warm_profile=profile, warm_profile_success=False),
+        }
+    try:
+        runtime = _ensure_worker_runtime(worker_state, profile, request)
+    except Exception as exc:
+        _clear_worker_runtime(worker_state)
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {str(exc)[:1200]}",
+            "worker": _worker_metadata(worker_state, warm_profile=profile, warm_profile_success=False),
+        }
+    return {
+        "ok": True,
+        "worker": _worker_metadata(
+            worker_state,
+            runtime=runtime,
+            warm_profile=profile,
+            warm_profile_success=True,
+        ),
     }
 
 
@@ -545,12 +576,33 @@ def _worker_binding_diagnostics(runtime_config: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _worker_metadata(worker_state: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _worker_metadata(
+    worker_state: dict[str, Any],
+    *,
+    runtime: dict[str, Any] | None = None,
+    warm_profile: str = "",
+    warm_profile_success: bool | None = None,
+) -> dict[str, Any]:
+    active_runtime = runtime if isinstance(runtime, dict) else worker_state.get("runtime")
+    startup_at = worker_state.get("worker_started_at")
+    startup_ms = 0.0
+    if isinstance(startup_at, (int, float)):
+        startup_ms = max(0.0, (time.perf_counter() - startup_at) * 1000.0)
+    payload: dict[str, Any] = {
         "mode": "persistent",
         "adapter": str(worker_state.get("adapter") or ""),
+        "worker_pid": os.getpid(),
+        "worker_generation": int(worker_state.get("worker_generation") or 1),
+        "worker_startup_ms": startup_ms,
         **dict(worker_state.get("binding_diagnostics") or {}),
     }
+    if isinstance(active_runtime, dict):
+        payload["worker_model_load_ms"] = float(active_runtime.get("model_load_ms") or 0.0)
+    if warm_profile:
+        payload["warm_profile"] = warm_profile
+    if warm_profile_success is not None:
+        payload["warm_profile_success"] = warm_profile_success
+    return payload
 
 
 def _annotate_results_with_binding(
@@ -651,9 +703,19 @@ def _run_h2o_profile_batch_with_runtime(
 ) -> tuple[list[dict[str, Any]], SessionRuntimeState]:
     results = []
     for index, request in enumerate(requests):
-        session_request = _attach_session_cache(runtime, request)
+        # H2O's pruned cache is not a valid continuation cache. Rebuild every
+        # online turn from the rendered complete history instead.
+        session_request = dict(request)
+        session_request["_runtime_cache_rebuild_reason"] = "h2o_online_history_rebuild"
         result, state = _run_request_with_session(state, session_request, lambda item: _run_h2o_request(runtime, item, worker_mode="persistent"))
-        _update_session_cache(runtime, session_request, result)
+        runtime_cache = _pop_result_runtime_cache(result)
+        if hasattr(runtime_cache, "clear"):
+            runtime_cache.clear()
+        session_reuse = runtime.setdefault("session_reuse", {})
+        for entry in session_reuse.values():
+            if isinstance(entry, dict):
+                _clear_runtime_cache_entry(entry)
+        session_reuse.clear()
         results.append(result)
         if _is_oom_result(result) or _is_fatal_cuda_error(str(result.get("error") or "")):
             results.extend(_clone_failure_result(result) for _ in requests[index + 1 :])

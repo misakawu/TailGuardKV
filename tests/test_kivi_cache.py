@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from profiles.kivi_cache import KIVILayerState, KIVICache, build_kivi_cache
+from profiles.qwen2_kivi_runtime import split_key_residual_overflow, split_value_residual_overflow
 
 
 class FakeTensor:
@@ -37,6 +38,26 @@ class FakeIndex:
 
 
 class KIVICacheTest(unittest.TestCase):
+    def test_kivi_key_residual_overflow_quantizes_complete_blocks_for_multi_token_suffix(self) -> None:
+        import torch
+
+        key_full = torch.zeros((1, 1, 70, 4))
+
+        quantize, residual = split_key_residual_overflow(key_full, residual_length=64)
+
+        self.assertEqual(quantize.shape, (1, 1, 64, 4))
+        self.assertEqual(residual.shape, (1, 1, 6, 4))
+
+    def test_kivi_value_residual_overflow_quantizes_all_tokens_before_window(self) -> None:
+        import torch
+
+        value_full = torch.zeros((1, 1, 83, 4))
+
+        quantize, residual = split_value_residual_overflow(value_full, residual_length=64)
+
+        self.assertEqual(quantize.shape, (1, 1, 19, 4))
+        self.assertEqual(residual.shape, (1, 1, 64, 4))
+
     def test_kivi_cache_tracks_per_layer_seq_length(self) -> None:
         cache = build_kivi_cache(
             SimpleNamespace(num_hidden_layers=3),

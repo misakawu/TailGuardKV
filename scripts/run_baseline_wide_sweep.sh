@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
 set -u
 
+MODE="run"
+if [[ "${1:-}" == "--preflight" ]]; then
+  MODE="preflight"
+  shift
+elif [[ "${1:-}" == "--help" ]]; then
+  echo "usage: $0 [--preflight]"
+  exit 0
+elif [[ $# -gt 0 ]]; then
+  echo "unknown argument: $1" >&2
+  exit 2
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_PATH="$ROOT_DIR/configs/baseline_wide_sweep.yaml"
+CONFIG_PATH="${CONFIG_PATH:-$ROOT_DIR/configs/baseline_wide_sweep.yaml}"
 MEASUREMENTS_PATH="$ROOT_DIR/out/20260806_122619_pilot/profile_tables/pilot_smoke_measured_profiles.csv"
-POLICY_DIR="$ROOT_DIR/out/baseline_wide_sweep/policy_tables"
-LOG_DIR="$ROOT_DIR/out/baseline_wide_sweep/logs"
-SUMMARY_PATH="$POLICY_DIR/baseline_wide_sweep_total_summary.csv"
+RUN_NAME="${RUN_NAME:-baseline_smoke_final_rerun_20260913}"
+RUN_ROOT="$ROOT_DIR/out/$RUN_NAME"
+POLICY_DIR="$RUN_ROOT/policy_tables"
+LOG_DIR="$RUN_ROOT/logs"
+SUMMARY_PATH="$POLICY_DIR/${RUN_NAME}_total_summary.csv"
 CONDA_ENV="tailguardkv-base"
 BUDGETS=()
 EPSILONS=()
@@ -57,6 +71,25 @@ for line in "${GRID_VALUES[@]}"; do
   esac
 done
 
+for forbidden_budget in 112 128 160 192; do
+  for budget in "${BUDGETS[@]}"; do
+    if [[ "$budget" == "$forbidden_budget" ]]; then
+      echo "INVALID_GRID: forbidden budget $forbidden_budget" >&2
+      exit 2
+    fi
+  done
+done
+
+if [[ ${#EPSILONS[@]} -ne 2 || ${#DELTAS[@]} -ne 2 ]]; then
+  echo "INVALID_GRID: fourth experiment requires a 2x2 epsilon/delta grid" >&2
+  exit 2
+fi
+
+if [[ "$MODE" == "preflight" ]]; then
+  echo "PREFLIGHT_OK cells=$((${#BUDGETS[@]} * ${#EPSILONS[@]} * ${#DELTAS[@]})) states=success,known_failure,runtime_failure,skipped known_failure_budget=256 high_control_budget=96"
+  exit 0
+fi
+
 if [[ ${#BUDGETS[@]} -eq 0 || ${#EPSILONS[@]} -eq 0 || ${#DELTAS[@]} -eq 0 ]]; then
   echo "INVALID_GRID: 无法从 $CONFIG_PATH 读取 sweep 网格" >&2
   exit 2
@@ -73,8 +106,8 @@ for epsilon in "${EPSILONS[@]}"; do
       eps_slug="$(slug_number "$epsilon")"
       delta_slug="$(slug_number "$delta")"
       budget_slug="$(slug_number "$budget")"
-      output_csv="$POLICY_DIR/pilot_smoke_measured_policy_eps${eps_slug}_delta${delta_slug}_mem${budget_slug}.csv"
-      cell_log="$LOG_DIR/policy_eps${eps_slug}_delta${delta_slug}_mem${budget_slug}.log"
+      output_csv="$POLICY_DIR/${RUN_NAME}_policy_eps${eps_slug}_delta${delta_slug}_mem${budget_slug}.csv"
+      cell_log="$LOG_DIR/${RUN_NAME}_policy_eps${eps_slug}_delta${delta_slug}_mem${budget_slug}.log"
 
       {
         echo "START $(date '+%F %T') epsilon=$epsilon delta=$delta memory_budget_mib=$budget"
@@ -91,10 +124,15 @@ for epsilon in "${EPSILONS[@]}"; do
       status=$?
 
       if [[ $status -eq 0 ]]; then
-        echo "SUCCESS $(date '+%F %T') status=$status" >> "$cell_log"
+        echo "SUCCESS $(date '+%F %T') status=$status cell_state=success" >> "$cell_log"
         success=$((success + 1))
       else
-        echo "FAILED $(date '+%F %T') status=$status" >> "$cell_log"
+        if [[ "$budget" == "256" ]]; then
+          cell_state="known_failure"
+        else
+          cell_state="runtime_failure"
+        fi
+        echo "FAILED $(date '+%F %T') status=$status cell_state=$cell_state" >> "$cell_log"
         failed=$((failed + 1))
       fi
 

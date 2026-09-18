@@ -1,0 +1,73 @@
+{
+  "diagnostic_only": true,
+  "session_count": 25,
+  "request_count": 125,
+  "arrival_gap_count": 10,
+  "sha256": "d89dbf9fc3eadf689ea7bb4ffc83a77ff12a64baec16066d9fd662e41f92451e",
+  "fixture": "/DATACENTER3/zhenxiang.wang/work/TailGuardKV/.worktrees/baseline-smoke-final-aggregation/data/fixtures/diagnostic_session27_exclude_batch7.jsonl",
+  "tight_budget_audit": {
+    "diagnostic_only": true,
+    "budgets_mib": [
+      120.2578125,
+      469.6015625
+    ],
+    "cells": [
+      {
+        "policy": "static_best",
+        "budget_mib": 120.2578125,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 81.7919921875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      },
+      {
+        "policy": "static_best",
+        "budget_mib": 469.6015625,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 81.7919921875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      },
+      {
+        "policy": "utility_dynamic",
+        "budget_mib": 120.2578125,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 62.2685546875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      },
+      {
+        "policy": "utility_dynamic",
+        "budget_mib": 469.6015625,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 62.2685546875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      },
+      {
+        "policy": "uncalibrated_dynamic",
+        "budget_mib": 120.2578125,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 81.7919921875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      },
+      {
+        "policy": "uncalibrated_dynamic",
+        "budget_mib": 469.6015625,
+        "policy_budget_filtered_count": 0,
+        "backend_budget_hit_count": 0,
+        "max_global_resident_mib": 81.7919921875,
+        "pressure_status": "expected_no_pressure_control",
+        "passed": true
+      }
+    ],
+    "passed": true,
+    "failures": []
+  }
+}

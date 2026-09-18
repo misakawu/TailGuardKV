@@ -393,7 +393,7 @@ class ActionDecision:
             audit_rate=self.audit_rate,
             drift_state=self.drift_state,
             budget_hit=self.budget_hit,
-            policy_budget_filtered=self.policy_budget_filtered or self.budget_hit,
+            policy_budget_filtered=self.policy_budget_filtered,
         )
 
 
@@ -554,9 +554,12 @@ class PolicyRunRecord:
     audit_rate: float | None = None
     drift_state: str = ""
     active_session_count: float | None = None
+    audit_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_row(self) -> dict[str, Any]:
-        return asdict(self)
+        row = asdict(self)
+        row.update(row.pop("audit_metadata"))
+        return row
 
     @classmethod
     def from_action_and_backend_result(
@@ -599,7 +602,7 @@ class PolicyRunRecord:
         quality_estimate: float | None = None,
         primary_profile: str = "",
     ) -> "PolicyRunRecord":
-        policy_filtered = budget_hit if policy_budget_filtered is None else policy_budget_filtered
+        policy_filtered = False if policy_budget_filtered is None else policy_budget_filtered
         backend_budget_hit = bool(backend_result.budget_hit)
         return cls(
             policy=policy_name,
@@ -661,6 +664,11 @@ class PolicyRunRecord:
             audit_rate=audit_rate,
             drift_state=drift_state,
             active_session_count=active_session_count,
+            audit_metadata={
+                f"extra_{key}": value
+                for key, value in backend_result.extra.items()
+                if key.startswith("worker_") or key.startswith("warm_profile")
+            },
         )
 
 
